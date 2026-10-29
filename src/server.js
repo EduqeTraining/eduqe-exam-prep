@@ -194,10 +194,15 @@ async function handleRequest(req, res) {
   let query = { ...parsedUrl.query, ...(req.query || {}) };
   let pathname = parsedUrl.pathname;
 
-  // Support Vercel rewrites where route is passed in query or headers
+  // Support Vercel catch-all [...slug] or rewrites where route is passed in query or headers
   if (query.__route) {
     pathname = query.__route;
     delete query.__route;
+  } else if (req.query && req.query.slug) {
+    const slugPath = Array.isArray(req.query.slug) ? req.query.slug.join('/') : req.query.slug;
+    if (!pathname || !pathname.startsWith('/api/')) {
+      pathname = `/api/${slugPath}`;
+    }
   } else if (req.headers['x-matched-path'] && req.headers['x-matched-path'].startsWith('/api')) {
     pathname = req.headers['x-matched-path'].split('?')[0];
   } else if (req.headers['x-forwarded-uri'] && req.headers['x-forwarded-uri'].startsWith('/api')) {
