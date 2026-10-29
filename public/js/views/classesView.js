@@ -209,28 +209,42 @@ export function renderClassesView(container, router, { action = null } = {}) {
   let allCourses = [];
   let allInstructors = [];
 
-  Promise.all([
-    api.get('/courses'),
-    api.getInstructors().catch(() => [])
-  ]).then(([courses, instructors]) => {
-    allCourses = courses || [];
-    allInstructors = instructors || [];
+  async function refreshDropdowns() {
+    try {
+      const [courses, instructors] = await Promise.all([
+        api.get('/courses'),
+        api.getInstructors().catch(() => [])
+      ]);
+      allCourses = courses || [];
+      allInstructors = instructors || [];
 
-    const filterSelect = container.querySelector('#class-course-filter');
-    const formSelect = container.querySelector('#cl-course');
-    const instSelect = container.querySelector('#cl-instructor');
+      const filterSelect = container.querySelector('#class-course-filter');
+      const formSelect = container.querySelector('#cl-course');
+      const instSelect = container.querySelector('#cl-instructor');
 
-    filterSelect.innerHTML = '<option value="">All Associated Courses</option>' +
-      courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
+      const currentFilter = filterSelect.value;
+      const currentFormCourse = formSelect.value;
+      const currentInst = instSelect ? instSelect.value : '';
 
-    formSelect.innerHTML = '<option value="">-- Select Course --</option>' +
-      courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
+      filterSelect.innerHTML = '<option value="">All Associated Courses</option>' +
+        allCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
+      filterSelect.value = currentFilter;
 
-    if (instSelect) {
-      instSelect.innerHTML = '<option value="">-- No Allocated Instructor / Self-Paced --</option>' +
-        allInstructors.map(i => `<option value="${i.id}">${escapeHtml(i.first_name)} ${escapeHtml(i.surname)} (@${escapeHtml(i.username)})</option>`).join('');
+      formSelect.innerHTML = '<option value="">-- Select Course --</option>' +
+        allCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
+      formSelect.value = currentFormCourse;
+
+      if (instSelect) {
+        instSelect.innerHTML = '<option value="">-- No Allocated Instructor / Self-Paced --</option>' +
+          allInstructors.map(i => `<option value="${i.id}">${escapeHtml(i.first_name)} ${escapeHtml(i.surname)} (@${escapeHtml(i.username)})</option>`).join('');
+        instSelect.value = currentInst;
+      }
+    } catch (e) {
+      console.warn('Could not refresh class dropdowns:', e);
     }
-  });
+  }
+
+  refreshDropdowns();
 
   async function loadClasses() {
     const courseId = courseFilter.value;
@@ -361,7 +375,8 @@ export function renderClassesView(container, router, { action = null } = {}) {
   container.querySelector('#class-status-filter').onchange = loadClasses;
 
   // Open Create Class Modal
-  container.querySelector('#btn-open-create-class').onclick = () => {
+  container.querySelector('#btn-open-create-class').onclick = async () => {
+    await refreshDropdowns();
     container.querySelector('#class-modal-title').textContent = 'Create Class';
     container.querySelector('#cl-id').value = '';
     container.querySelector('#cl-name').value = '';
@@ -378,6 +393,7 @@ export function renderClassesView(container, router, { action = null } = {}) {
   };
 
   async function openEditClass(cId) {
+    await refreshDropdowns();
     const cls = await api.get(`/classes/${cId}`);
     container.querySelector('#class-modal-title').textContent = 'Edit Class';
     container.querySelector('#cl-id').value = cls.id;
@@ -425,7 +441,10 @@ export function renderClassesView(container, router, { action = null } = {}) {
         await api.post('/classes', payload);
       }
       classModal.close();
-      loadClasses();
+      // Reset filter so the newly created class is always displayed in the view
+      courseFilter.value = '';
+      await refreshDropdowns();
+      await loadClasses();
     } catch (err) {
       errDiv.textContent = err.message;
     }

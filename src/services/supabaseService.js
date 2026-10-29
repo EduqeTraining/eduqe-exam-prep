@@ -42,20 +42,116 @@ async function supabaseRequest(tableOrPath, { method = 'GET', body = null, heade
 }
 
 // -------------------------------------------------------------
+// CONTINUOUS REAL-TIME SYNC & LOCAL CACHE MANAGEMENT
+// -------------------------------------------------------------
+
+const tableLastSync = new Map();
+const SYNC_CACHE_TTL_MS = 2500; // 2.5 seconds cache window
+
+function invalidateTableCache(tableName = null) {
+  if (tableName) {
+    tableLastSync.delete(tableName);
+  } else {
+    tableLastSync.clear();
+  }
+}
+
+async function pullTable(table) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled) return 0;
+  const db = getDatabase();
+
+  try {
+    const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
+    if (!Array.isArray(rows)) return 0;
+
+    const tableCols = db.all(`PRAGMA table_info("${table}")`);
+    if (!tableCols || tableCols.length === 0) return 0;
+
+    const hasId = tableCols.some(c => c.name === 'id');
+    const localColSet = new Set(tableCols.map(c => c.name));
+
+    if (rows.length === 0) {
+      if (hasId) {
+        db.run(`DELETE FROM "${table}"`);
+      }
+      tableLastSync.set(table, Date.now());
+      return 0;
+    }
+
+    const remoteCols = Object.keys(rows[0]);
+    const matchingCols = remoteCols.filter(c => localColSet.has(c));
+    if (matchingCols.length === 0) return 0;
+
+    const placeholders = matchingCols.map(() => '?').join(', ');
+    const colNames = matchingCols.map(c => `"${c}"`).join(', ');
+    const remoteIds = hasId ? new Set(rows.map(r => String(r.id))) : null;
+
+    db.transaction(() => {
+      // 1. Reconcile deleted rows: Remove any local row not present in Supabase
+      if (hasId && remoteIds) {
+        const localRows = db.all(`SELECT id FROM "${table}"`);
+        for (const local of localRows) {
+          if (!remoteIds.has(String(local.id))) {
+            db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
+          }
+        }
+      }
+
+      // 2. Insert or replace latest rows from Supabase
+      for (const row of rows) {
+        const vals = matchingCols.map(c => {
+          const val = row[c];
+          if (val !== null && typeof val === 'object') {
+            return JSON.stringify(val);
+          }
+          return val;
+        });
+        db.run(
+          `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
+          vals
+        );
+      }
+    });
+
+    tableLastSync.set(table, Date.now());
+    return rows.length;
+  } catch (err) {
+    console.warn(`[Supabase Pull Warning] Error pulling table ${table}:`, err.message);
+    return 0;
+  }
+}
+
+async function ensureTableFresh(table, maxAgeMs = SYNC_CACHE_TTL_MS) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled) return;
+
+  const now = Date.now();
+  const lastSync = tableLastSync.get(table) || 0;
+  if (now - lastSync < maxAgeMs) {
+    return;
+  }
+  await pullTable(table);
+}
+
+// -------------------------------------------------------------
 // GENERIC UPSERT / DELETE HELPERS
 // -------------------------------------------------------------
 
 async function upsertRecord(tableName, record) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || !record) return null;
+  invalidateTableCache(tableName);
   try {
-    return await supabaseRequest(`${tableName}?on_conflict=id`, {
+    const res = await supabaseRequest(`${tableName}?on_conflict=id`, {
       method: 'POST',
       headers: {
         'Prefer': 'resolution=merge-duplicates,return=representation'
       },
       body: record
     });
+    invalidateTableCache(tableName);
+    return res;
   } catch (err) {
     console.warn(`[Supabase Sync Warning] Could not sync to ${tableName}:`, err.message);
     return null;
@@ -65,10 +161,13 @@ async function upsertRecord(tableName, record) {
 async function deleteRecord(tableName, id) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || !id) return null;
+  invalidateTableCache(tableName);
   try {
-    return await supabaseRequest(`${tableName}?id=eq.${encodeURIComponent(id)}`, {
+    const res = await supabaseRequest(`${tableName}?id=eq.${encodeURIComponent(id)}`, {
       method: 'DELETE'
     });
+    invalidateTableCache(tableName);
+    return res;
   } catch (err) {
     console.warn(`[Supabase Delete Warning] Could not delete from ${tableName}:`, err.message);
     return null;
@@ -321,7 +420,6 @@ async function pullFromSupabase() {
     throw new Error('Supabase is not configured. Please set SUPABASE_URL and SUPABASE_KEY.');
   }
 
-  const db = getDatabase();
   const tables = [
     'users',
     'courses',
@@ -340,34 +438,9 @@ async function pullFromSupabase() {
   ];
 
   const results = {};
-
   for (const table of tables) {
-    try {
-      const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
-      if (Array.isArray(rows) && rows.length > 0) {
-        const cols = Object.keys(rows[0]);
-        const placeholders = cols.map(() => '?').join(', ');
-        const colNames = cols.map(c => `"${c}"`).join(', ');
-
-        db.transaction(() => {
-          for (const row of rows) {
-            const vals = cols.map(c => row[c]);
-            db.run(
-              `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
-              vals
-            );
-          }
-        });
-        results[table] = rows.length;
-      } else {
-        results[table] = 0;
-      }
-    } catch (err) {
-      console.warn(`[Supabase Pull] Warning fetching table ${table}:`, err.message);
-      results[table] = 0;
-    }
+    results[table] = await pullTable(table);
   }
-
   return results;
 }
 
@@ -445,5 +518,8 @@ module.exports = {
   syncOnStartup,
   pushAllToSupabase,
   pullFromSupabase,
+  pullTable,
+  ensureTableFresh,
+  invalidateTableCache,
   testSupabaseConnection
 };

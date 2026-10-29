@@ -94,7 +94,8 @@ describe('Assessment Builder & Student Attempt Lifecycle Tests', () => {
     const assessments = assessmentService.listAssessments();
     const assessment = assessments[0];
     const az104 = courseService.listCourses().find(c => c.code === 'AZ104');
-    const classA = classService.listClasses(az104.id)[0];
+    const classes = classService.listClasses(az104.id);
+    const classA = classes.find(c => c.name === 'November Morning Class') || classes[0];
 
     const attempt = attemptService.startAttempt({
       userId: sarah.id,
@@ -149,7 +150,8 @@ describe('Assessment Builder & Student Attempt Lifecycle Tests', () => {
   test('Enforce maximum attempts limit', () => {
     const alex = studentService.listStudents({ query: 'alex.morgan' })[0];
     const az104 = courseService.listCourses().find(c => c.code === 'AZ104');
-    const classA = classService.listClasses(az104.id)[0];
+    const classes = classService.listClasses(az104.id);
+    const classA = classes.find(c => c.name === 'November Morning Class') || classes[0];
 
     // Create single-attempt assessment
     const strictAssessment = assessmentService.createAssessment({
@@ -187,7 +189,8 @@ describe('Assessment Builder & Student Attempt Lifecycle Tests', () => {
   test('Controlled correction and recalculation: preserves historical score and records audit', () => {
     const sarah = studentService.listStudents({ query: 'sarah.chen' })[0];
     const az104 = courseService.listCourses().find(c => c.code === 'AZ104');
-    const classA = classService.listClasses(az104.id)[0];
+    const classes = classService.listClasses(az104.id);
+    const classA = classes.find(c => c.name === 'November Morning Class') || classes[0];
 
     // Create assessment with 1 question
     const q = questionService.createQuestion({
@@ -254,7 +257,8 @@ describe('Assessment Builder & Student Attempt Lifecycle Tests', () => {
     const assessments = assessmentService.listAssessments();
     const assessment = assessments[0];
     const az104 = courseService.listCourses().find(c => c.code === 'AZ104');
-    const classA = classService.listClasses(az104.id)[0];
+    const classes = classService.listClasses(az104.id);
+    const classA = classes.find(c => c.name === 'November Morning Class') || classes[0];
 
     // 1. Start attempt
     const att1 = attemptService.startAttempt({
