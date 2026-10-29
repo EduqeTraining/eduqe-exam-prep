@@ -4,7 +4,14 @@ const API_BASE = '/api';
 
 export const authState = {
   token: localStorage.getItem('eduqe_token') || localStorage.getItem('eduque_token') || null,
-  user: null,
+  user: (() => {
+    try {
+      const u = localStorage.getItem('eduqe_user');
+      return u ? JSON.parse(u) : null;
+    } catch (e) {
+      return null;
+    }
+  })(),
 
   setSession(token, user) {
     this.token = token;
@@ -12,9 +19,11 @@ export const authState = {
     if (token) {
       localStorage.setItem('eduqe_token', token);
       localStorage.setItem('eduque_token', token);
+      if (user) localStorage.setItem('eduqe_user', JSON.stringify(user));
     } else {
       localStorage.removeItem('eduqe_token');
       localStorage.removeItem('eduque_token');
+      localStorage.removeItem('eduqe_user');
     }
   },
 
@@ -23,6 +32,7 @@ export const authState = {
     this.user = null;
     localStorage.removeItem('eduqe_token');
     localStorage.removeItem('eduque_token');
+    localStorage.removeItem('eduqe_user');
   },
 
   isAuthenticated() {

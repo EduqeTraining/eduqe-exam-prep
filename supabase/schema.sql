@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS "sessions" (
     "created_at" TEXT DEFAULT CURRENT_TIMESTAMP::text
 );
 
+CREATE TABLE IF NOT EXISTS "revoked_tokens" (
+    "token" TEXT PRIMARY KEY,
+    "revoked_at" TEXT DEFAULT CURRENT_TIMESTAMP::text
+);
+
 -- 3. Login Attempts (Rate limiting & Security)
 CREATE TABLE IF NOT EXISTS "login_attempts" (
     "id" TEXT PRIMARY KEY,

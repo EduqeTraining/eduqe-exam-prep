@@ -200,7 +200,7 @@ async function handleRequest(req, res) {
     delete query.__route;
   } else if (req.query && req.query.slug) {
     const slugPath = Array.isArray(req.query.slug) ? req.query.slug.join('/') : req.query.slug;
-    if (!pathname || !pathname.startsWith('/api/')) {
+    if (!pathname || pathname === '/api' || pathname === '/api/' || pathname.includes('[') || !pathname.startsWith('/api/')) {
       pathname = `/api/${slugPath}`;
     }
   } else if (req.headers['x-matched-path'] && req.headers['x-matched-path'].startsWith('/api')) {

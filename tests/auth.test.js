@@ -96,6 +96,26 @@ describe('Authentication & Account Lifecycle Tests', () => {
     assert.strictEqual(expiredUser, null, 'Session should be invalidated after logout');
   });
 
+  test('Stateless signed token validates across new database/serverless container without sessions row', () => {
+    const res = authService.login({ username: 'admin', password: 'Admin2026!' });
+    assert.ok(res.token, 'Should return signed token');
+
+    // Simulate switching to a brand new container instance with a fresh SQLite DB where sessions table is empty
+    const freshDb = initDatabase(':memory:');
+    setDatabaseInstance(freshDb);
+    seedDatabase(':memory:');
+
+    // Verify sessions table in freshDb has 0 sessions
+    const sessionCount = freshDb.get('SELECT COUNT(*) as c FROM sessions').c;
+    assert.strictEqual(sessionCount, 0, 'New container sessions table must be completely empty');
+
+    // Validating token on new container must succeed statelessly
+    const restoredUser = authService.validateSession(res.token);
+    assert.ok(restoredUser, 'Stateless session must validate on new container without sessions row');
+    assert.strictEqual(restoredUser.username, 'admin');
+    assert.strictEqual(restoredUser.role, 'administrator');
+  });
+
   test('Student self-registration creates active account and returns authenticated session', () => {
     const reg = authService.registerStudent({
       first_name: 'David',

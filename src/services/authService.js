@@ -1,5 +1,5 @@
 const { getDatabase } = require('../db');
-const { hashPassword, verifyPassword, generateToken, generateId } = require('../utils/crypto');
+const { hashPassword, verifyPassword, generateToken, createSignedToken, verifySignedToken, generateId } = require('../utils/crypto');
 const { logAction } = require('./auditService');
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -62,14 +62,28 @@ function login({ username, password, ipAddress = '127.0.0.1' }) {
   recordLoginAttempt(ipAddress, trimmed, true);
 
   // Create session
-  const token = generateToken();
+  const expSeconds = Math.floor(Date.now() / 1000) + (SESSION_DURATION_HOURS * 3600);
+  const token = createSignedToken({
+    userId: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    first_name: user.first_name,
+    surname: user.surname,
+    student_number: user.student_number,
+    exp: expSeconds
+  });
   const sessionId = generateId();
   
-  db.run(
-    `INSERT INTO sessions (id, token, user_id, expires_at, created_at)
-     VALUES (?, ?, ?, datetime('now', '+' || ? || ' hours'), datetime('now'))`,
-    [sessionId, token, user.id, SESSION_DURATION_HOURS]
-  );
+  try {
+    db.run(
+      `INSERT INTO sessions (id, token, user_id, expires_at, created_at)
+       VALUES (?, ?, ?, datetime('now', '+' || ? || ' hours'), datetime('now'))`,
+      [sessionId, token, user.id, SESSION_DURATION_HOURS]
+    );
+  } catch (err) {
+    console.warn('Session write warning:', err.message);
+  }
 
   logAction({
     userId: user.id,
@@ -101,6 +115,63 @@ function validateSession(token) {
   if (!token) return null;
   const db = getDatabase();
 
+  try {
+    const revoked = db.get('SELECT 1 FROM revoked_tokens WHERE token = ?', [token]);
+    if (revoked) return null;
+  } catch (e) {
+    // Ignore if table not present
+  }
+
+  // 1. First verify as stateless cryptographically signed token
+  const payload = verifySignedToken(token);
+  if (payload && payload.userId) {
+    let user = null;
+    try {
+      user = db.get(
+        `SELECT id, username, email, role, first_name, surname, 
+                student_number, account_status, must_change_password
+         FROM users WHERE id = ?`,
+        [payload.userId]
+      );
+    } catch (e) {
+      // Ignore
+    }
+
+    if (user) {
+      if (user.account_status !== 'active') {
+        return null; // Account suspended or deactivated
+      }
+      return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        first_name: user.first_name,
+        surname: user.surname,
+        student_number: user.student_number,
+        account_status: user.account_status,
+        must_change_password: Boolean(user.must_change_password)
+      };
+    }
+
+    // If user is not yet in this serverless container's ephemeral DB,
+    // authenticate using the cryptographically verified signed payload
+    if (payload.role) {
+      return {
+        id: payload.userId,
+        username: payload.username,
+        email: payload.email,
+        role: payload.role,
+        first_name: payload.first_name || '',
+        surname: payload.surname || '',
+        student_number: payload.student_number || null,
+        account_status: 'active',
+        must_change_password: false
+      };
+    }
+  }
+
+  // 2. Fallback to database session lookup for backwards compatibility
   const session = db.get(
     `SELECT s.*, u.username, u.email, u.role, u.first_name, u.surname, 
             u.student_number, u.account_status, u.must_change_password
@@ -174,6 +245,11 @@ function changePassword({ userId, currentPassword, newPassword, isFirstTime = fa
 function logout(token) {
   if (!token) return;
   const db = getDatabase();
+  try {
+    db.run("INSERT OR IGNORE INTO revoked_tokens (token, revoked_at) VALUES (?, datetime('now'))", [token]);
+  } catch (err) {
+    // Ignore
+  }
   db.run('DELETE FROM sessions WHERE token = ?', [token]);
 }
 
@@ -294,13 +370,27 @@ function registerStudent({
     }
   }
 
-  const token = generateToken();
+  const expSeconds = Math.floor(Date.now() / 1000) + (SESSION_DURATION_HOURS * 3600);
+  const token = createSignedToken({
+    userId,
+    username: finalUsername,
+    email: emailAddr,
+    role: 'student',
+    first_name: fName,
+    surname: sName,
+    student_number: sNumber,
+    exp: expSeconds
+  });
   const sessionId = generateId();
-  db.run(
-    `INSERT INTO sessions (id, token, user_id, expires_at, created_at)
-     VALUES (?, ?, ?, datetime('now', '+' || ? || ' hours'), datetime('now'))`,
-    [sessionId, token, userId, SESSION_DURATION_HOURS]
-  );
+  try {
+    db.run(
+      `INSERT INTO sessions (id, token, user_id, expires_at, created_at)
+       VALUES (?, ?, ?, datetime('now', '+' || ? || ' hours'), datetime('now'))`,
+      [sessionId, token, userId, SESSION_DURATION_HOURS]
+    );
+  } catch (err) {
+    console.warn('Session write warning:', err.message);
+  }
 
   logAction({
     userId,

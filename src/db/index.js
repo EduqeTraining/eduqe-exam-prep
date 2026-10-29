@@ -90,6 +90,11 @@ function initDatabase(dbPath) {
   } catch (err) {
     // Column already exists
   }
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS revoked_tokens (token TEXT PRIMARY KEY, revoked_at TEXT DEFAULT (datetime(\'now\')));');
+  } catch (err) {
+    // Table already exists
+  }
 
   const wrapper = {
     raw: db,

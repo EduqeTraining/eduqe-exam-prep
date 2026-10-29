@@ -34,8 +34,15 @@ class Router {
     window.addEventListener('hashchange', () => this.handleRoute());
   }
 
-  navigate(path) {
-    window.location.hash = path.startsWith('#') ? path : `#${path}`;
+  navigate(path, params = null) {
+    let hash = path.startsWith('#') ? path.slice(1) : path;
+    if (params && typeof params === 'object') {
+      const qs = new URLSearchParams(params).toString();
+      if (qs) {
+        hash = `${hash.split('?')[0]}?${qs}`;
+      }
+    }
+    window.location.hash = `#${hash}`;
   }
 
   getRouteData() {
