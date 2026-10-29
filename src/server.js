@@ -250,6 +250,10 @@ async function handleRequest(req, res) {
       }
 
       if (req.method === 'POST' && pathname === '/api/auth/register') {
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('courses');
+        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTableFresh('course_access_codes');
         const body = await parseBody(req);
         try {
           const result = authService.registerStudent({
@@ -315,6 +319,11 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/student/redeem-code') {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('courses');
+        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTableFresh('course_access_codes');
+        await supabaseService.ensureTableFresh('class_enrollments');
         const body = await parseBody(req);
         try {
           const result = accessCodeService.redeemCourseCode({
@@ -364,59 +373,68 @@ async function handleRequest(req, res) {
         if (student?.enrollments) {
           for (const enroll of student.enrollments) {
             if (enroll.enrollment_status === 'active') {
-              // Ensure class has an assessment if questions exist for this course
-              accessCodeService.ensureClassAssessment(db, enroll.course_id, enroll.class_id, enroll.course_name, user.id);
+              const ensured = accessCodeService.ensureClassAssessment(db, enroll.course_id, enroll.class_id, enroll.course_name, user.id);
 
               // Fetch questions available for this course
               const courseQuestions = db.all(
                 `SELECT id, question_text, question_type, topic, difficulty, points 
                  FROM questions 
-                 WHERE course_id = ? AND status = 'published'
+                 WHERE (course_id = ? OR course_id IS NULL) AND status = 'published'
                  ORDER BY created_at ASC`,
                 [enroll.course_id]
               );
               enroll.available_questions = courseQuestions;
 
               const cls = classService.getClass(enroll.class_id);
-              if (cls?.assessments) {
-                for (const a of cls.assessments) {
-                  const fullAssessment = assessmentService.getAssessment(a.id);
-                  if (fullAssessment && fullAssessment.status === 'published') {
-                    // Get attempts by this student for this assessment
-                    const studentAttempts = student.attempts.filter(att => att.assessment_id === a.id);
-                    const completedCount = studentAttempts.filter(att => att.status === 'marked' || att.status === 'submitted').length;
-                    const inProgressAttempt = studentAttempts.find(att => att.status === 'in_progress');
+              const assessList = (cls?.assessments && cls.assessments.length > 0)
+                ? cls.assessments
+                : (ensured?.assessment ? [ensured.assessment] : []);
 
-                    const maxLimit = (fullAssessment.max_attempts !== null && fullAssessment.max_attempts !== undefined) ? Number(fullAssessment.max_attempts) : 0;
-                    const isUnlimited = maxLimit <= 0;
-                    const canRetake = isUnlimited || completedCount < maxLimit;
+              for (const a of assessList) {
+                const fullAssessment = assessmentService.getAssessment(a.id) || a;
+                if (fullAssessment && (fullAssessment.status === 'published' || !fullAssessment.status)) {
+                  // Get attempts by this student for this assessment
+                  const studentAttempts = (student.attempts || []).filter(att => att.assessment_id === a.id);
+                  const completedCount = studentAttempts.filter(att => att.status === 'marked' || att.status === 'submitted').length;
+                  const inProgressAttempt = studentAttempts.find(att => att.status === 'in_progress');
 
-                    const itemData = {
-                      id: fullAssessment.id,
-                      name: fullAssessment.name,
-                      description: fullAssessment.description,
-                      course_name: enroll.course_name,
-                      course_id: enroll.course_id,
-                      class_name: enroll.class_name,
-                      class_id: enroll.class_id,
-                      duration_minutes: fullAssessment.duration_minutes,
-                      pass_mark_percentage: fullAssessment.pass_mark_percentage,
-                      question_count: fullAssessment.question_count || courseQuestions.length,
-                      max_attempts: maxLimit,
-                      is_unlimited: isUnlimited,
-                      attempts_taken: completedCount,
-                      in_progress_attempt_id: inProgressAttempt?.attempt_id || null,
-                      available_from: fullAssessment.available_from,
-                      available_to: fullAssessment.available_to,
-                      is_available: true,
-                      can_retake: canRetake,
-                      available_questions: courseQuestions
-                    };
+                  const maxLimit = (fullAssessment.max_attempts !== null && fullAssessment.max_attempts !== undefined) ? Number(fullAssessment.max_attempts) : 0;
+                  const isUnlimited = maxLimit <= 0;
+                  const canRetake = isUnlimited || completedCount < maxLimit;
 
+                  const qCount = fullAssessment.question_count ||
+                    (fullAssessment.items ? fullAssessment.items.length : 0) ||
+                    (fullAssessment.questions ? fullAssessment.questions.length : 0) ||
+                    (ensured?.questions ? ensured.questions.length : 0) ||
+                    courseQuestions.length || 0;
+
+                  const itemData = {
+                    id: fullAssessment.id,
+                    name: fullAssessment.name,
+                    description: fullAssessment.description,
+                    course_name: enroll.course_name,
+                    course_id: enroll.course_id,
+                    class_name: enroll.class_name,
+                    class_id: enroll.class_id,
+                    duration_minutes: fullAssessment.duration_minutes || 60,
+                    pass_mark_percentage: fullAssessment.pass_mark_percentage || 70,
+                    question_count: qCount,
+                    max_attempts: maxLimit,
+                    is_unlimited: isUnlimited,
+                    attempts_taken: completedCount,
+                    in_progress_attempt_id: inProgressAttempt?.attempt_id || null,
+                    available_from: fullAssessment.available_from,
+                    available_to: fullAssessment.available_to,
+                    is_available: true,
+                    can_retake: canRetake,
+                    available_questions: courseQuestions
+                  };
+
+                  if (!availableAssessments.some(ex => ex.id === itemData.id && ex.class_id === itemData.class_id)) {
                     availableAssessments.push(itemData);
-                    if (!isUnlimited && completedCount >= maxLimit) {
-                      completedAssessments.push(itemData);
-                    }
+                  }
+                  if (!isUnlimited && completedCount >= maxLimit) {
+                    completedAssessments.push(itemData);
                   }
                 }
               }

@@ -105,7 +105,7 @@ function getAssessment(assessmentId) {
   const assessment = db.get(
     `SELECT a.*, c.name as course_name, c.code as course_code, u.username as creator_username
      FROM assessments a
-     JOIN courses c ON c.id = a.course_id
+     LEFT JOIN courses c ON c.id = a.course_id
      LEFT JOIN users u ON u.id = a.created_by
      WHERE a.id = ?`,
     [assessmentId]
@@ -266,7 +266,7 @@ function listAssessments({ course_id = '', status = '', class_id = '', search = 
            (SELECT COUNT(*) FROM student_attempts sa WHERE sa.assessment_id = a.id) as total_attempts,
            (SELECT COUNT(*) FROM student_attempts sa WHERE sa.assessment_id = a.id AND sa.status IN ('submitted', 'marked')) as completed_attempts
     FROM assessments a
-    JOIN courses c ON c.id = a.course_id
+    LEFT JOIN courses c ON c.id = a.course_id
     WHERE 1=1
   `;
   const params = [];
