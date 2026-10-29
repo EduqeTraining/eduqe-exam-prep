@@ -163,21 +163,30 @@ function serveStatic(req, res, pathname) {
 }
 
 let isAppInitialized = false;
+let initPromise = null;
 
-function ensureAppInitialized(dbPath = null) {
-  if (!isAppInitialized) {
-    try {
-      initDatabase(dbPath);
-      seedDatabase(dbPath);
-    } catch (err) {
-      console.warn('Database initialization warning:', err.message);
-    }
-    isAppInitialized = true;
+async function ensureAppInitialized(dbPath = null) {
+  if (isAppInitialized) return;
+  if (!initPromise) {
+    initPromise = (async () => {
+      try {
+        initDatabase(dbPath);
+        seedDatabase(dbPath);
+        const { isEnabled } = supabaseService.getSupabaseConfig();
+        if (isEnabled) {
+          await supabaseService.syncOnStartup();
+        }
+      } catch (err) {
+        console.warn('Database initialization warning:', err.message);
+      }
+      isAppInitialized = true;
+    })();
   }
+  await initPromise;
 }
 
 async function handleRequest(req, res) {
-  ensureAppInitialized();
+  await ensureAppInitialized();
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -251,7 +260,10 @@ async function handleRequest(req, res) {
             ipAddress: clientIp
           });
           if (result && result.user) {
-            supabaseService.syncUserToSupabase(result.user).catch(() => {});
+            await supabaseService.syncUserToSupabase(result.user);
+            if (result.redeemedCourse && result.redeemedCourse.enrollment) {
+              await supabaseService.syncEnrollmentToSupabase(result.redeemedCourse.enrollment);
+            }
           }
           return sendJson(res, 201, result);
         } catch (err) {
@@ -283,6 +295,7 @@ async function handleRequest(req, res) {
             newPassword: body.newPassword || body.new_password,
             isFirstTime: Boolean(user.must_change_password)
           });
+          await supabaseService.syncUserToSupabase(user.id);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -302,6 +315,9 @@ async function handleRequest(req, res) {
             rawCode: body.code,
             targetClassId: body.class_id
           });
+          if (result && result.enrollment) {
+            await supabaseService.syncEnrollmentToSupabase(result.enrollment);
+          }
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -409,6 +425,9 @@ async function handleRequest(req, res) {
             forceNew: Boolean(body.force_new || body.restart),
             submitExisting: Boolean(body.submit_existing)
           });
+          if (attemptState && attemptState.attempt && attemptState.attempt.id) {
+            await supabaseService.syncAttemptToSupabase(attemptState.attempt.id);
+          }
           return sendJson(res, 200, attemptState);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -442,6 +461,7 @@ async function handleRequest(req, res) {
             savedAnswer: body.saved_answer,
             isFlagged: body.is_flagged
           });
+          supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -459,7 +479,7 @@ async function handleRequest(req, res) {
             userId: user.id,
             isAuto: false
           });
-          supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
+          await supabaseService.syncAttemptToSupabase(attemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -480,6 +500,9 @@ async function handleRequest(req, res) {
             classId: body.class_id || null,
             submitExisting: Boolean(body.submit_existing)
           });
+          if (result && result.attempt && result.attempt.id) {
+            await supabaseService.syncAttemptToSupabase(result.attempt.id);
+          }
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -516,6 +539,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (created && created.id) {
+            await supabaseService.syncCourseToSupabase(created.id);
+          }
           return sendJson(res, 201, created);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -528,6 +554,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = courseService.updateCourse(courseIdMatch[1], body, user.id, user.username);
+          await supabaseService.syncCourseToSupabase(courseIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -539,6 +566,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         try {
           const result = courseService.deleteCourse(courseIdMatch[1], user.id, user.username);
+          await supabaseService.deleteCourseFromSupabase(courseIdMatch[1]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -552,6 +580,9 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const dup = courseService.duplicateCourse(courseDupMatch[1], body.name, body.code, user.id, user.username);
+          if (dup && dup.id) {
+            await supabaseService.syncCourseToSupabase(dup.id);
+          }
           return sendJson(res, 201, dup);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -565,6 +596,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = courseService.setCourseStatus(courseStatusMatch[1], body.status, user.id, user.username);
+          await supabaseService.syncCourseToSupabase(courseStatusMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -657,6 +689,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (created && created.id) {
+            await supabaseService.syncClassToSupabase(created.id);
+          }
           return sendJson(res, 201, created);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -669,6 +704,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = classService.updateClass(classIdMatch[1], body, user.id, user.username);
+          await supabaseService.syncClassToSupabase(classIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -680,6 +716,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         try {
           const result = classService.deleteClass(classIdMatch[1], user.id, user.username);
+          await supabaseService.deleteClassFromSupabase(classIdMatch[1]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -693,6 +730,9 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const dup = classService.duplicateClass(classDupMatch[1], body.name, body.copy_assessments !== false, user.id, user.username);
+          if (dup && dup.id) {
+            await supabaseService.syncClassToSupabase(dup.id);
+          }
           return sendJson(res, 201, dup);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -721,6 +761,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (created && created.id) {
+            await supabaseService.syncAccessCodeToSupabase(created.id);
+          }
           return sendJson(res, 201, created);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -740,6 +783,9 @@ async function handleRequest(req, res) {
             adminUsername: user.username,
             reason: body.reason
           });
+          if (rep && rep.new_code && rep.new_code.id) {
+            await supabaseService.syncAccessCodeToSupabase(rep.new_code.id);
+          }
           return sendJson(res, 200, rep);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -753,6 +799,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = accessCodeService.setCodeStatus(classCodeStatusMatch[1], body.is_active, user.id, user.username);
+          await supabaseService.syncAccessCodeToSupabase(classCodeStatusMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -766,6 +813,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = accessCodeService.updateCode(classCodeUpdateMatch[1], body, user.id, user.username);
+          await supabaseService.syncAccessCodeToSupabase(classCodeUpdateMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -780,6 +828,9 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const resEnroll = classService.enrollStudent(classEnrollMatch[1], body.user_id, body.access_dates || {}, user.id, user.username);
+          if (resEnroll && resEnroll.id) {
+            await supabaseService.syncEnrollmentToSupabase(resEnroll.id);
+          }
           return sendJson(res, 200, resEnroll);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -792,6 +843,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         const [_, cId, uId] = classRemoveStudentMatch;
         classService.removeStudent(cId, uId, user.id, user.username);
+        await supabaseService.deleteEnrollmentFromSupabase(cId, uId);
         return sendJson(res, 200, { success: true });
       }
 
@@ -803,6 +855,11 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           classService.moveStudent(cId, body.to_class_id, uId, user.id, user.username);
+          await supabaseService.deleteEnrollmentFromSupabase(cId, uId);
+          const newEnroll = getDatabase().get('SELECT id FROM class_enrollments WHERE class_id = ? AND user_id = ?', [body.to_class_id, uId]);
+          if (newEnroll) {
+            await supabaseService.syncEnrollmentToSupabase(newEnroll.id);
+          }
           return sendJson(res, 200, { success: true });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -903,6 +960,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (result && result.student && result.student.id) {
+            await supabaseService.syncUserToSupabase(result.student.id);
+          }
           return sendJson(res, 201, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -915,6 +975,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = studentService.updateStudent(studentIdMatch[1], body, user.id, user.username);
+          await supabaseService.syncUserToSupabase(studentIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -928,6 +989,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const resPwd = studentService.resetStudentPassword(studentResetPwdMatch[1], body.temporary_password, user.id, user.username);
+          await supabaseService.syncUserToSupabase(studentResetPwdMatch[1]);
           return sendJson(res, 200, resPwd);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -941,6 +1003,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = studentService.setStudentStatus(studentStatusMatch[1], body.status, user.id, user.username);
+          await supabaseService.syncUserToSupabase(studentStatusMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -979,6 +1042,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (result && result.instructor && result.instructor.id) {
+            await supabaseService.syncUserToSupabase(result.instructor.id);
+          }
           return sendJson(res, 201, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -991,6 +1057,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = instructorService.updateInstructor(instructorIdMatch[1], body, user.id, user.username);
+          await supabaseService.syncUserToSupabase(instructorIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1002,6 +1069,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         try {
           const result = instructorService.deleteInstructor(instructorIdMatch[1], user.id, user.username);
+          await supabaseService.deleteRecord('users', instructorIdMatch[1]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1103,6 +1171,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (created && created.id) {
+            await supabaseService.syncQuestionToSupabase(created.id);
+          }
           return sendJson(res, 201, created);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1120,6 +1191,7 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          await supabaseService.syncQuestionToSupabase(questionIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1132,6 +1204,9 @@ async function handleRequest(req, res) {
         if (!user) return;
         try {
           const dup = questionService.duplicateQuestion(qDuplicateMatch[1], user.id, user.username);
+          if (dup && dup.id) {
+            await supabaseService.syncQuestionToSupabase(dup.id);
+          }
           return sendJson(res, 201, dup);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1143,6 +1218,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         try {
           questionService.deleteQuestion(questionIdMatch[1], user.id, user.username);
+          await supabaseService.deleteQuestionFromSupabase(questionIdMatch[1]);
           return sendJson(res, 200, { success: true });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1281,6 +1357,9 @@ async function handleRequest(req, res) {
             adminUserId: user.id,
             adminUsername: user.username
           });
+          if (created && created.id) {
+            await supabaseService.syncAssessmentToSupabase(created.id);
+          }
           return sendJson(res, 201, created);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1293,6 +1372,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = assessmentService.updateAssessment(assessIdMatch[1], body, user.id, user.username);
+          await supabaseService.syncAssessmentToSupabase(assessIdMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1306,6 +1386,9 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const dup = assessmentService.duplicateAssessment(assessDupMatch[1], body.name, user.id, user.username);
+          if (dup && dup.id) {
+            await supabaseService.syncAssessmentToSupabase(dup.id);
+          }
           return sendJson(res, 201, dup);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1319,6 +1402,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = assessmentService.setAssessmentStatus(assessStatusMatch[1], body.status, user.id, user.username);
+          await supabaseService.syncAssessmentToSupabase(assessStatusMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1336,6 +1420,7 @@ async function handleRequest(req, res) {
             sectionName: body.section_name || 'Section 1',
             pointsOverride: body.points_override
           }, user.id, user.username);
+          await supabaseService.syncAssessmentToSupabase(assessAddQMatch[1]);
           return sendJson(res, 200, resAdd);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1353,6 +1438,10 @@ async function handleRequest(req, res) {
             sectionName: body.section_name || 'Section 1',
             pointsOverride: body.points_override
           }, user.id, user.username);
+          if (resCreate && resCreate.question && resCreate.question.id) {
+            await supabaseService.syncQuestionToSupabase(resCreate.question.id);
+          }
+          await supabaseService.syncAssessmentToSupabase(assessCreateQMatch[1]);
           return sendJson(res, 201, resCreate);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1409,6 +1498,7 @@ async function handleRequest(req, res) {
             user.id,
             user.username
           );
+          await supabaseService.syncAttemptToSupabase(adminRecalcMatch[1]);
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1557,8 +1647,8 @@ function createServer() {
   return http.createServer(handleRequest);
 }
 
-function startServer(port = PORT, dbPath = null) {
-  ensureAppInitialized(dbPath);
+async function startServer(port = PORT, dbPath = null) {
+  await ensureAppInitialized(dbPath);
 
   const server = createServer();
   return new Promise((resolve) => {
