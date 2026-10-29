@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api?__route=/api/$1"
+    },
+    {
+      "source": "/api",
+      "destination": "/api?__route=/api"
+    },
+    {
+      "source": "/((?!api/|Photos/|css/|js/|favicon\\.ico).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "src/db/schema.sql,data/eduque.db",
+      "maxDuration": 30
+    }
+  }
+}

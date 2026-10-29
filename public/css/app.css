@@ -1,0 +1,1615 @@
+/* ==========================================================================
+   EDUQE Corporate Identity & Website Design System (https://eduqe.co.za/)
+   Corporate Palette: #202020 (Deep Charcoal), #B5F44A (Electric Brand Lime),
+                      #353641 (Gunmetal Slate), #FFFFFF (Pure White)
+   Secondary:         #759EB5 (Slate Blue), #EDE4E7 (Warm Rose Neutral),
+                      #C9C2CC (Lavender Grey), #A08BA5 (Heather Purple)
+   Typography:        Montserrat (Headings, Navigation, CTAs, Badges),
+                      Aptos / Inter / Segoe UI (Body & Exam Content)
+   Identity:          EXPERTS IN IT TRAINING | Eduqe Exam Preparation System
+   ========================================================================== */
+
+:root {
+  /* Brand Core Tokens (eduqe.co.za) */
+  --brand-black: #202020;
+  --brand-charcoal-deep: #16161A;
+  --brand-lime: #B5F44A;
+  --brand-lime-hover: #A4E832;
+  --brand-lime-active: #92D81E;
+  --brand-lime-glow: rgba(181, 244, 74, 0.35);
+  --brand-slate: #353641;
+  --brand-slate-light: #454756;
+  --brand-white: #FFFFFF;
+
+  /* Secondary & Complimentary Palette */
+  --brand-blue: #759EB5;
+  --brand-blue-light: #EBF3F7;
+  --brand-rose: #EDE4E7;
+  --brand-lavender: #C9C2CC;
+  --brand-heather: #A08BA5;
+
+  /* Light Theme Semantic Tokens (High-contrast Charcoal + White + Lime) */
+  --primary: #202020;
+  --primary-hover: #353641;
+  --primary-light: #F3FCE2;
+  --primary-border: #BCEF63;
+
+  --accent: #B5F44A;
+  --accent-hover: #A4E832;
+  --accent-light: #F3FCE2;
+  --accent-text: #202020;
+
+  --secondary: #353641;
+  --secondary-hover: #202020;
+
+  --success: #18631E;
+  --success-bg: #F3FCE2;
+  --success-border: #B5F44A;
+  --success-text: #18631E;
+
+  --warning: #B45309;
+  --warning-bg: #FFFBEB;
+  --warning-border: #FDE68A;
+
+  --danger: #DC2626;
+  --danger-bg: #FEF2F2;
+  --danger-border: #FECACA;
+
+  --info: #4A7892;
+  --info-bg: #EBF3F7;
+  --info-border: #BBD2DF;
+
+  --bg: #F4F6F8;
+  --surface: #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --surface-subtle: #EEF1F5;
+  --surface-accent: #F3FCE2;
+  --border: #E2E6EE;
+  --border-strong: #C8D0DC;
+
+  --text-main: #202020;
+  --text-muted: #525665;
+  --text-subtle: #759EB5;
+  --text-inverse: #FFFFFF;
+
+  --btn-primary-bg: #B5F44A;
+  --btn-primary-text: #202020;
+  --btn-primary-hover: #A4E832;
+  --btn-primary-border: #9EE229;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 2px 5px 0 rgba(32, 32, 32, 0.05);
+  --shadow-md: 0 6px 16px -2px rgba(32, 32, 32, 0.08), 0 3px 6px -3px rgba(32, 32, 32, 0.05);
+  --shadow-lg: 0 18px 32px -6px rgba(22, 22, 26, 0.16), 0 6px 12px -4px rgba(22, 22, 26, 0.08);
+  --shadow-glow: 0 4px 20px rgba(181, 244, 74, 0.45);
+
+  --font-heading: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Aptos', 'Montserrat', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Dark Theme (Flagship eduqe.co.za Charcoal & Lime Presentation) */
+[data-theme="dark"] {
+  --bg: #141519;
+  --surface: #1F2026;
+  --surface-raised: #282A33;
+  --surface-subtle: #191A1F;
+  --surface-accent: rgba(181, 244, 74, 0.1);
+  --border: #323440;
+  --border-strong: #46495A;
+
+  --text-main: #FFFFFF;
+  --text-muted: #A6ACBE;
+  --text-subtle: #88B0C8;
+  --text-inverse: #202020;
+
+  --primary: #B5F44A;
+  --primary-hover: #C6F76E;
+  --primary-light: rgba(181, 244, 74, 0.14);
+  --primary-border: rgba(181, 244, 74, 0.38);
+
+  --accent: #B5F44A;
+  --accent-hover: #C6F76E;
+  --accent-light: rgba(181, 244, 74, 0.14);
+  --accent-text: #202020;
+
+  --secondary: #353641;
+  --secondary-hover: #484A59;
+
+  --success: #B5F44A;
+  --success-bg: rgba(181, 244, 74, 0.14);
+  --success-border: rgba(181, 244, 74, 0.42);
+  --success-text: #B5F44A;
+
+  --warning-bg: rgba(180, 83, 9, 0.22);
+  --warning-border: rgba(253, 230, 138, 0.35);
+
+  --danger-bg: rgba(220, 38, 38, 0.22);
+  --danger-border: rgba(254, 202, 202, 0.35);
+
+  --info: #8AB4CC;
+  --info-bg: rgba(117, 158, 181, 0.2);
+  --info-border: rgba(117, 158, 181, 0.45);
+
+  --btn-primary-bg: #B5F44A;
+  --btn-primary-text: #202020;
+  --btn-primary-hover: #C6F76E;
+  --btn-primary-border: #B5F44A;
+
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 18px 38px rgba(0, 0, 0, 0.68);
+  --shadow-glow: 0 0 24px rgba(181, 244, 74, 0.5);
+}
+
+/* ==========================================================================
+   Base & Reset
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 92% 4%, rgba(181, 244, 74, 0.07) 0%, transparent 35%),
+    radial-gradient(circle at 8% 92%, rgba(117, 158, 181, 0.06) 0%, transparent 35%);
+  background-attachment: fixed;
+  color: var(--text-main);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* Accessible visible focus indicators in brand lime */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--brand-lime);
+  outline-offset: 2px;
+}
+
+/* Typography & Headings */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  color: var(--text-main);
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+}
+
+p {
+  margin-bottom: 0.75rem;
+}
+
+code {
+  font-family: var(--font-mono);
+  background: var(--surface-subtle);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+/* ==========================================================================
+   Layout App Shell — Authentic eduqe.co.za Dark Charcoal Chrome
+   ========================================================================== */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar always uses Eduqe's signature Dark Charcoal (#202020) brand surface */
+.sidebar {
+  width: 276px;
+  background: linear-gradient(180deg, #1B1B1F 0%, #202020 55%, #262730 100%);
+  color: #FFFFFF;
+  border-right: 1px solid #323440;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 20;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.14);
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+.sidebar::before {
+  content: '';
+  display: block;
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--brand-lime) 0%, #759EB5 100%);
+  flex-shrink: 0;
+}
+
+.sidebar-header {
+  padding: 1.35rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #FFFFFF;
+  text-decoration: none;
+}
+
+.eduqe-brand-logo {
+  display: block;
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+
+.eduqe-hero-logo {
+  display: block;
+  height: 46px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 10px rgba(181, 244, 74, 0.2));
+}
+
+.eduqe-logo-plinth {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1A1A1E 0%, #262730 100%);
+  padding: 0.65rem 1.35rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(181, 244, 74, 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.eduqe-logo {
+  display: block;
+  height: 40px;
+  width: auto;
+  object-fit: contain;
+}
+
+.brand-badge {
+  font-family: var(--font-heading);
+  font-size: 0.625rem;
+  font-weight: 800;
+  padding: 0.22rem 0.55rem;
+  border-radius: var(--radius-full);
+  background: var(--brand-lime);
+  color: var(--brand-black);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: 0 0 12px rgba(181, 244, 74, 0.35);
+}
+
+.nav-list {
+  list-style: none;
+  padding: 1.1rem 0.85rem;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nav-item {
+  margin-bottom: 0.35rem;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--radius-md);
+  color: rgba(255, 255, 255, 0.72);
+  text-decoration: none;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: all 0.18s ease;
+  border-left: 3px solid transparent;
+}
+
+.nav-link:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #FFFFFF;
+  transform: translateX(3px);
+}
+
+.nav-link.active {
+  background: linear-gradient(90deg, rgba(181, 244, 74, 0.18) 0%, rgba(181, 244, 74, 0.04) 100%);
+  color: var(--brand-lime);
+  border-left-color: var(--brand-lime);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(181, 244, 74, 0.2);
+}
+
+.sidebar-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.sidebar-footer strong,
+.sidebar-footer .footer-brand-title {
+  color: #FFFFFF;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.top-navbar {
+  height: 68px;
+  background-color: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-top: 3px solid var(--brand-lime);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.75rem;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: var(--shadow-sm);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.page-container {
+  padding: 1.75rem 2rem;
+  flex: 1;
+  max-width: 1420px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ==========================================================================
+   Eduqe Website Hero Banners & OEM Ecosystem Strips
+   ========================================================================== */
+.eduqe-hero-banner {
+  background: linear-gradient(135deg, #1A1A1E 0%, #24252E 55%, #30323E 100%);
+  color: #FFFFFF;
+  border-radius: var(--radius-lg);
+  padding: 1.85rem 2rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(181, 244, 74, 0.28);
+  border-left: 5px solid var(--brand-lime);
+  box-shadow: var(--shadow-md);
+}
+
+.eduqe-hero-banner::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -10%;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, rgba(181, 244, 74, 0.16) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.eduqe-hero-banner h1,
+.eduqe-hero-banner h2,
+.eduqe-hero-banner h3 {
+  color: #FFFFFF;
+}
+
+.eduqe-hero-banner .form-hint,
+.eduqe-hero-banner p {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.eduqe-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--font-heading);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand-lime);
+  background: rgba(181, 244, 74, 0.12);
+  border: 1px solid rgba(181, 244, 74, 0.35);
+  padding: 0.28rem 0.75rem;
+  border-radius: var(--radius-full);
+  margin-bottom: 0.65rem;
+}
+
+.oem-pill-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.oem-pill {
+  font-family: var(--font-heading);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
+  transition: all 0.15s ease;
+}
+
+.oem-pill:hover {
+  border-color: var(--brand-lime);
+  color: var(--brand-lime);
+  background: rgba(181, 244, 74, 0.1);
+}
+
+/* ==========================================================================
+   Cards & Surface Components
+   ========================================================================== */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.4rem;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 1.25rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.15rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-title {
+  font-family: var(--font-heading);
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+
+/* Metric Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1.1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--brand-lime);
+  border-radius: var(--radius-md);
+  padding: 1.25rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--brand-lime);
+}
+
+.stat-label {
+  font-family: var(--font-heading);
+  font-size: 0.725rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.07em;
+  margin-bottom: 0.4rem;
+}
+
+.stat-value {
+  font-family: var(--font-heading);
+  font-size: 2.05rem;
+  font-weight: 900;
+  color: var(--text-main);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.stat-subtext {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+/* Welcome Banner Component (eduqe.co.za Charcoal + Lime Hero Card) */
+.banner-welcome {
+  background: linear-gradient(135deg, #1D1E24 0%, #282A34 60%, #353641 100%) !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(181, 244, 74, 0.35) !important;
+  border-left: 5px solid var(--brand-lime) !important;
+  box-shadow: var(--shadow-md) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.banner-welcome::after {
+  content: '';
+  position: absolute;
+  right: -60px;
+  top: -60px;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle, rgba(181, 244, 74, 0.18) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.banner-welcome h1,
+.banner-welcome h2,
+.banner-welcome h3,
+.banner-welcome strong {
+  color: #FFFFFF !important;
+}
+
+.banner-welcome .form-hint {
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+/* ==========================================================================
+   Buttons & Interactive Elements (eduqe.co.za Pill / Rounded Bold CTAs)
+   ========================================================================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.2rem;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  line-height: 1.25;
+}
+
+.btn-primary {
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border-color: var(--btn-primary-border);
+  font-weight: 800;
+  box-shadow: 0 3px 10px rgba(181, 244, 74, 0.28);
+}
+
+.btn-primary:hover {
+  background-color: var(--btn-primary-hover);
+  color: var(--btn-primary-text);
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1.5px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background-color: var(--surface);
+  color: var(--text-main);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover {
+  background-color: var(--surface-subtle);
+  border-color: var(--brand-slate);
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+  border-color: var(--brand-lime);
+}
+
+.btn-warning {
+  background-color: #F59E0B;
+  color: #202020;
+  border-color: #D97706;
+  font-weight: 800;
+}
+
+.btn-warning:hover {
+  background-color: #FBBF24;
+  transform: translateY(-1px);
+}
+
+.btn-accent {
+  background-color: var(--brand-slate);
+  color: #fff;
+  border-color: var(--brand-slate);
+}
+
+.btn-accent:hover {
+  background-color: var(--brand-black);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  opacity: 0.92;
+  box-shadow: 0 0 12px rgba(220, 38, 38, 0.35);
+}
+
+.btn-sm {
+  padding: 0.38rem 0.8rem;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-lg {
+  padding: 0.85rem 1.75rem;
+  font-size: 0.95rem;
+  border-radius: var(--radius-md);
+}
+
+/* ==========================================================================
+   Badges
+   ========================================================================== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-heading);
+  font-size: 0.725rem;
+  font-weight: 700;
+  padding: 0.26rem 0.68rem;
+  border-radius: var(--radius-full);
+  line-height: 1;
+  letter-spacing: 0.03em;
+}
+
+.badge-primary {
+  background: var(--primary-light);
+  color: var(--text-main);
+  border: 1px solid var(--brand-lime);
+}
+[data-theme="dark"] .badge-primary {
+  color: var(--brand-lime);
+}
+
+.badge-secondary {
+  background: var(--surface-subtle);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+}
+
+.badge-success {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.badge-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.badge-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+}
+
+.badge-neutral {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.badge-info {
+  background: var(--info-bg);
+  color: var(--info);
+  border: 1px solid var(--info-border);
+}
+
+/* ==========================================================================
+   Data Tables (Structured eduqe.co.za Course Schedule / Roster Aesthetic)
+   ========================================================================== */
+.table-container {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/* Question Bank Expanded View & Generous Table Sizing */
+.page-container:has(#qb-table-wrapper),
+.page-container:has(.qb-table-wrapper),
+.page-container.qb-expanded-view {
+  max-width: 98% !important;
+  width: 98% !important;
+  padding: 1.5rem 1.75rem !important;
+}
+
+.qb-table-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.qb-table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: calc(100vh - 240px);
+  position: relative;
+}
+
+.qb-table {
+  width: 100%;
+  min-width: 1360px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+}
+
+.qb-table th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background-color: #1A1A1E !important;
+  color: #FFFFFF !important;
+  padding: 1rem 1.25rem !important;
+  font-size: 0.775rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
+  border-bottom: 2.5px solid var(--brand-lime) !important;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .qb-table th {
+  background-color: #14151A !important;
+  color: var(--brand-lime) !important;
+}
+
+.qb-table td {
+  padding: 1.05rem 1.25rem !important;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.qb-table tr:hover td {
+  background-color: var(--surface-subtle) !important;
+}
+
+.qb-col-check {
+  width: 48px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.qb-col-question {
+  min-width: 440px;
+  width: auto;
+}
+
+.qb-col-type {
+  width: 145px;
+  min-width: 145px;
+  text-align: center;
+}
+
+.qb-col-course {
+  width: 165px;
+  min-width: 165px;
+}
+
+.qb-col-difficulty {
+  width: 110px;
+  min-width: 110px;
+  text-align: center;
+}
+
+.qb-col-status {
+  width: 115px;
+  min-width: 115px;
+  text-align: center;
+}
+
+.qb-col-version {
+  width: 90px;
+  min-width: 90px;
+  text-align: center;
+}
+
+.qb-col-used {
+  width: 110px;
+  min-width: 110px;
+  text-align: center;
+}
+
+.qb-col-actions {
+  width: 180px;
+  min-width: 180px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.qb-scenario-preview {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 0.35rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.table,
+.table-container table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.table th,
+.table-container table th {
+  background-color: #202020;
+  color: #FFFFFF;
+  padding: 0.9rem 1.05rem;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid var(--brand-lime);
+}
+
+[data-theme="dark"] .table th,
+[data-theme="dark"] .table-container table th {
+  background-color: #16171C;
+  color: var(--brand-lime);
+}
+
+.table td,
+.table-container table td {
+  padding: 0.95rem 1.05rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.table tr:last-child td,
+.table-container table tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover td,
+.table-container table tbody tr:hover td {
+  background-color: var(--surface-subtle);
+}
+
+/* ==========================================================================
+   Forms & Inputs
+   ========================================================================== */
+.form-group {
+  margin-bottom: 1.15rem;
+}
+
+.form-label {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  color: var(--text-main);
+}
+
+.form-hint {
+  font-size: 0.785rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+  line-height: 1.45;
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.9rem;
+  font-family: var(--font-sans);
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border-strong);
+  background-color: var(--surface);
+  color: var(--text-main);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus {
+  border-color: var(--brand-lime);
+  box-shadow: 0 0 0 3px rgba(181, 244, 74, 0.28);
+  outline: none;
+}
+
+textarea.form-control {
+  min-height: 95px;
+  resize: vertical;
+}
+
+/* Question Scenario Box */
+.question-description-box {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--brand-lime);
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.35rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9375rem;
+}
+
+.question-description-box h4 {
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: var(--text-main);
+  letter-spacing: 0.06em;
+  margin-bottom: 0.5rem;
+}
+
+/* Question Types Answer Cards */
+.options-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.option-card {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.95rem 1.15rem;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.option-card:hover {
+  border-color: var(--brand-lime);
+  background-color: var(--primary-light);
+}
+
+.option-card.selected {
+  border-color: var(--brand-lime);
+  background-color: var(--primary-light);
+  box-shadow: 0 0 0 1px var(--brand-lime);
+}
+
+.option-card input[type="radio"],
+.option-card input[type="checkbox"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--brand-lime);
+  cursor: pointer;
+}
+
+/* Drag and Drop Zone */
+.dnd-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 85px;
+  background: var(--surface-subtle);
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+}
+
+.dnd-card {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0.8rem 1rem;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-sm);
+  touch-action: none;
+}
+
+.dnd-card:active {
+  cursor: grabbing;
+}
+
+/* Microsoft Exam Style DRAG DROP Component */
+.ms-drag-container {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 1.25rem;
+  margin-top: 1rem;
+}
+
+.ms-drag-header-badge {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.825rem;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--accent, #0098db);
+  margin-bottom: 0.25rem;
+}
+
+.ms-drag-board {
+  display: grid;
+  grid-template-columns: 280px 1px 1fr;
+  gap: 1.25rem;
+  margin-top: 1.25rem;
+  align-items: stretch;
+}
+
+@media (max-width: 820px) {
+  .ms-drag-board {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  .ms-drag-divider {
+    display: none;
+  }
+}
+
+.ms-drag-divider {
+  background: var(--border);
+  width: 1px;
+  height: 100%;
+}
+
+.ms-drag-column-title {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--accent, #00a4ef);
+  margin-bottom: 1rem;
+}
+
+.ms-drag-card {
+  border: 2px solid #00a4ef;
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 0.65rem 0.85rem;
+  border-radius: 3px;
+  margin-bottom: 0.75rem;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.925rem;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ms-drag-card:hover {
+  box-shadow: 0 3px 8px rgba(0, 164, 239, 0.18);
+  border-color: #0078d4;
+  transform: translateY(-1px);
+}
+
+.ms-drag-card:active, .ms-drag-card.dragging {
+  cursor: grabbing;
+  opacity: 0.6;
+}
+
+.ms-drag-card.selected-source {
+  border-color: var(--brand-lime, #62b017);
+  box-shadow: 0 0 0 3px rgba(98, 176, 23, 0.28);
+  background: #f6fff0;
+}
+
+.ms-drag-target-row {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.ms-drag-target-row:hover {
+  background: rgba(0, 164, 239, 0.03);
+}
+
+.ms-drag-dropzone {
+  width: 220px;
+  min-width: 220px;
+  height: 46px;
+  min-height: 46px;
+  border: 2px dashed #00a4ef;
+  border-radius: 3px;
+  background: #fbfcff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.65rem;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+  position: relative;
+  cursor: pointer;
+}
+
+.ms-drag-dropzone.drag-over {
+  border-color: var(--brand-lime, #62b017);
+  background: rgba(98, 176, 23, 0.14);
+  transform: scale(1.02);
+}
+
+.ms-drag-dropzone.filled {
+  border-style: solid;
+  border-color: #0078d4;
+  background: #f4f9fd;
+}
+
+.ms-drag-dropzone .dz-placeholder {
+  color: #0078d4;
+  font-size: 0.8rem;
+  font-style: italic;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.ms-drag-dropzone .dz-filled-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #004578;
+}
+
+.ms-drag-dropzone .btn-clear-dz {
+  background: transparent;
+  border: none;
+  color: #d13438;
+  cursor: pointer;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  font-weight: 700;
+}
+
+.ms-drag-dropzone .btn-clear-dz:hover {
+  color: #a80000;
+  transform: scale(1.15);
+}
+
+.ms-drag-target-text {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  line-height: 1.45;
+  font-weight: 500;
+  flex: 1;
+}
+
+.accessible-action-btns {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* Assessment Player Layout */
+.assessment-player {
+  display: grid;
+  grid-template-columns: 1fr 310px;
+  gap: 1.5rem;
+}
+
+.player-main {
+  min-width: 0;
+}
+
+.player-sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--brand-lime);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem;
+  height: fit-content;
+  position: sticky;
+  top: 84px;
+}
+
+/* Authoritative Timer Badge */
+.timer-badge {
+  font-family: var(--font-mono);
+  font-size: 1.3rem;
+  font-weight: 800;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius-md);
+  background: #202020;
+  border: 1px solid var(--brand-lime);
+  color: var(--brand-lime);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.timer-badge.warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning-border);
+  animation: pulseWarning 1.5s infinite;
+}
+
+.timer-badge.danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+  animation: pulseDanger 1s infinite;
+}
+
+@keyframes pulseWarning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+@keyframes pulseDanger {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+/* Question Navigator Palette */
+.nav-palette {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.palette-btn {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  font-family: var(--font-heading);
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.palette-btn.active {
+  border-color: var(--brand-lime);
+  box-shadow: 0 0 0 2px var(--brand-lime);
+  color: var(--text-main);
+}
+
+.palette-btn.answered {
+  background: var(--primary-light);
+  border-color: var(--primary-border);
+  color: var(--text-main);
+  font-weight: 800;
+}
+[data-theme="dark"] .palette-btn.answered {
+  color: var(--brand-lime);
+}
+
+.palette-btn.flagged::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+/* Autosave indicator */
+.autosave-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8125rem;
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Modals & Dialogs
+   ========================================================================== */
+dialog {
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--brand-lime);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  max-width: 650px;
+  width: 90vw;
+  color: var(--text-main);
+}
+
+dialog::backdrop {
+  background: rgba(20, 21, 25, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.modal-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-body {
+  padding: 1.5rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.modal-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  background: var(--surface-subtle);
+}
+
+/* ==========================================================================
+   Login / Registration Screen (https://eduqe.co.za/ Hero Showcase Layout)
+   ========================================================================== */
+#login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+  background-color: #16171C !important;
+  background-image:
+    radial-gradient(circle at 82% 18%, rgba(181, 244, 74, 0.14) 0%, transparent 45%),
+    radial-gradient(circle at 12% 82%, rgba(117, 158, 181, 0.1) 0%, transparent 42%),
+    linear-gradient(135deg, #141519 0%, #202020 50%, #2B2D38 100%) !important;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.login-bg-decorations {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.login-contour-bubble {
+  position: absolute;
+  right: -120px;
+  bottom: -120px;
+  width: 740px;
+  height: 740px;
+  opacity: 0.85;
+}
+
+.auth-showcase-grid {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 1180px;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 2.75rem;
+  align-items: center;
+}
+
+.eduqe-auth-hero {
+  color: #FFFFFF;
+  padding: 1rem 0.5rem;
+}
+
+.eduqe-auth-hero h1 {
+  color: #FFFFFF;
+  font-size: 2.55rem;
+  font-weight: 900;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  margin-bottom: 1rem;
+}
+
+.eduqe-auth-hero h1 .lime-accent {
+  color: var(--brand-lime);
+}
+
+.eduqe-auth-hero .hero-lead {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 1.025rem;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+  max-width: 540px;
+}
+
+.eduqe-pillars-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+.eduqe-pillar-card {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid var(--brand-lime);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  backdrop-filter: blur(6px);
+}
+
+.eduqe-pillar-card strong {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 0.825rem;
+  color: #FFFFFF;
+  margin-bottom: 0.2rem;
+}
+
+.eduqe-pillar-card span {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.35;
+  display: block;
+}
+
+.auth-card-wrapper {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.auth-card-wrapper > .card {
+  border-top: 4px solid var(--brand-lime);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* ==========================================================================
+   Toast Notifications
+   ========================================================================== */
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.25rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-heading);
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  max-width: 400px;
+  animation: toastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.toast-success {
+  background: var(--success-bg);
+  border-color: var(--brand-lime);
+  color: var(--text-main);
+}
+[data-theme="dark"] .toast-success {
+  color: var(--brand-lime);
+}
+
+.toast-error {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.toast-info {
+  background: var(--primary-light);
+  border-color: var(--brand-lime);
+  color: var(--text-main);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ==========================================================================
+   Responsive Media Queries
+   ========================================================================== */
+@media (max-width: 980px) {
+  .auth-showcase-grid {
+    grid-template-columns: 1fr;
+    gap: 1.75rem;
+  }
+  .eduqe-auth-hero h1 {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: relative;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .assessment-player {
+    grid-template-columns: 1fr;
+  }
+  .player-sidebar {
+    position: static;
+  }
+}

@@ -1,0 +1,20 @@
+# Dependencies & Environments
+node_modules/
+.env
+.env.local
+
+# Vercel build output
+.vercel/
+
+# System / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large local files not required by runtime
+*.pdf
+
+# SQLite WAL and lock files
+data/*.db-shm
+data/*.db-wal

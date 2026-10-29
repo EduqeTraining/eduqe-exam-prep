@@ -1,0 +1,16 @@
+# Reference documents and raw assets
+*.pdf
+
+# Automated test suite
+tests/
+
+# Local scripts
+start.bat
+
+# Git metadata
+.git/
+.github/
+
+# SQLite lock and temporary journal files
+data/*.db-shm
+data/*.db-wal
