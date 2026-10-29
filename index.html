@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Eduqe - Enterprise Exam Preparation and Learning Assessment Platform">
+  <title>Eduqe - Exam Preparation Platform | Experts in IT Training</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path d='M 32 4 C 47.46 4 60 16.54 60 32 C 60 38.77 57.55 44.95 53.47 49.73 L 63.5 62.5 L 48.92 57.25 C 44.02 59.47 38.18 60 32 60 C 16.54 60 4 47.46 4 32 C 4 16.54 16.54 4 32 4 Z M 32 18.5 C 24.54 18.5 18.5 24.54 18.5 32 C 18.5 39.46 24.54 45.5 32 45.5 C 39.46 45.5 45.5 39.46 45.5 32 C 45.5 24.54 39.46 18.5 32 18.5 Z' fill='%23B5F44A' fill-rule='evenodd'/></svg>">
+  <script>
+    // Helpful guide if opened via file:/// instead of http://localhost:3000
+    if (window.location.protocol === 'file:') {
+      document.addEventListener('DOMContentLoaded', () => {
+        document.body.innerHTML = `
+          <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; max-width:680px; margin:4rem auto; padding:2.5rem; border:1px solid #cbd5e1; border-radius:14px; box-shadow:0 12px 28px rgba(0,0,0,0.08); background:#ffffff; color:#0f172a; text-align:center; line-height:1.6;">
+            <div style="font-size:3.5rem; margin-bottom:1rem;">⚠️</div>
+            <h1 style="font-size:1.75rem; color:#1e40af; margin-bottom:0.75rem; font-weight:800;">Local Web Server Required</h1>
+            <p style="color:#475569; margin-bottom:1.75rem; font-size:1.05rem;">
+              You opened <strong>index.html</strong> directly from Windows Explorer (<code>file:///</code>). Modern web browsers block JavaScript modules and API calls when opened directly from disk.
+            </p>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:1.5rem; border-radius:10px; text-align:left; margin-bottom:1.5rem;">
+              <h3 style="font-size:1rem; margin-bottom:0.75rem; color:#0f172a;">How to open Eduqe properly:</h3>
+              <ol style="padding-left:1.25rem; display:flex; flex-direction:column; gap:0.5rem; font-size:0.95rem; color:#334155;">
+                <li>
+                  Double-click <strong>start.bat</strong> in the project folder<br>
+                  <em style="color:#64748b; font-size:0.85rem;">(or run <code>node src/server.js</code> in your terminal)</em>
+                </li>
+                <li>
+                  Open your browser and navigate to: <br>
+                  <a href="http://localhost:3000" style="color:#2563eb; font-weight:700; font-size:1.1rem; text-decoration:underline;">http://localhost:3000</a>
+                </li>
+              </ol>
+            </div>
+            <p style="font-size:0.875rem; color:#64748b; margin:0;">
+              Eduqe requires its active backend engine for authentication, timer verification, and SQLite database storage.
+            </p>
+          </div>
+        `;
+      });
+    }
+  </script>
+</head>
+<body>
+
+  <!-- Fullscreen Login View (Shown when unauthenticated) -->
+  <div id="login-container" style="display:none; min-height:100vh; align-items:center; justify-content:center; background:var(--bg); padding:1.5rem;"></div>
+
+  <!-- Authenticated Application Shell -->
+  <div id="app-shell" class="app-shell" style="display:none;">
+    
+    <!-- Sidebar Navigation -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <a href="#dashboard" class="brand" aria-label="Eduqe Home">
+          <img src="./Photos/Eduqe-Logo-2025.webp" alt="Eduqe Logo" class="eduqe-brand-logo" width="142" height="36" />
+        </a>
+        <span class="brand-badge">EXAM PREP</span>
+      </div>
+
+      <ul id="nav-list" class="nav-list">
+        <!-- Dynamically populated based on user role -->
+      </ul>
+
+      <div class="sidebar-footer">
+        <div style="font-size:0.75rem; line-height:1.45;">
+          <div class="footer-brand-title" style="font-weight:800; color:#FFFFFF; font-family:var(--font-heading); letter-spacing:0.03em; display:flex; align-items:center; gap:0.4rem;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-lime); box-shadow:0 0 8px var(--brand-lime);"></span>
+            EDUQE EXAM SYSTEM
+          </div>
+          <div style="font-size:0.7rem; color:rgba(255,255,255,0.75); letter-spacing:0.03em; margin-top:2px;">
+            Experts in IT Training &bull; Centurion
+          </div>
+          <div style="font-size:0.68rem; color:var(--brand-lime); font-weight:600; margin-top:3px;">
+            info@eduqe.co.za &bull; eduqe.co.za
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header id="top-navbar" class="top-navbar"></header>
+      <div id="page-container" class="page-container">
+        <!-- SPA views render here -->
+      </div>
+    </main>
+  </div>
+
+  <!-- Mandatory Password Change Dialog (Section 3) -->
+  <dialog id="modal-change-password"></dialog>
+
+  <!-- Global Toast Notifications Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Application Bootstrap -->
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

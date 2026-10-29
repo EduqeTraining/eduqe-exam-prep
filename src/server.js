@@ -1568,9 +1568,9 @@ if (require.main === module) {
   startServer();
 }
 
-module.exports = {
-  createServer,
-  startServer,
-  handleRequest,
-  ensureAppInitialized
-};
+handleRequest.createServer = createServer;
+handleRequest.startServer = startServer;
+handleRequest.handleRequest = handleRequest;
+handleRequest.ensureAppInitialized = ensureAppInitialized;
+
+module.exports = handleRequest;

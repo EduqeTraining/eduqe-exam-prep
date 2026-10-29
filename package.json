@@ -2,7 +2,7 @@
   "name": "eduqe",
   "version": "1.0.0",
   "description": "Eduqe - Modern Exam Preparation & Assessment Platform",
-  "main": "src/server.js",
+  "main": "api/index.js",
   "engines": {
     "node": "22.x"
   },
