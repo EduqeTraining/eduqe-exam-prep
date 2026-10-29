@@ -307,7 +307,34 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   }
 
   // 2. Select target class
-  let targetClass = assignedClasses.find(c => c.id === requestedClassId) || assignedClasses[0];
+  let targetClass = assignedClasses.find(c => c.id === requestedClassId);
+  if (!targetClass && requestedClassId) {
+    targetClass = db.get(
+      `SELECT cl.*, c.name as course_name, c.code as course_code,
+              (SELECT COUNT(*) FROM class_enrollments ce WHERE ce.class_id = cl.id AND ce.status = 'active') as student_count,
+              (SELECT COUNT(*) FROM assessment_classes ac WHERE ac.class_id = cl.id) as assessment_count,
+              COALESCE(
+                (SELECT cac.code FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                (SELECT cac.code FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
+              ) as active_code,
+              COALESCE(
+                (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
+              ) as code_max_uses,
+              COALESCE(
+                (SELECT cac.used_count FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                (SELECT cac.used_count FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                0
+              ) as code_used_count
+       FROM classes cl
+       LEFT JOIN courses c ON c.id = cl.course_id
+       WHERE cl.id = ?`,
+      [requestedClassId]
+    );
+  }
+  if (!targetClass) {
+    targetClass = assignedClasses[0];
+  }
 
   // Discover assessments & sections configured for this class / course (DISTINCT to prevent join duplicates)
   let classAssessments = db.all(
@@ -906,7 +933,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
      LEFT JOIN assessments a ON a.id = sa.assessment_id
      WHERE (sa.class_id = ? OR a.course_id = ? OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        AND sa.status IN ('submitted', 'marked', 'awaiting_review')
-     ORDER BY sa.submitted_at DESC
+     ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC
      LIMIT 10`,
     [targetClass.id, targetClass.course_id, targetClass.id]
   );

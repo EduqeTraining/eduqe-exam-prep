@@ -462,7 +462,8 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
         [assignedAssessment.id, classId]
       );
       if (!exists) {
-        db.run('INSERT INTO assessment_classes (assessment_id, class_id) VALUES (?, ?)', [assignedAssessment.id, classId]);
+        const acId = generateId();
+        db.run('INSERT INTO assessment_classes (id, assessment_id, class_id) VALUES (?, ?, ?)', [acId, assignedAssessment.id, classId]);
       }
     }
   }
@@ -521,7 +522,8 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
 
     // Link to class
     if (classId) {
-      db.run('INSERT INTO assessment_classes (assessment_id, class_id) VALUES (?, ?)', [assessId, classId]);
+      const acId = generateId();
+      db.run('INSERT INTO assessment_classes (id, assessment_id, class_id) VALUES (?, ?, ?)', [acId, assessId, classId]);
     }
 
     // Link all questions to the assessment

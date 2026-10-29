@@ -72,13 +72,8 @@ async function pullTable(table) {
     const localColSet = new Set(tableCols.map(c => c.name));
 
     if (rows.length === 0) {
-      if (hasId) {
-        try {
-          db.run(`DELETE FROM "${table}"`);
-        } catch (delErr) {
-          // Ignore FK constraints if table has active references
-        }
-      }
+      // If remote table has 0 rows, preserve existing local cache rows to prevent
+      // wiping newly seeded records or in-flight attempts before they sync
       tableLastSync.set(table, Date.now());
       return 0;
     }
@@ -91,36 +86,48 @@ async function pullTable(table) {
     const colNames = matchingCols.map(c => `"${c}"`).join(', ');
     const remoteIds = hasId ? new Set(rows.map(r => String(r.id))) : null;
 
-    db.transaction(() => {
-      // 1. Reconcile deleted rows: Remove any local row not present in Supabase
-      if (hasId && remoteIds) {
-        const localRows = db.all(`SELECT id FROM "${table}"`);
-        for (const local of localRows) {
-          if (!remoteIds.has(String(local.id))) {
-            try {
-              db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
-            } catch (delErr) {
-              // Ignore FK constraint if row is referenced by other local tables
+    // Temporarily turn OFF foreign key checks during hydration from Supabase
+    // to prevent rollback due to inter-table foreign key resolution order
+    try {
+      db.run('PRAGMA foreign_keys = OFF;');
+    } catch (e) {}
+
+    try {
+      db.transaction(() => {
+        // 1. Reconcile deleted rows: Remove any local row not present in Supabase
+        if (hasId && remoteIds && remoteIds.size > 0) {
+          const localRows = db.all(`SELECT id FROM "${table}"`);
+          for (const local of localRows) {
+            if (!remoteIds.has(String(local.id))) {
+              try {
+                db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
+              } catch (delErr) {
+                // Ignore FK constraint if row is referenced by other local tables
+              }
             }
           }
         }
-      }
 
-      // 2. Insert or replace latest rows from Supabase
-      for (const row of rows) {
-        const vals = matchingCols.map(c => {
-          const val = row[c];
-          if (val !== null && typeof val === 'object') {
-            return JSON.stringify(val);
-          }
-          return val;
-        });
-        db.run(
-          `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
-          vals
-        );
-      }
-    });
+        // 2. Insert or replace latest rows from Supabase
+        for (const row of rows) {
+          const vals = matchingCols.map(c => {
+            const val = row[c];
+            if (val !== null && typeof val === 'object') {
+              return JSON.stringify(val);
+            }
+            return val;
+          });
+          db.run(
+            `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
+            vals
+          );
+        }
+      });
+    } finally {
+      try {
+        db.run('PRAGMA foreign_keys = ON;');
+      } catch (e) {}
+    }
 
     tableLastSync.set(table, Date.now());
     return rows.length;
@@ -280,12 +287,24 @@ async function syncAssessmentToSupabase(assessmentOrId) {
   const db = getDatabase();
   const assess = typeof assessmentOrId === 'string' ? db.get('SELECT * FROM assessments WHERE id = ?', [assessmentOrId]) : assessmentOrId;
   if (!assess) return;
+
+  if (assess.course_id) {
+    try {
+      await syncCourseToSupabase(assess.course_id);
+    } catch (e) {}
+  }
+
   await upsertRecord('assessments', assess);
 
   try {
     const aqs = db.all('SELECT * FROM assessment_questions WHERE assessment_id = ?', [assess.id]);
     if (aqs && aqs.length > 0) {
       for (const aq of aqs) {
+        if (aq.question_id) {
+          try {
+            await syncQuestionToSupabase(aq.question_id);
+          } catch (e) {}
+        }
         await upsertRecord('assessment_questions', aq);
       }
     }
@@ -346,12 +365,35 @@ async function syncAttemptToSupabase(attemptId) {
   const db = getDatabase();
   const attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
   if (!attempt) return;
+
+  // Guarantee referenced parent entities (assessment, class, user) exist in Supabase first
+  if (attempt.assessment_id) {
+    try {
+      await syncAssessmentToSupabase(attempt.assessment_id);
+    } catch (e) {}
+  }
+  if (attempt.class_id) {
+    try {
+      await syncClassToSupabase(attempt.class_id);
+    } catch (e) {}
+  }
+  if (attempt.user_id) {
+    try {
+      await syncUserToSupabase(attempt.user_id);
+    } catch (e) {}
+  }
+
   await upsertRecord('student_attempts', attempt);
 
   try {
     const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
     if (answers && answers.length > 0) {
       for (const ans of answers) {
+        if (ans.question_id) {
+          try {
+            await syncQuestionToSupabase(ans.question_id);
+          } catch (e) {}
+        }
         await upsertRecord('attempt_answers', ans);
       }
     }

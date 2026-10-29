@@ -395,7 +395,7 @@ function getAttemptState(attemptId, userId) {
             c.name as course_name, cl.name as class_name
      FROM student_attempts sa
      JOIN assessments a ON a.id = sa.assessment_id
-     JOIN courses c ON c.id = a.course_id
+     LEFT JOIN courses c ON c.id = a.course_id
      LEFT JOIN classes cl ON cl.id = sa.class_id
      WHERE sa.id = ?`,
     [attemptId]
