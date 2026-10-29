@@ -181,7 +181,15 @@ async function deleteRecord(tableName, id) {
 async function syncUserToSupabase(userOrId) {
   if (!userOrId) return;
   const db = getDatabase();
-  const user = typeof userOrId === 'string' ? db.get('SELECT * FROM users WHERE id = ?', [userOrId]) : userOrId;
+  let user = null;
+  if (typeof userOrId === 'string') {
+    user = db.get('SELECT * FROM users WHERE id = ?', [userOrId]);
+  } else if (userOrId && userOrId.id) {
+    // If user object was passed (e.g. from authService), re-fetch from SQLite to guarantee password_hash and timestamps exist
+    user = db.get('SELECT * FROM users WHERE id = ?', [userOrId.id]) || userOrId;
+  } else {
+    user = userOrId;
+  }
   if (!user) return;
   return await upsertRecord('users', user);
 }
@@ -193,7 +201,7 @@ async function syncClassToSupabase(classOrId) {
   if (!cls) return;
   await upsertRecord('classes', cls);
 
-  // Sync associated active codes
+  // Sync associated active codes and assessment links
   try {
     const codes = db.all('SELECT * FROM course_access_codes WHERE class_id = ?', [cls.id]);
     if (codes && codes.length > 0) {
@@ -201,8 +209,14 @@ async function syncClassToSupabase(classOrId) {
         await upsertRecord('course_access_codes', code);
       }
     }
+    const acLinks = db.all('SELECT * FROM assessment_classes WHERE class_id = ?', [cls.id]);
+    if (acLinks && acLinks.length > 0) {
+      for (const ac of acLinks) {
+        await upsertRecord('assessment_classes', ac);
+      }
+    }
   } catch (e) {
-    // Ignore code query error
+    // Ignore relational query error
   }
 }
 

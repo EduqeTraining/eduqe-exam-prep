@@ -233,6 +233,7 @@ async function handleRequest(req, res) {
       // 1. AUTHENTICATION ENDPOINTS
       // -------------------------------------------------------------
       if (req.method === 'POST' && pathname === '/api/auth/login') {
+        await supabaseService.ensureTableFresh('users');
         const body = await parseBody(req);
         try {
           const result = authService.login({
@@ -263,6 +264,9 @@ async function handleRequest(req, res) {
             await supabaseService.syncUserToSupabase(result.user);
             if (result.redeemedCourse && result.redeemedCourse.enrollment) {
               await supabaseService.syncEnrollmentToSupabase(result.redeemedCourse.enrollment);
+              if (result.redeemedCourse.enrollment.granted_by_code_id) {
+                await supabaseService.syncAccessCodeToSupabase(result.redeemedCourse.enrollment.granted_by_code_id);
+              }
             }
           }
           return sendJson(res, 201, result);
@@ -279,6 +283,7 @@ async function handleRequest(req, res) {
       }
 
       if (req.method === 'GET' && pathname === '/api/auth/me') {
+        await supabaseService.ensureTableFresh('users');
         const user = requireAuth(req, res);
         if (!user) return;
         return sendJson(res, 200, { user });
@@ -317,6 +322,12 @@ async function handleRequest(req, res) {
           });
           if (result && result.enrollment) {
             await supabaseService.syncEnrollmentToSupabase(result.enrollment);
+            if (result.enrollment.granted_by_code_id) {
+              await supabaseService.syncAccessCodeToSupabase(result.enrollment.granted_by_code_id);
+            }
+          }
+          if (result && result.assessment && result.assessment.id) {
+            await supabaseService.syncAssessmentToSupabase(result.assessment.id);
           }
           return sendJson(res, 200, result);
         } catch (err) {
@@ -334,6 +345,7 @@ async function handleRequest(req, res) {
         await supabaseService.ensureTableFresh('class_enrollments');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('assessments');
+        await supabaseService.ensureTableFresh('assessment_classes');
         await supabaseService.ensureTableFresh('student_attempts');
 
         // Enforce rule: Purge questions and previous results for any expired certifications
@@ -430,8 +442,9 @@ async function handleRequest(req, res) {
             forceNew: Boolean(body.force_new || body.restart),
             submitExisting: Boolean(body.submit_existing)
           });
-          if (attemptState && attemptState.attempt && attemptState.attempt.id) {
-            await supabaseService.syncAttemptToSupabase(attemptState.attempt.id);
+          const attemptId = attemptState?.id || attemptState?.attempt?.id;
+          if (attemptId) {
+            await supabaseService.syncAttemptToSupabase(attemptId);
           }
           return sendJson(res, 200, attemptState);
         } catch (err) {
@@ -505,8 +518,9 @@ async function handleRequest(req, res) {
             classId: body.class_id || null,
             submitExisting: Boolean(body.submit_existing)
           });
-          if (result && result.attempt && result.attempt.id) {
-            await supabaseService.syncAttemptToSupabase(result.attempt.id);
+          const restartAttemptId = result?.id || result?.attempt?.id;
+          if (restartAttemptId) {
+            await supabaseService.syncAttemptToSupabase(restartAttemptId);
           }
           return sendJson(res, 200, result);
         } catch (err) {
@@ -928,6 +942,13 @@ async function handleRequest(req, res) {
         if (!user) return;
         const body = await parseBody(req);
         const resAssign = classService.assignAssessmentToClass(body.assessment_id, classAssessMatch[1], user.id, user.username);
+        if (resAssign && resAssign.id) {
+          await supabaseService.upsertRecord('assessment_classes', {
+            id: resAssign.id,
+            assessment_id: body.assessment_id,
+            class_id: classAssessMatch[1]
+          });
+        }
         return sendJson(res, 200, resAssign);
       }
 
@@ -937,6 +958,9 @@ async function handleRequest(req, res) {
         if (!user) return;
         const [_, cId, aId] = classRemoveAssessMatch;
         classService.removeAssessmentFromClass(aId, cId, user.id, user.username);
+        try {
+          await supabaseService.supabaseRequest(`assessment_classes?assessment_id=eq.${encodeURIComponent(aId)}&class_id=eq.${encodeURIComponent(cId)}`, { method: 'DELETE' });
+        } catch (e) {}
         return sendJson(res, 200, { success: true });
       }
 
@@ -982,6 +1006,13 @@ async function handleRequest(req, res) {
           });
           if (result && result.student && result.student.id) {
             await supabaseService.syncUserToSupabase(result.student.id);
+            if (result.student.enrollments && result.student.enrollments.length > 0) {
+              for (const enroll of result.student.enrollments) {
+                if (enroll.enrollment_id) {
+                  await supabaseService.syncEnrollmentToSupabase(enroll.enrollment_id);
+                }
+              }
+            }
           }
           return sendJson(res, 201, result);
         } catch (err) {
@@ -1110,7 +1141,9 @@ async function handleRequest(req, res) {
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('class_enrollments');
         await supabaseService.ensureTableFresh('assessments');
-        const classes = classService.listClassesForInstructor(user.id);
+        const classes = (user.role === 'administrator')
+          ? classService.listClasses()
+          : classService.listClassesForInstructor(user.id);
         return sendJson(res, 200, classes);
       }
 
@@ -1121,8 +1154,11 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
+        await supabaseService.ensureTableFresh('users');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('class_enrollments');
+        await supabaseService.ensureTableFresh('assessments');
+        await supabaseService.ensureTableFresh('assessment_classes');
         await supabaseService.ensureTableFresh('student_attempts');
         await supabaseService.ensureTableFresh('attempt_answers');
         try {
@@ -1165,6 +1201,20 @@ async function handleRequest(req, res) {
           adminUserId: user.id,
           adminUsername: user.username
         });
+        if (results && results.imported && results.imported.length > 0) {
+          for (const item of results.imported) {
+            if (item.student && item.student.id) {
+              await supabaseService.syncUserToSupabase(item.student.id);
+              if (item.student.enrollments && item.student.enrollments.length > 0) {
+                for (const enroll of item.student.enrollments) {
+                  if (enroll.enrollment_id) {
+                    await supabaseService.syncEnrollmentToSupabase(enroll.enrollment_id);
+                  }
+                }
+              }
+            }
+          }
+        }
         return sendJson(res, 200, results);
       }
 

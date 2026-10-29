@@ -155,7 +155,7 @@ function getClass(classId) {
   );
 
   // Assigned assessments
-  const assessments = db.all(
+  let assessments = db.all(
     `SELECT a.id, a.name, a.duration_minutes, a.pass_mark_percentage, a.status, a.available_from, a.available_to,
             ac.id as assignment_id,
             (
@@ -168,6 +168,22 @@ function getClass(classId) {
      ORDER BY a.created_at DESC`,
     [classId]
   );
+
+  // Fallback to published assessments for this course if none explicitly linked via assessment_classes
+  if (assessments.length === 0 && cls.course_id) {
+    assessments = db.all(
+      `SELECT a.id, a.name, a.duration_minutes, a.pass_mark_percentage, a.status, a.available_from, a.available_to,
+              NULL as assignment_id,
+              (
+                (SELECT COUNT(*) FROM assessment_questions aq WHERE aq.assessment_id = a.id AND aq.question_id IS NOT NULL) +
+                COALESCE((SELECT SUM(COALESCE(qp.random_count, 5)) FROM assessment_questions aq JOIN question_pools qp ON qp.id = aq.pool_id WHERE aq.assessment_id = a.id), 0)
+              ) as question_count
+       FROM assessments a
+       WHERE a.course_id = ? AND a.status = 'published'
+       ORDER BY a.created_at DESC`,
+      [cls.course_id]
+    );
+  }
 
   return {
     ...cls,

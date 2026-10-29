@@ -435,4 +435,86 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     });
     assert.ok(loginDeleted.status === 400 || loginDeleted.status === 401);
   });
+
+  await t.test('9. Delegate registration, code enrollment, and completed assessment pulls through immediately to Instructor Dashboard', async () => {
+    // 1. Delegate self-registers with course access code
+    const registerRes = await req('/api/auth/register', {
+      method: 'POST',
+      body: {
+        first_name: 'Jane',
+        surname: 'Delegate',
+        email: 'jane.delegate@example.com',
+        username: 'jane.delegate',
+        password: 'Password123!',
+        student_number: 'DEL-2026-99',
+        course_code: 'AZ104-CENTURION-01'
+      }
+    });
+    assert.equal(registerRes.status, 201);
+    assert.ok(registerRes.data.user);
+    assert.ok(registerRes.data.token);
+    const delegateToken = registerRes.data.token;
+    const delegateId = registerRes.data.user.id;
+
+    // 2. Delegate checks dashboard
+    const dashRes = await req('/api/student/dashboard', { token: delegateToken });
+    assert.equal(dashRes.status, 200);
+    assert.ok(dashRes.data.courses && dashRes.data.courses.length >= 1);
+    assert.ok(dashRes.data.available_assessments && dashRes.data.available_assessments.length >= 1);
+
+    const targetAssessment = dashRes.data.available_assessments[0];
+    const targetClassId = targetAssessment.class_id;
+    assert.ok(targetAssessment.id);
+    assert.ok(targetClassId);
+
+    // 3. Delegate starts the assessment
+    const startRes = await req('/api/student/attempts/start', {
+      method: 'POST',
+      token: delegateToken,
+      body: {
+        assessment_id: targetAssessment.id,
+        class_id: targetClassId
+      }
+    });
+    assert.equal(startRes.status, 200);
+    const attemptId = startRes.data.id || startRes.data.attempt?.id;
+    assert.ok(attemptId);
+
+    // 4. Delegate answers first question and submits
+    const firstQ = startRes.data.questions[0];
+    assert.ok(firstQ);
+    const autosaveRes = await req(`/api/student/attempts/${attemptId}/autosave`, {
+      method: 'POST',
+      token: delegateToken,
+      body: {
+        question_id: firstQ.id,
+        saved_answer: JSON.stringify(firstQ.answer_options?.[0] || 'A')
+      }
+    });
+    assert.equal(autosaveRes.status, 200);
+
+    const submitRes = await req(`/api/student/attempts/${attemptId}/submit`, {
+      method: 'POST',
+      token: delegateToken
+    });
+    assert.equal(submitRes.status, 200);
+    assert.ok(submitRes.data.status === 'marked' || submitRes.data.status === 'awaiting_review');
+
+    // 5. Instructor views the class progress
+    const instructorProgressRes = await req(`/api/instructor/progress?class_id=${targetClassId}`, {
+      token: seededInstructorToken
+    });
+    assert.equal(instructorProgressRes.status, 200);
+
+    // 6. Verify delegate appears on instructor dashboard with their attempt
+    const foundDelegate = instructorProgressRes.data.students.find(s => s.id === delegateId || s.username === 'jane.delegate');
+    assert.ok(foundDelegate, 'Delegate must be present in instructor class roster');
+    assert.equal(foundDelegate.attempt_count, 1, 'Delegate attempt count must be 1 on instructor dashboard');
+    assert.equal(foundDelegate.completed_attempt_count, 1, 'Delegate completed attempt count must be 1');
+    assert.ok(foundDelegate.latest_score !== null, 'Delegate latest score must pull through');
+
+    // 7. Verify delegate attempt is recorded in recent_attempts stream
+    const recentFound = instructorProgressRes.data.recent_attempts.find(ra => ra.id === attemptId || ra.user_id === delegateId);
+    assert.ok(recentFound, 'Delegate attempt must appear in instructor recent attempts stream');
+  });
 });

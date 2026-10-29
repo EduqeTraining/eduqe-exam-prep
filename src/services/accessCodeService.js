@@ -401,6 +401,7 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
   );
 
   const qCount = availableQuestions ? availableQuestions.length : 0;
+  const enrollmentRecord = enrollmentId ? db.get('SELECT * FROM class_enrollments WHERE id = ?', [enrollmentId]) : null;
 
   return {
     success: true,
@@ -416,6 +417,7 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
       id: assignedClass.id,
       name: assignedClass.name
     },
+    enrollment: enrollmentRecord,
     assessment: availableAssessment ? {
       id: availableAssessment.id,
       name: availableAssessment.name,
