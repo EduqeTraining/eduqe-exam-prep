@@ -292,3 +292,24 @@ CREATE INDEX IF NOT EXISTS "idx_attempts_user" ON "student_attempts"("user_id");
 CREATE INDEX IF NOT EXISTS "idx_attempts_assessment" ON "student_attempts"("assessment_id");
 CREATE INDEX IF NOT EXISTS "idx_attempt_answers_attempt" ON "attempt_answers"("attempt_id");
 CREATE INDEX IF NOT EXISTS "idx_audit_created" ON "audit_logs"("created_at");
+
+-- Disable Row Level Security so backend PostgREST operations can read/write freely
+ALTER TABLE "users" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "courses" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "classes" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "course_access_codes" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "class_enrollments" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "questions" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "question_versions" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "question_pools" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "question_pool_items" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "assessments" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "assessment_classes" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "assessment_questions" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "student_attempts" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "attempt_answers" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "audit_logs" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "sessions" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "revoked_tokens" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "login_attempts" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "eduque_settings" DISABLE ROW LEVEL SECURITY;
