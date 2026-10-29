@@ -119,7 +119,7 @@ function getClass(classId) {
             u_inst.first_name as instructor_first_name, u_inst.surname as instructor_surname,
             u_inst.email as instructor_email, u_inst.username as instructor_username
      FROM classes cl
-     JOIN courses c ON c.id = cl.course_id
+     LEFT JOIN courses c ON c.id = cl.course_id
      LEFT JOIN users u_inst ON u_inst.id = cl.instructor_id
      WHERE cl.id = ?`,
     [classId]
@@ -147,7 +147,7 @@ function getClass(classId) {
             ce.id as enrollment_id, ce.enrolled_at, ce.access_starts_at, ce.access_expires_at, ce.status as enrollment_status,
             (SELECT COUNT(*) FROM student_attempts sa WHERE sa.user_id = u.id AND sa.class_id = cl.id) as attempt_count
      FROM class_enrollments ce
-     JOIN users u ON u.id = ce.user_id
+     LEFT JOIN users u ON u.id = ce.user_id
      JOIN classes cl ON cl.id = ce.class_id
      WHERE ce.class_id = ?
      ORDER BY u.surname, u.first_name`,
@@ -218,7 +218,7 @@ function listClasses(courseId = null) {
              0
            ) as code_used_count
     FROM classes cl
-    JOIN courses c ON c.id = cl.course_id
+    LEFT JOIN courses c ON c.id = cl.course_id
     LEFT JOIN users u_inst ON u_inst.id = cl.instructor_id
     WHERE 1=1
   `;
@@ -363,7 +363,7 @@ function listClassesForInstructor(instructorId) {
              0
            ) as code_used_count
     FROM classes cl
-    JOIN courses c ON c.id = cl.course_id
+    LEFT JOIN courses c ON c.id = cl.course_id
     WHERE cl.instructor_id = ?
     ORDER BY cl.created_at DESC
   `;

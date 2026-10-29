@@ -103,8 +103,8 @@ function getStudent(userId) {
             cl.id as class_id, cl.name as class_name,
             c.id as course_id, c.name as course_name, c.code as course_code
      FROM class_enrollments ce
-     JOIN classes cl ON cl.id = ce.class_id
-     JOIN courses c ON c.id = cl.course_id
+     LEFT JOIN classes cl ON cl.id = ce.class_id
+     LEFT JOIN courses c ON c.id = cl.course_id
      WHERE ce.user_id = ?
      ORDER BY ce.enrolled_at DESC`,
     [userId]
@@ -120,8 +120,8 @@ function getStudent(userId) {
             (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = sa.id AND aa.saved_answer IS NOT NULL) as questions_answered,
             (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = sa.id) as total_questions
      FROM student_attempts sa
-     JOIN assessments a ON a.id = sa.assessment_id
-     JOIN courses c ON c.id = a.course_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN courses c ON c.id = a.course_id
      LEFT JOIN classes cl ON cl.id = sa.class_id
      WHERE sa.user_id = ?
      ORDER BY sa.started_at DESC`,

@@ -440,35 +440,22 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
 }
 
 function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 'usr_admin_001') {
-  // 1. Fetch all published questions for this course
-  const questions = db.all(
-    `SELECT id, question_text, question_type, topic, difficulty, points 
-     FROM questions 
-     WHERE course_id = ? AND status = 'published'
-     ORDER BY created_at ASC`,
-    [courseId]
-  );
-
-  if (questions.length === 0) {
-    return { assessment: null, questions: [] };
-  }
-
-  // 2. Check if this class already has an assigned published assessment
-  let assignedAssessment = db.get(
+  // 1. Check if this class already has an assigned published assessment
+  let assignedAssessment = classId ? db.get(
     `SELECT a.* FROM assessments a
      JOIN assessment_classes ac ON ac.assessment_id = a.id
      WHERE ac.class_id = ? AND a.status = 'published'`,
     [classId]
-  );
+  ) : null;
 
-  // 3. If not, check if any published assessment exists for this course
-  if (!assignedAssessment) {
+  // 2. If not, check if any published assessment exists for this course
+  if (!assignedAssessment && courseId) {
     assignedAssessment = db.get(
       `SELECT * FROM assessments WHERE course_id = ? AND status = 'published' ORDER BY created_at ASC LIMIT 1`,
       [courseId]
     );
 
-    if (assignedAssessment) {
+    if (assignedAssessment && classId) {
       // Assign it to this class
       const exists = db.get(
         'SELECT * FROM assessment_classes WHERE assessment_id = ? AND class_id = ?',
@@ -480,7 +467,44 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
     }
   }
 
-  // 4. If still no assessment exists for this course, auto-create one
+  // 3. Find questions for this assessment or course
+  let questions = [];
+  if (assignedAssessment) {
+    questions = db.all(
+      `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty, q.points 
+       FROM assessment_questions aq
+       JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id = ?
+       ORDER BY aq.order_index ASC`,
+      [assignedAssessment.id]
+    );
+  }
+
+  if (questions.length === 0 && courseId) {
+    questions = db.all(
+      `SELECT id, question_text, question_type, topic, difficulty, points 
+       FROM questions 
+       WHERE course_id = ? AND status = 'published'
+       ORDER BY created_at ASC`,
+      [courseId]
+    );
+  }
+
+  if (questions.length === 0) {
+    // Check for general published questions in question bank
+    questions = db.all(
+      `SELECT id, question_text, question_type, topic, difficulty, points 
+       FROM questions 
+       WHERE status = 'published'
+       ORDER BY created_at ASC LIMIT 50`
+    );
+  }
+
+  if (questions.length === 0 && !assignedAssessment) {
+    return { assessment: null, questions: [] };
+  }
+
+  // 4. If still no assessment exists, auto-create one
   if (!assignedAssessment) {
     const assessId = generateId();
     db.run(
@@ -489,14 +513,16 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
       [
         assessId,
         courseId,
-        `${courseName} - Exam Practice & Preparation`,
-        `Practice and certification assessment covering available questions for ${courseName}.`,
+        `${courseName || 'Certification Track'} - Exam Practice & Preparation`,
+        `Practice and certification assessment covering available questions for ${courseName || 'this course'}.`,
         adminUserId
       ]
     );
 
     // Link to class
-    db.run('INSERT INTO assessment_classes (assessment_id, class_id) VALUES (?, ?)', [assessId, classId]);
+    if (classId) {
+      db.run('INSERT INTO assessment_classes (assessment_id, class_id) VALUES (?, ?)', [assessId, classId]);
+    }
 
     // Link all questions to the assessment
     questions.forEach((q, idx) => {
@@ -509,8 +535,8 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
     });
 
     assignedAssessment = db.get('SELECT * FROM assessments WHERE id = ?', [assessId]);
-  } else {
-    // Ensure all published questions are in this assessment
+  } else if (questions.length > 0) {
+    // Ensure questions are in this assessment
     questions.forEach((q, idx) => {
       const hasQ = db.get(
         'SELECT id FROM assessment_questions WHERE assessment_id = ? AND question_id = ?',

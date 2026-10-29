@@ -10,6 +10,24 @@ export async function renderStudentDashboard(container, router) {
     const { student, courses, available_assessments, completed_assessments } = data;
     const past_attempts = data.past_attempts || data.recent_results || [];
 
+    if (!student) {
+      container.innerHTML = `
+        <div class="card" style="text-align:center; padding:3.5rem 2rem; max-width:600px; margin:2rem auto;">
+          <div style="font-size:2.5rem; margin-bottom:1rem;">&#x1F393;</div>
+          <h2 style="font-size:1.4rem; font-weight:800; margin-bottom:0.75rem;">Setting Up Your Learning Profile...</h2>
+          <p class="form-hint" style="margin-bottom:1.5rem;">
+            Your learning profile and class enrolments are currently synchronizing. Please click below to refresh your dashboard.
+          </p>
+          <button type="button" class="btn btn-primary" id="btn-retry-student-dash">
+            &#x21bb; Refresh My Dashboard
+          </button>
+        </div>
+      `;
+      const retryBtn = container.querySelector('#btn-retry-student-dash');
+      if (retryBtn) retryBtn.onclick = () => renderStudentDashboard(container, router);
+      return;
+    }
+
     container.innerHTML = `
       <div class="student-dashboard" style="display:flex; flex-direction:column; gap:2rem;">
         
@@ -19,9 +37,9 @@ export async function renderStudentDashboard(container, router) {
             <div>
               <div class="eduqe-kicker">&#x1F393; EDUQE EXAM PREPARATION &bull; STUDENT LEARNING PORTAL</div>
               <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.35rem; flex-wrap:wrap;">
-                <h1 style="font-size:1.85rem; font-weight:900;">Welcome back, <span style="color:var(--brand-lime);">${escapeHtml(student.first_name)}</span>!</h1>
+                <h1 style="font-size:1.85rem; font-weight:900;">Welcome back, <span style="color:var(--brand-lime);">${escapeHtml(student.first_name || student.username || 'Student')}</span>!</h1>
                 <span class="badge ${student.account_status === 'active' ? 'badge-primary' : 'badge-danger'}">
-                  ${escapeHtml(student.account_status.toUpperCase())}
+                  ${escapeHtml((student.account_status || 'ACTIVE').toUpperCase())}
                 </span>
               </div>
               <p class="form-hint" style="font-size:0.95rem; margin-bottom:0;">

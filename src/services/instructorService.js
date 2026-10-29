@@ -258,7 +258,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
                   0
                 ) as code_used_count
          FROM classes cl
-         JOIN courses c ON c.id = cl.course_id
+         LEFT JOIN courses c ON c.id = cl.course_id
          WHERE cl.instructor_id = ?
          ORDER BY cl.created_at DESC`,
         [instructorId]
@@ -281,7 +281,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
                   0
                 ) as code_used_count
          FROM classes cl
-         JOIN courses c ON c.id = cl.course_id
+         LEFT JOIN courses c ON c.id = cl.course_id
          ORDER BY cl.created_at DESC`
       );
 
@@ -373,7 +373,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const students = db.all(
     `SELECT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, ce.enrolled_at, ce.status as enrollment_status
      FROM class_enrollments ce
-     JOIN users u ON u.id = ce.user_id
+     LEFT JOIN users u ON u.id = ce.user_id
      WHERE ce.class_id = ?
      ORDER BY u.surname, u.first_name`,
     [targetClass.id]
@@ -441,16 +441,17 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
 
     // Fetch ALL attempts by this student for this class, this course, or assigned assessments
     const studentAttempts = db.all(
-      `SELECT sa.*, a.name as assessment_name, a.pass_mark_percentage
+      `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
        FROM student_attempts sa
-       JOIN assessments a ON a.id = sa.assessment_id
+       LEFT JOIN assessments a ON a.id = sa.assessment_id
        WHERE sa.user_id = ? AND (
          sa.class_id = ? 
-         OR a.course_id = ?
+         OR (a.course_id IS NOT NULL AND a.course_id = ?)
          OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
+         OR sa.class_id IS NULL
        )
        ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-      [s.id, targetClass.id, targetClass.course_id, targetClass.id]
+      [defaultPassMark, s.id, targetClass.id, targetClass.course_id, targetClass.id]
     );
 
     const gradedAttempts = studentAttempts.filter(a => ['submitted', 'marked', 'awaiting_review'].includes(a.status));
@@ -880,7 +881,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
      FROM attempt_answers aa
      JOIN student_attempts sa ON sa.id = aa.attempt_id
-     JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
      JOIN questions q ON q.id = aa.question_id
      WHERE (sa.class_id = ? OR a.course_id = ? OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        AND sa.status IN ('submitted', 'marked', 'awaiting_review')
@@ -901,8 +902,8 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             u.id as user_id, u.first_name, u.surname, u.username,
             a.name as assessment_name
      FROM student_attempts sa
-     JOIN users u ON u.id = sa.user_id
-     JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN users u ON u.id = sa.user_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
      WHERE (sa.class_id = ? OR a.course_id = ? OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        AND sa.status IN ('submitted', 'marked', 'awaiting_review')
      ORDER BY sa.submitted_at DESC

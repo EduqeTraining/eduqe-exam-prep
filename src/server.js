@@ -117,6 +117,8 @@ function requireAuth(req, res, requiredRole = null) {
 }
 
 function serveStatic(req, res, pathname) {
+  if (pathname.startsWith('/api/')) return false;
+
   let safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
   if (safePath === '/' || safePath === '') safePath = '/index.html';
 
@@ -342,6 +344,8 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
 
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('courses');
         await supabaseService.ensureTableFresh('class_enrollments');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('assessments');
@@ -689,6 +693,7 @@ async function handleRequest(req, res) {
       // 5. CLASSES (Multiple Classes per Course)
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/classes') {
+        await supabaseService.ensureTableFresh('courses');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('course_access_codes');
         await supabaseService.ensureTableFresh('users');
@@ -698,9 +703,11 @@ async function handleRequest(req, res) {
 
       const classIdMatch = pathname.match(/^\/api\/classes\/([^\/]+)$/);
       if (req.method === 'GET' && classIdMatch) {
+        await supabaseService.ensureTableFresh('courses');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('course_access_codes');
         await supabaseService.ensureTableFresh('class_enrollments');
+        await supabaseService.ensureTableFresh('users');
         const cls = classService.getClass(classIdMatch[1]);
         if (!cls) return sendJson(res, 404, { error: 'Class not found' });
         return sendJson(res, 200, cls);
@@ -709,6 +716,9 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/classes') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTableFresh('courses');
+        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTableFresh('users');
         const body = await parseBody(req);
         try {
           const created = classService.createClass({
@@ -729,6 +739,9 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && classIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTableFresh('courses');
+        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTableFresh('users');
         const body = await parseBody(req);
         try {
           const updated = classService.updateClass(classIdMatch[1], body, user.id, user.username);
@@ -1090,6 +1103,8 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/instructors') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('classes');
         const body = await parseBody(req);
         try {
           const result = instructorService.createInstructor({
@@ -1109,6 +1124,8 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && instructorIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('classes');
         const body = await parseBody(req);
         try {
           const updated = instructorService.updateInstructor(instructorIdMatch[1], body, user.id, user.username);
@@ -1122,6 +1139,8 @@ async function handleRequest(req, res) {
       if (req.method === 'DELETE' && instructorIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTableFresh('classes');
         try {
           const result = instructorService.deleteInstructor(instructorIdMatch[1], user.id, user.username);
           await supabaseService.deleteRecord('users', instructorIdMatch[1]);
@@ -1138,6 +1157,7 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
+        await supabaseService.ensureTableFresh('courses');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('class_enrollments');
         await supabaseService.ensureTableFresh('assessments');
@@ -1154,11 +1174,14 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
+        await supabaseService.ensureTableFresh('courses');
         await supabaseService.ensureTableFresh('users');
         await supabaseService.ensureTableFresh('classes');
         await supabaseService.ensureTableFresh('class_enrollments');
         await supabaseService.ensureTableFresh('assessments');
         await supabaseService.ensureTableFresh('assessment_classes');
+        await supabaseService.ensureTableFresh('questions');
+        await supabaseService.ensureTableFresh('assessment_questions');
         await supabaseService.ensureTableFresh('student_attempts');
         await supabaseService.ensureTableFresh('attempt_answers');
         try {
@@ -1719,13 +1742,13 @@ async function handleRequest(req, res) {
       // -------------------------------------------------------------
       // 14. STATIC FRONTEND SERVING
       // -------------------------------------------------------------
-      const served = serveStatic(req, res, pathname);
-      if (served) return;
-
-      // 404 for unmatched API routes
+      // 404 for unmatched API routes (guarantee JSON error and never return HTML)
       if (pathname.startsWith('/api/')) {
         return sendJson(res, 404, { error: `Endpoint ${req.method} ${pathname} not found.` });
       }
+
+      const served = serveStatic(req, res, pathname);
+      if (served) return;
 
       return sendText(res, 404, 'Not Found');
     } catch (error) {

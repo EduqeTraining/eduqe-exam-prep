@@ -456,11 +456,17 @@ export function renderInstructorDashboard(container, router) {
     const secHelpVal = sectionHelpFilter ? sectionHelpFilter.value : '';
 
     const filtered = currentData.students.filter(s => {
+      const fName = (s.first_name || '').toLowerCase();
+      const sName = (s.surname || '').toLowerCase();
+      const email = (s.email || '').toLowerCase();
+      const sNum = (s.student_number || '').toLowerCase();
+      const uName = (s.username || '').toLowerCase();
       const matchQ = !q || (
-        s.first_name.toLowerCase().includes(q) ||
-        s.surname.toLowerCase().includes(q) ||
-        s.email.toLowerCase().includes(q) ||
-        (s.student_number && s.student_number.toLowerCase().includes(q))
+        fName.includes(q) ||
+        sName.includes(q) ||
+        email.includes(q) ||
+        sNum.includes(q) ||
+        uName.includes(q)
       );
       const matchStatus = !statusVal || s.status_label === statusVal;
       const matchSecHelp = !secHelpVal || (Array.isArray(s.sections_needing_help) && s.sections_needing_help.includes(secHelpVal));

@@ -73,7 +73,11 @@ async function pullTable(table) {
 
     if (rows.length === 0) {
       if (hasId) {
-        db.run(`DELETE FROM "${table}"`);
+        try {
+          db.run(`DELETE FROM "${table}"`);
+        } catch (delErr) {
+          // Ignore FK constraints if table has active references
+        }
       }
       tableLastSync.set(table, Date.now());
       return 0;
@@ -93,7 +97,11 @@ async function pullTable(table) {
         const localRows = db.all(`SELECT id FROM "${table}"`);
         for (const local of localRows) {
           if (!remoteIds.has(String(local.id))) {
-            db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
+            try {
+              db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
+            } catch (delErr) {
+              // Ignore FK constraint if row is referenced by other local tables
+            }
           }
         }
       }
