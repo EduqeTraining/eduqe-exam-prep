@@ -3,19 +3,44 @@ const { hashPassword, verifyPassword, generateToken, createSignedToken, verifySi
 const { logAction } = require('./auditService');
 
 const MAX_FAILED_ATTEMPTS = 5;
+const MAX_IP_FAILED_ATTEMPTS = 30;
 const THROTTLE_WINDOW_MINUTES = 5;
 const SESSION_DURATION_HOURS = 24;
 
 function isThrottled(ipAddress, username) {
   const db = getDatabase();
-  const row = db.get(
-    `SELECT COUNT(*) as count FROM login_attempts 
-     WHERE (ip_address = ? OR username = ?) 
-       AND success = 0 
-       AND datetime(attempted_at) > datetime('now', '-' || ? || ' minutes')`,
-    [ipAddress, username, THROTTLE_WINDOW_MINUTES]
-  );
-  return (row?.count || 0) >= MAX_FAILED_ATTEMPTS;
+  const trimmed = (username || '').trim().toLowerCase();
+
+  // 1. Account-level failure check (strict protection for individual accounts)
+  if (trimmed) {
+    const userRow = db.get(
+      `SELECT COUNT(*) as count FROM login_attempts 
+       WHERE LOWER(username) = ? 
+         AND success = 0 
+         AND datetime(attempted_at) > datetime('now', '-' || ? || ' minutes')`,
+      [trimmed, THROTTLE_WINDOW_MINUTES]
+    );
+    if ((userRow?.count || 0) >= MAX_FAILED_ATTEMPTS) {
+      return true;
+    }
+  }
+
+  // 2. IP-level flood protection (only for external non-local IPs to prevent corporate/NAT lockouts)
+  const isLocalIp = !ipAddress || ipAddress === '127.0.0.1' || ipAddress === '::1' || ipAddress.startsWith('10.') || ipAddress.startsWith('192.168.');
+  if (!isLocalIp) {
+    const ipRow = db.get(
+      `SELECT COUNT(*) as count FROM login_attempts 
+       WHERE ip_address = ? 
+         AND success = 0 
+         AND datetime(attempted_at) > datetime('now', '-' || ? || ' minutes')`,
+      [ipAddress, THROTTLE_WINDOW_MINUTES]
+    );
+    if ((ipRow?.count || 0) >= MAX_IP_FAILED_ATTEMPTS) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function recordLoginAttempt(ipAddress, username, success) {
@@ -25,6 +50,27 @@ function recordLoginAttempt(ipAddress, username, success) {
      VALUES (?, ?, ?, datetime('now'), ?)`,
     [generateId(), ipAddress, username, success ? 1 : 0]
   );
+}
+
+function clearThrottle(ipAddress, username) {
+  const db = getDatabase();
+  const trimmed = (username || '').trim().toLowerCase();
+  try {
+    if (trimmed) {
+      db.run(
+        `DELETE FROM login_attempts WHERE LOWER(username) = ?`,
+        [trimmed]
+      );
+    }
+    if (ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+      db.run(
+        `DELETE FROM login_attempts WHERE ip_address = ? AND success = 0`,
+        [ipAddress]
+      );
+    }
+  } catch (err) {
+    // Ignore cleanup errors
+  }
 }
 
 function login({ username, password, ipAddress = '127.0.0.1' }) {
@@ -59,6 +105,8 @@ function login({ username, password, ipAddress = '127.0.0.1' }) {
   }
 
   // Clear throttle on success
+  clearThrottle(ipAddress, trimmed);
+  if (user.email) clearThrottle(ipAddress, user.email);
   recordLoginAttempt(ipAddress, trimmed, true);
 
   // Create session
@@ -229,6 +277,10 @@ function changePassword({ userId, currentPassword, newPassword, isFirstTime = fa
      WHERE id = ?`,
     [newHash, userId]
   );
+
+  // Clear throttle history on password reset/change
+  if (user.username) clearThrottle('127.0.0.1', user.username);
+  if (user.email) clearThrottle('127.0.0.1', user.email);
 
   logAction({
     userId,
@@ -410,6 +462,10 @@ function registerStudent({
     ipAddress
   });
 
+  // Clear throttle history for this newly registered student
+  clearThrottle(ipAddress, finalUsername);
+  if (emailAddr) clearThrottle(ipAddress, emailAddr);
+
   return {
     token,
     user: {
@@ -433,5 +489,6 @@ module.exports = {
   changePassword,
   logout,
   isThrottled,
+  clearThrottle,
   registerStudent
 };

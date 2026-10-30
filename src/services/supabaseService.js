@@ -94,21 +94,7 @@ async function pullTable(table) {
 
     try {
       db.transaction(() => {
-        // 1. Reconcile deleted rows: Remove any local row not present in Supabase
-        if (hasId && remoteIds && remoteIds.size > 0) {
-          const localRows = db.all(`SELECT id FROM "${table}"`);
-          for (const local of localRows) {
-            if (!remoteIds.has(String(local.id))) {
-              try {
-                db.run(`DELETE FROM "${table}" WHERE id = ?`, [local.id]);
-              } catch (delErr) {
-                // Ignore FK constraint if row is referenced by other local tables
-              }
-            }
-          }
-        }
-
-        // 2. Insert or replace latest rows from Supabase
+        // Upsert latest rows from Supabase into local cache without deleting local un-synced rows
         for (const row of rows) {
           const vals = matchingCols.map(c => {
             const val = row[c];
@@ -153,18 +139,42 @@ async function ensureTableFresh(table, maxAgeMs = SYNC_CACHE_TTL_MS) {
 // GENERIC UPSERT / DELETE HELPERS
 // -------------------------------------------------------------
 
-async function upsertRecord(tableName, record) {
+async function upsertRecord(tableName, record, conflictColumns = null) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || !record) return null;
   invalidateTableCache(tableName);
+
+  let conflictParam = conflictColumns || 'id';
+  if (!conflictColumns) {
+    if (tableName === 'class_enrollments') conflictParam = 'class_id,user_id';
+    else if (tableName === 'assessment_classes') conflictParam = 'assessment_id,class_id';
+    else if (tableName === 'course_access_codes') conflictParam = 'code';
+    else if (tableName === 'eduque_settings') conflictParam = 'key';
+  }
+
   try {
-    const res = await supabaseRequest(`${tableName}?on_conflict=id`, {
-      method: 'POST',
-      headers: {
-        'Prefer': 'resolution=merge-duplicates,return=representation'
-      },
-      body: record
-    });
+    let res;
+    try {
+      res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
+        method: 'POST',
+        headers: {
+          'Prefer': 'resolution=merge-duplicates,return=representation'
+        },
+        body: record
+      });
+    } catch (firstErr) {
+      if (conflictParam !== 'id') {
+        res = await supabaseRequest(`${tableName}?on_conflict=id`, {
+          method: 'POST',
+          headers: {
+            'Prefer': 'resolution=merge-duplicates,return=representation'
+          },
+          body: record
+        });
+      } else {
+        throw firstErr;
+      }
+    }
     invalidateTableCache(tableName);
     return res;
   } catch (err) {
@@ -214,6 +224,19 @@ async function syncClassToSupabase(classOrId) {
   const db = getDatabase();
   const cls = typeof classOrId === 'string' ? db.get('SELECT * FROM classes WHERE id = ?', [classOrId]) : classOrId;
   if (!cls) return;
+
+  // Guarantee parent course and instructor exist in Supabase first to satisfy FK constraints
+  if (cls.course_id) {
+    try {
+      await syncCourseToSupabase(cls.course_id);
+    } catch (e) {}
+  }
+  if (cls.instructor_id) {
+    try {
+      await syncUserToSupabase(cls.instructor_id);
+    } catch (e) {}
+  }
+
   await upsertRecord('classes', cls);
 
   // Sync associated active codes and assessment links
@@ -221,13 +244,13 @@ async function syncClassToSupabase(classOrId) {
     const codes = db.all('SELECT * FROM course_access_codes WHERE class_id = ?', [cls.id]);
     if (codes && codes.length > 0) {
       for (const code of codes) {
-        await upsertRecord('course_access_codes', code);
+        await upsertRecord('course_access_codes', code, 'code');
       }
     }
     const acLinks = db.all('SELECT * FROM assessment_classes WHERE class_id = ?', [cls.id]);
     if (acLinks && acLinks.length > 0) {
       for (const ac of acLinks) {
-        await upsertRecord('assessment_classes', ac);
+        await upsertRecord('assessment_classes', ac, 'assessment_id,class_id');
       }
     }
   } catch (e) {
@@ -258,7 +281,12 @@ async function syncAccessCodeToSupabase(codeOrId) {
   const db = getDatabase();
   const code = typeof codeOrId === 'string' ? db.get('SELECT * FROM course_access_codes WHERE id = ? OR code = ?', [codeOrId, codeOrId]) : codeOrId;
   if (!code) return;
-  return await upsertRecord('course_access_codes', code);
+  if (code.course_id) {
+    try {
+      await syncCourseToSupabase(code.course_id);
+    } catch (e) {}
+  }
+  return await upsertRecord('course_access_codes', code, 'code');
 }
 
 async function syncEnrollmentToSupabase(enrollmentOrId) {
@@ -266,7 +294,20 @@ async function syncEnrollmentToSupabase(enrollmentOrId) {
   const db = getDatabase();
   const enrollment = typeof enrollmentOrId === 'string' ? db.get('SELECT * FROM class_enrollments WHERE id = ?', [enrollmentOrId]) : enrollmentOrId;
   if (!enrollment) return;
-  return await upsertRecord('class_enrollments', enrollment);
+
+  // Guarantee parent class and user exist in Supabase first
+  if (enrollment.class_id) {
+    try {
+      await syncClassToSupabase(enrollment.class_id);
+    } catch (e) {}
+  }
+  if (enrollment.user_id) {
+    try {
+      await syncUserToSupabase(enrollment.user_id);
+    } catch (e) {}
+  }
+
+  return await upsertRecord('class_enrollments', enrollment, 'class_id,user_id');
 }
 
 async function deleteEnrollmentFromSupabase(classId, userId) {

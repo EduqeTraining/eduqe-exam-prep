@@ -238,11 +238,26 @@ async function handleRequest(req, res) {
         await supabaseService.ensureTableFresh('users');
         const body = await parseBody(req);
         try {
-          const result = authService.login({
-            username: body.username,
-            password: body.password,
-            ipAddress: clientIp
-          });
+          let result;
+          try {
+            result = authService.login({
+              username: body.username,
+              password: body.password,
+              ipAddress: clientIp
+            });
+          } catch (firstErr) {
+            if (firstErr.message === 'Invalid username or password.') {
+              // Multi-container cold-start cache miss: force pull users from Supabase and retry once
+              await supabaseService.pullTable('users');
+              result = authService.login({
+                username: body.username,
+                password: body.password,
+                ipAddress: clientIp
+              });
+            } else {
+              throw firstErr;
+            }
+          }
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });

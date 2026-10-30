@@ -42,7 +42,12 @@ class Router {
         hash = `${hash.split('?')[0]}?${qs}`;
       }
     }
-    window.location.hash = `#${hash}`;
+    const targetHash = `#${hash}`;
+    if (window.location.hash === targetHash) {
+      this.handleRoute();
+    } else {
+      window.location.hash = targetHash;
+    }
   }
 
   getRouteData() {
@@ -65,6 +70,9 @@ class Router {
       showLoginView(path === 'register' || path === 'signup' ? 'register' : 'login');
       return;
     }
+
+    loginContainer.style.display = 'none';
+    appShell.style.display = 'flex';
 
     if (path === 'login' || path === 'register' || path === 'signup') {
       let dest = 'student';
@@ -329,6 +337,10 @@ function showLoginView(activeTab = 'login') {
   loginContainer.style.display = 'flex';
 
   const isLogin = activeTab === 'login';
+  const targetHash = isLogin ? '#login' : '#register';
+  if (window.location.hash !== targetHash) {
+    history.replaceState(null, '', targetHash);
+  }
 
   loginContainer.innerHTML = `
     <!-- Background Speech Bubble Contours (eduqe.co.za Brand Watermark) -->
@@ -662,6 +674,10 @@ function attachAuthHandlers(isLogin) {
           return;
         }
 
+        // Hide login view and reveal app shell
+        loginContainer.style.display = 'none';
+        appShell.style.display = 'flex';
+
         // Route to destination
         if (res.user.role === 'administrator') {
           router.navigate('dashboard');
@@ -764,6 +780,10 @@ function attachAuthHandlers(isLogin) {
         } else {
           showToast(`Welcome to Eduqe, ${res.user.first_name}! Your student account is ready.`, 'success');
         }
+
+        // Hide login view and reveal app shell
+        loginContainer.style.display = 'none';
+        appShell.style.display = 'flex';
 
         router.navigate('student');
       } catch (err) {

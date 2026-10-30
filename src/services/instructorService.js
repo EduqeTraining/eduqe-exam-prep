@@ -398,12 +398,19 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
 
   // 3. Enrolled students with detailed assessment & section progress across ALL attempts
   const students = db.all(
-    `SELECT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, ce.enrolled_at, ce.status as enrollment_status
-     FROM class_enrollments ce
-     LEFT JOIN users u ON u.id = ce.user_id
-     WHERE ce.class_id = ?
+    `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
+            COALESCE(ce.enrolled_at, MIN(sa.started_at), u.created_at) as enrolled_at,
+            COALESCE(ce.status, 'active') as enrollment_status
+     FROM users u
+     LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND ce.class_id = ?
+     LEFT JOIN student_attempts sa ON sa.user_id = u.id AND (
+       sa.class_id = ? 
+       OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
+     )
+     WHERE u.role = 'student' AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
+     GROUP BY u.id
      ORDER BY u.surname, u.first_name`,
-    [targetClass.id]
+    [targetClass.id, targetClass.id, targetClass.id]
   );
 
   // Track aggregate stats per section across all students and all attempts

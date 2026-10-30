@@ -39,15 +39,18 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     throw new Error('This assessment is not currently published.');
   }
 
+  // Sanitize classId input
+  let targetClassId = (classId && classId !== 'null' && classId !== 'undefined') ? String(classId).trim() : null;
+
   // Check enrollment
   let enrollment = null;
-  if (classId) {
+  if (targetClassId) {
     enrollment = db.get(
       "SELECT * FROM class_enrollments WHERE class_id = ? AND user_id = ? AND status = 'active'",
-      [classId, userId]
+      [targetClassId, userId]
     );
   }
-  if (!enrollment && !classId) {
+  if (!enrollment && !targetClassId) {
     enrollment = db.get(
       `SELECT ce.* FROM class_enrollments ce
        JOIN assessment_classes ca ON ca.class_id = ce.class_id
@@ -62,7 +65,7 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
       [assessment.course_id, userId]
     );
     if (enrollment) {
-      classId = enrollment.class_id;
+      targetClassId = enrollment.class_id;
     }
   }
 
@@ -74,7 +77,7 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
        JOIN classes cl ON cl.id = ce.class_id
        WHERE ce.user_id = ? AND (ce.class_id = ? OR cl.course_id = ?)
        LIMIT 1`,
-      [userId, classId, assessment.course_id]
+      [userId, targetClassId, assessment.course_id]
     );
     if (expiredEnrollment && (expiredEnrollment.status === 'expired' || (expiredEnrollment.access_expires_at && now > parseUtcDate(expiredEnrollment.access_expires_at).getTime()))) {
       expirationRuleService.checkAndPurgeExpiredEnrollments({ userId });
@@ -196,7 +199,7 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
   db.run(
     `INSERT INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status)
      VALUES (?, ?, ?, ?, ?, datetime('now'), ?, 'in_progress')`,
-    [attemptId, assessmentId, userId, classId, newAttemptNumber, deadlineDate]
+    [attemptId, assessmentId, userId, targetClassId, newAttemptNumber, deadlineDate]
   );
 
   // Initialize attempt answers with section_name and order_index
