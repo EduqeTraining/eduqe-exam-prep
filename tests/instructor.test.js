@@ -75,6 +75,7 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
 
   let adminToken;
   let seededInstructorToken;
+  let seededInstructorId;
   let newInstructorToken;
   let newInstructorId;
   let allocatedClassId;
@@ -170,6 +171,7 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     assert.equal(loginSeeded.status, 200);
     assert.equal(loginSeeded.data.user.role, 'instructor');
     seededInstructorToken = loginSeeded.data.token;
+    seededInstructorId = loginSeeded.data.user.id;
 
     // Fetch cohort progress & stats for Dr. Evelyn Reed
     const progressRes = await req('/api/instructor/progress', { token: seededInstructorToken });
@@ -516,5 +518,50 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     // 7. Verify delegate attempt is recorded in recent_attempts stream
     const recentFound = instructorProgressRes.data.recent_attempts.find(ra => ra.id === attemptId || ra.user_id === delegateId);
     assert.ok(recentFound, 'Delegate attempt must appear in instructor recent attempts stream');
+  });
+
+  await t.test('10. Smart cohort selection, "all" cohorts aggregation, and empty duplicate class deduplication', async () => {
+    // 1. Create a second empty class assigned to the instructor
+    const coursesRes = await req('/api/courses', { token: adminToken });
+    const courseId = coursesRes.data[0].id;
+    const createClassRes = await req('/api/classes', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        course_id: courseId,
+        name: 'Empty Extra Class',
+        instructor_id: seededInstructorId,
+        start_date: '2026-11-01T08:00:00Z',
+        end_date: '2026-11-30T17:00:00Z'
+      }
+    });
+    assert.equal(createClassRes.status, 201);
+    const emptyClassId = createClassRes.data.id;
+
+    // 2. Querying without class_id should smartly default to the active class with enrolled learners, NOT the empty class
+    const defaultRes = await req('/api/instructor/progress', { token: seededInstructorToken });
+    assert.equal(defaultRes.status, 200);
+    assert.ok(defaultRes.data.selected_class.id !== emptyClassId, 'Smart selection must not default to an empty class when active classes exist');
+    assert.ok(defaultRes.data.summary.total_enrolled > 0, 'Default selection must have enrolled learners');
+
+    // 3. Querying with class_id=all aggregates across all assigned classes
+    const allRes = await req('/api/instructor/progress?class_id=all', { token: seededInstructorToken });
+    assert.equal(allRes.status, 200);
+    assert.equal(allRes.data.selected_class.id, 'all');
+    assert.ok(allRes.data.summary.total_enrolled >= defaultRes.data.summary.total_enrolled, 'All cohorts must include all learners');
+    assert.ok(allRes.data.sections_analysis.length > 0, 'Sections analysis must be present for all cohorts');
+
+    // 4. Duplicate class creation: creating a class with identical name and course when empty reuses existing
+    const dupRes = await req('/api/classes', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        course_id: courseId,
+        name: 'Empty Extra Class',
+        instructor_id: seededInstructorId
+      }
+    });
+    assert.equal(dupRes.status, 201);
+    assert.equal(dupRes.data.id, emptyClassId, 'Reuses empty class ID instead of creating duplicate ghost class');
   });
 });

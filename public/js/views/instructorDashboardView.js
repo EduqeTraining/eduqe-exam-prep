@@ -227,27 +227,38 @@ export function renderInstructorDashboard(container, router) {
       }
 
       // Populate Class Selector
-      classSelect.innerHTML = res.assigned_classes.map(c => `
+      const totalLearnersAcrossClasses = res.assigned_classes.reduce((sum, c) => sum + (Number(c.student_count) || 0), 0);
+      const allOptionHtml = res.assigned_classes.length > 1
+        ? `<option value="all" ${res.selected_class.id === 'all' ? 'selected' : ''}>&#x1F4DA; All Cohorts / Classes (${totalLearnersAcrossClasses} Total Learners)</option>`
+        : '';
+
+      classSelect.innerHTML = allOptionHtml + res.assigned_classes.map(c => `
         <option value="${c.id}" ${c.id === res.selected_class.id ? 'selected' : ''}>
-          ${escapeHtml(c.name)} &bull; ${escapeHtml(c.course_name)} (${escapeHtml(c.course_code)})
+          ${escapeHtml(c.name)} &bull; ${escapeHtml(c.course_name || 'Course')} (${c.student_count || 0} learner${c.student_count === 1 ? '' : 's'}${c.active_code ? ` &bull; Code: ${escapeHtml(c.active_code)}` : ''})
         </option>
       `).join('');
 
       activeClassId = res.selected_class.id;
 
       // Class Metadata Pills
-      metadataPills.innerHTML = `
-        ${res.selected_class.active_code ? `
-          <span class="badge badge-neutral" title="Active Class Access Code">&#x1F511; Code: <strong style="font-family:var(--font-mono);">${escapeHtml(res.selected_class.active_code)}</strong>
-            ${res.selected_class.code_max_uses ? `<span style="font-weight:600; margin-left:0.35rem; color:${res.selected_class.code_used_count >= res.selected_class.code_max_uses ? 'var(--danger)' : 'inherit'};">(${res.selected_class.code_used_count || 0}/${res.selected_class.code_max_uses} used)</span>` : ''}
+      metadataPills.innerHTML = res.selected_class.id === 'all'
+        ? `
+          <span class="badge badge-primary">&#x1F4DA; All Cohorts Overview</span>
+          <span class="badge badge-neutral">${res.assigned_classes.length} Classes</span>
+          <span class="badge badge-success">${totalLearnersAcrossClasses} Total Learners</span>
+        `
+        : `
+          ${res.selected_class.active_code ? `
+            <span class="badge badge-neutral" title="Active Class Access Code">&#x1F511; Code: <strong style="font-family:var(--font-mono);">${escapeHtml(res.selected_class.active_code)}</strong>
+              ${res.selected_class.code_max_uses ? `<span style="font-weight:600; margin-left:0.35rem; color:${res.selected_class.code_used_count >= res.selected_class.code_max_uses ? 'var(--danger)' : 'inherit'};">(${res.selected_class.code_used_count || 0}/${res.selected_class.code_max_uses} used)</span>` : ''}
+            </span>
+          ` : ''}
+          <span class="badge badge-primary">${escapeHtml(res.selected_class.course_code || 'COHORT')}</span>
+          <span class="badge badge-neutral">${res.selected_class.assessment_count || 0} Exam(s)</span>
+          <span class="badge ${res.selected_class.status === 'active' ? 'badge-success' : 'badge-neutral'}">
+            ${escapeHtml((res.selected_class.status || 'ACTIVE').toUpperCase())}
           </span>
-        ` : ''}
-        <span class="badge badge-primary">${escapeHtml(res.selected_class.course_code)}</span>
-        <span class="badge badge-neutral">${res.selected_class.assessment_count || 0} Exam(s)</span>
-        <span class="badge ${res.selected_class.status === 'active' ? 'badge-success' : 'badge-neutral'}">
-          ${escapeHtml((res.selected_class.status || 'ACTIVE').toUpperCase())}
-        </span>
-      `;
+        `;
 
       // Render Summary Metrics
       const sum = res.summary;
@@ -534,7 +545,10 @@ export function renderInstructorDashboard(container, router) {
                 ${escapeHtml((s.first_name?.[0] || 'S').toUpperCase())}
               </div>
               <div>
-                <div style="font-weight:700; color:var(--text-main);">${escapeHtml(s.first_name)} ${escapeHtml(s.surname)}</div>
+                <div style="font-weight:700; color:var(--text-main);">
+                  ${escapeHtml(s.first_name)} ${escapeHtml(s.surname)}
+                  ${currentData?.selected_class?.id === 'all' && s.class_name ? `<span class="badge badge-neutral" style="font-size:0.68rem; margin-left:0.35rem; font-weight:600;">${escapeHtml(s.class_name)}</span>` : ''}
+                </div>
                 <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(s.email)}</div>
               </div>
             </div>

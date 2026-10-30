@@ -307,53 +307,89 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   }
 
   // 2. Select target class
-  let targetClass = assignedClasses.find(c => c.id === requestedClassId);
-  if (!targetClass && requestedClassId) {
-    targetClass = db.get(
-      `SELECT cl.*, c.name as course_name, c.code as course_code,
-              (SELECT COUNT(*) FROM class_enrollments ce WHERE ce.class_id = cl.id AND ce.status = 'active') as student_count,
-              (SELECT COUNT(*) FROM assessment_classes ac WHERE ac.class_id = cl.id) as assessment_count,
-              COALESCE(
-                (SELECT cac.code FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
-                (SELECT cac.code FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
-              ) as active_code,
-              COALESCE(
-                (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
-                (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
-              ) as code_max_uses,
-              COALESCE(
-                (SELECT cac.used_count FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
-                (SELECT cac.used_count FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
-                0
-              ) as code_used_count
-       FROM classes cl
-       LEFT JOIN courses c ON c.id = cl.course_id
-       WHERE cl.id = ?`,
-      [requestedClassId]
-    );
+  const isAllCohorts = requestedClassId === 'all';
+  let targetClass = null;
+
+  if (isAllCohorts) {
+    targetClass = {
+      id: 'all',
+      name: 'All Cohorts / Classes',
+      course_name: 'All Assigned Courses',
+      course_code: 'ALL',
+      student_count: assignedClasses.reduce((sum, c) => sum + (Number(c.student_count) || 0), 0),
+      assessment_count: assignedClasses.reduce((sum, c) => sum + (Number(c.assessment_count) || 0), 0),
+      active_code: null,
+      status: 'active'
+    };
+  } else {
+    targetClass = assignedClasses.find(c => c.id === requestedClassId);
+    if (!targetClass && requestedClassId) {
+      targetClass = db.get(
+        `SELECT cl.*, c.name as course_name, c.code as course_code,
+                (SELECT COUNT(*) FROM class_enrollments ce WHERE ce.class_id = cl.id AND ce.status = 'active') as student_count,
+                (SELECT COUNT(*) FROM assessment_classes ac WHERE ac.class_id = cl.id) as assessment_count,
+                COALESCE(
+                  (SELECT cac.code FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                  (SELECT cac.code FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
+                ) as active_code,
+                COALESCE(
+                  (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                  (SELECT cac.max_uses FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1)
+                ) as code_max_uses,
+                COALESCE(
+                  (SELECT cac.used_count FROM course_access_codes cac WHERE cac.class_id = cl.id AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                  (SELECT cac.used_count FROM course_access_codes cac WHERE cac.course_id = cl.course_id AND cac.class_id IS NULL AND cac.is_active = 1 ORDER BY cac.created_at DESC LIMIT 1),
+                  0
+                ) as code_used_count
+         FROM classes cl
+         LEFT JOIN courses c ON c.id = cl.course_id
+         WHERE cl.id = ?`,
+        [requestedClassId]
+      );
+    }
+    if (!targetClass) {
+      // Smart default: prioritize class that has enrolled students
+      targetClass = assignedClasses.find(c => (Number(c.student_count) || 0) > 0) || assignedClasses[0];
+    }
   }
-  if (!targetClass) {
-    targetClass = assignedClasses[0];
-  }
+
+  const targetClassIds = isAllCohorts ? assignedClasses.map(c => c.id) : [targetClass.id];
+  const targetCourseIds = isAllCohorts
+    ? [...new Set(assignedClasses.map(c => c.course_id).filter(Boolean))]
+    : [targetClass.course_id].filter(Boolean);
 
   // Discover assessments & sections configured for this class / course (DISTINCT to prevent join duplicates)
-  let classAssessments = db.all(
-    `SELECT DISTINCT a.id, a.name, a.sections, a.pass_mark_percentage, a.created_at
-     FROM assessments a
-     JOIN assessment_classes ac ON ac.assessment_id = a.id
-     WHERE ac.class_id = ?
-     ORDER BY a.created_at DESC`,
-    [targetClass.id]
-  );
-
-  if (classAssessments.length === 0) {
+  let classAssessments = [];
+  if (isAllCohorts) {
+    const classPlaceholders = targetClassIds.map(() => '?').join(',');
+    const coursePlaceholders = targetCourseIds.length > 0 ? targetCourseIds.map(() => '?').join(',') : "''";
     classAssessments = db.all(
       `SELECT DISTINCT a.id, a.name, a.sections, a.pass_mark_percentage, a.created_at
        FROM assessments a
-       WHERE a.course_id = ?
+       LEFT JOIN assessment_classes ac ON ac.assessment_id = a.id
+       WHERE ac.class_id IN (${classPlaceholders}) OR a.course_id IN (${coursePlaceholders})
        ORDER BY a.created_at DESC`,
-      [targetClass.course_id]
+      [...targetClassIds, ...targetCourseIds]
     );
+  } else {
+    classAssessments = db.all(
+      `SELECT DISTINCT a.id, a.name, a.sections, a.pass_mark_percentage, a.created_at
+       FROM assessments a
+       JOIN assessment_classes ac ON ac.assessment_id = a.id
+       WHERE ac.class_id = ?
+       ORDER BY a.created_at DESC`,
+      [targetClass.id]
+    );
+
+    if (classAssessments.length === 0) {
+      classAssessments = db.all(
+        `SELECT DISTINCT a.id, a.name, a.sections, a.pass_mark_percentage, a.created_at
+         FROM assessments a
+         WHERE a.course_id = ?
+         ORDER BY a.created_at DESC`,
+        [targetClass.course_id]
+      );
+    }
   }
 
   const defaultPassMark = (classAssessments[0] && classAssessments[0].pass_mark_percentage) || 70;
@@ -397,21 +433,53 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   }
 
   // 3. Enrolled students with detailed assessment & section progress across ALL attempts
-  const students = db.all(
-    `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
-            COALESCE(ce.enrolled_at, MIN(sa.started_at), u.created_at) as enrolled_at,
-            COALESCE(ce.status, 'active') as enrollment_status
-     FROM users u
-     LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND ce.class_id = ?
-     LEFT JOIN student_attempts sa ON sa.user_id = u.id AND (
-       sa.class_id = ? 
-       OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
-     )
-     WHERE u.role = 'student' AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
-     GROUP BY u.id
-     ORDER BY u.surname, u.first_name`,
-    [targetClass.id, targetClass.id, targetClass.id]
-  );
+  let students = [];
+  if (isAllCohorts) {
+    const classPlaceholders = targetClassIds.map(() => '?').join(',');
+    students = db.all(
+      `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
+              COALESCE(ce.enrolled_at, MIN(sa.started_at), u.created_at) as enrolled_at,
+              COALESCE(ce.status, 'active') as enrollment_status,
+              cl.name as class_name,
+              cl.id as class_id
+       FROM users u
+       LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND ce.class_id IN (${classPlaceholders})
+       LEFT JOIN classes cl ON cl.id = ce.class_id
+       LEFT JOIN student_attempts sa ON sa.user_id = u.id AND (
+         sa.class_id IN (${classPlaceholders}) 
+         OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders}))
+       )
+       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner') 
+         AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
+       GROUP BY u.id
+       ORDER BY u.surname, u.first_name`,
+      [...targetClassIds, ...targetClassIds, ...targetClassIds]
+    );
+  } else {
+    students = db.all(
+      `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
+              COALESCE(ce.enrolled_at, MIN(sa.started_at), u.created_at) as enrolled_at,
+              COALESCE(ce.status, 'active') as enrollment_status,
+              cl.name as class_name,
+              cl.id as class_id
+       FROM users u
+       LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND (
+         ce.class_id = ? 
+         OR ce.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+       )
+       LEFT JOIN classes cl ON cl.id = ce.class_id
+       LEFT JOIN student_attempts sa ON sa.user_id = u.id AND (
+         sa.class_id = ? 
+         OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
+         OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+       )
+       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner') 
+         AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
+       GROUP BY u.id
+       ORDER BY u.surname, u.first_name`,
+      [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, targetClass.id, targetClass.name, targetClass.course_id]
+    );
+  }
 
   // Track aggregate stats per section across all students and all attempts
   const sectionStatsMap = new Map();
@@ -474,19 +542,39 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     const studentFullName = `${s.first_name || ''} ${s.surname || ''}`.trim() || s.username;
 
     // Fetch ALL attempts by this student for this class, this course, or assigned assessments
-    const studentAttempts = db.all(
-      `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
-       FROM student_attempts sa
-       LEFT JOIN assessments a ON a.id = sa.assessment_id
-       WHERE sa.user_id = ? AND (
-         sa.class_id = ? 
-         OR (a.course_id IS NOT NULL AND a.course_id = ?)
-         OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
-         OR sa.class_id IS NULL
-       )
-       ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-      [defaultPassMark, s.id, targetClass.id, targetClass.course_id, targetClass.id]
-    );
+    let studentAttempts = [];
+    if (isAllCohorts) {
+      const classPlaceholders = targetClassIds.map(() => '?').join(',');
+      const coursePlaceholders = targetCourseIds.length > 0 ? targetCourseIds.map(() => '?').join(',') : "''";
+      studentAttempts = db.all(
+        `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
+         FROM student_attempts sa
+         LEFT JOIN assessments a ON a.id = sa.assessment_id
+         WHERE sa.user_id = ? AND (
+           sa.class_id IN (${classPlaceholders})
+           OR (a.course_id IS NOT NULL AND a.course_id IN (${coursePlaceholders}))
+           OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders}))
+           OR sa.class_id IS NULL
+         )
+         ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
+        [defaultPassMark, s.id, ...targetClassIds, ...targetCourseIds, ...targetClassIds]
+      );
+    } else {
+      studentAttempts = db.all(
+        `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
+         FROM student_attempts sa
+         LEFT JOIN assessments a ON a.id = sa.assessment_id
+         WHERE sa.user_id = ? AND (
+           sa.class_id = ? 
+           OR (a.course_id IS NOT NULL AND a.course_id = ?)
+           OR sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
+           OR sa.class_id IS NULL
+           OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+         )
+         ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
+        [defaultPassMark, s.id, targetClass.id, targetClass.course_id, targetClass.id, targetClass.name, targetClass.course_id]
+      );
+    }
 
     const gradedAttempts = studentAttempts.filter(a => ['submitted', 'marked', 'awaiting_review'].includes(a.status));
     const inProgressAttempts = studentAttempts.filter(a => a.status === 'in_progress');
@@ -907,22 +995,49 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const passRate = attemptedStudents.length > 0 ? Math.round((passedStudents.length / attemptedStudents.length) * 100) : 0;
 
   // 5. Question-Level Accuracy Analysis (Pedagogical Weak-Spots)
-  const questionAnalytics = db.all(
-    `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty,
-            MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
-            COUNT(aa.id) as total_answers,
-            SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
-            ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
-     FROM attempt_answers aa
-     JOIN student_attempts sa ON sa.id = aa.attempt_id
-     LEFT JOIN assessments a ON a.id = sa.assessment_id
-     JOIN questions q ON q.id = aa.question_id
-     WHERE (sa.class_id = ? OR a.course_id = ? OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
-       AND sa.status IN ('submitted', 'marked', 'awaiting_review')
-     GROUP BY q.id
-     ORDER BY success_percentage ASC`,
-    [targetClass.id, targetClass.course_id, targetClass.id]
-  );
+  let questionAnalytics = [];
+  if (isAllCohorts) {
+    const classPlaceholders = targetClassIds.map(() => '?').join(',');
+    const coursePlaceholders = targetCourseIds.length > 0 ? targetCourseIds.map(() => '?').join(',') : "''";
+    questionAnalytics = db.all(
+      `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty,
+              MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
+              COUNT(aa.id) as total_answers,
+              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
+              ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
+       FROM attempt_answers aa
+       JOIN student_attempts sa ON sa.id = aa.attempt_id
+       LEFT JOIN assessments a ON a.id = sa.assessment_id
+       JOIN questions q ON q.id = aa.question_id
+       WHERE (sa.class_id IN (${classPlaceholders}) OR a.course_id IN (${coursePlaceholders}) OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
+         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
+       GROUP BY q.id
+       ORDER BY success_percentage ASC`,
+      [...targetClassIds, ...targetCourseIds, ...targetClassIds]
+    );
+  } else {
+    questionAnalytics = db.all(
+      `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty,
+              MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
+              COUNT(aa.id) as total_answers,
+              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
+              ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
+       FROM attempt_answers aa
+       JOIN student_attempts sa ON sa.id = aa.attempt_id
+       LEFT JOIN assessments a ON a.id = sa.assessment_id
+       JOIN questions q ON q.id = aa.question_id
+       WHERE (
+         sa.class_id = ? 
+         OR a.course_id = ? 
+         OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?)
+         OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+       )
+         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
+       GROUP BY q.id
+       ORDER BY success_percentage ASC`,
+      [targetClass.id, targetClass.course_id, targetClass.id, targetClass.name, targetClass.course_id]
+    );
+  }
 
   questionAnalytics.forEach(q => {
     const mappedSec = questionSectionMap.get(q.id) || q.attempt_section_name;
@@ -931,19 +1046,43 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   });
 
   // 6. Recent Attempt Activity Stream
-  const recentAttempts = db.all(
-    `SELECT sa.id, sa.attempt_number, sa.score, sa.max_score, sa.percentage, sa.is_passed, sa.submitted_at,
-            u.id as user_id, u.first_name, u.surname, u.username,
-            a.name as assessment_name
-     FROM student_attempts sa
-     LEFT JOIN users u ON u.id = sa.user_id
-     LEFT JOIN assessments a ON a.id = sa.assessment_id
-     WHERE (sa.class_id = ? OR a.course_id = ? OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
-       AND sa.status IN ('submitted', 'marked', 'awaiting_review')
-     ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC
-     LIMIT 10`,
-    [targetClass.id, targetClass.course_id, targetClass.id]
-  );
+  let recentAttempts = [];
+  if (isAllCohorts) {
+    const classPlaceholders = targetClassIds.map(() => '?').join(',');
+    const coursePlaceholders = targetCourseIds.length > 0 ? targetCourseIds.map(() => '?').join(',') : "''";
+    recentAttempts = db.all(
+      `SELECT sa.id, sa.attempt_number, sa.score, sa.max_score, sa.percentage, sa.is_passed, sa.submitted_at,
+              u.id as user_id, u.first_name, u.surname, u.username,
+              a.name as assessment_name
+       FROM student_attempts sa
+       LEFT JOIN users u ON u.id = sa.user_id
+       LEFT JOIN assessments a ON a.id = sa.assessment_id
+       WHERE (sa.class_id IN (${classPlaceholders}) OR a.course_id IN (${coursePlaceholders}) OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
+         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
+       ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC
+       LIMIT 20`,
+      [...targetClassIds, ...targetCourseIds, ...targetClassIds]
+    );
+  } else {
+    recentAttempts = db.all(
+      `SELECT sa.id, sa.attempt_number, sa.score, sa.max_score, sa.percentage, sa.is_passed, sa.submitted_at,
+              u.id as user_id, u.first_name, u.surname, u.username,
+              a.name as assessment_name
+       FROM student_attempts sa
+       LEFT JOIN users u ON u.id = sa.user_id
+       LEFT JOIN assessments a ON a.id = sa.assessment_id
+       WHERE (
+         sa.class_id = ? 
+         OR a.course_id = ? 
+         OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?)
+         OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+       )
+         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
+       ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC
+       LIMIT 10`,
+      [targetClass.id, targetClass.course_id, targetClass.id, targetClass.name, targetClass.course_id]
+    );
+  }
 
   return {
     assigned_classes: assignedClasses,

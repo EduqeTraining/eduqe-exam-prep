@@ -42,15 +42,40 @@ function createClass({
     throw new Error('Maximum uses must be a positive number greater than 0.');
   }
 
-  const classId = generateId();
-  db.run(
-    `INSERT INTO classes (id, course_id, name, description, facilitator_name, instructor_id, start_date, end_date, access_duration_days, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-    [classId, courseId, trimmedName, description, finalFacilitator, instructor_id || null, start_date, end_date, access_duration_days, status]
+  // Prevent duplicate ghost classes: if an empty class with identical name & course exists (0 enrollments, 0 attempts, and 0 code uses), reuse it
+  const existingEmptyClass = db.get(
+    `SELECT cl.id FROM classes cl
+     WHERE LOWER(TRIM(cl.name)) = LOWER(?)
+       AND cl.course_id = ?
+       AND (SELECT COUNT(*) FROM class_enrollments WHERE class_id = cl.id) = 0
+       AND (SELECT COUNT(*) FROM student_attempts WHERE class_id = cl.id) = 0
+       AND (SELECT COALESCE(SUM(used_count), 0) FROM course_access_codes WHERE class_id = cl.id) = 0
+     ORDER BY cl.created_at DESC LIMIT 1`,
+    [trimmedName, courseId]
   );
+
+  let classId;
+  if (existingEmptyClass) {
+    classId = existingEmptyClass.id;
+    db.run(
+      `UPDATE classes 
+       SET description = ?, facilitator_name = ?, instructor_id = ?, start_date = ?, end_date = ?, access_duration_days = ?, status = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [description, finalFacilitator, instructor_id || null, start_date, end_date, access_duration_days, status, classId]
+    );
+  } else {
+    classId = generateId();
+    db.run(
+      `INSERT INTO classes (id, course_id, name, description, facilitator_name, instructor_id, start_date, end_date, access_duration_days, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [classId, courseId, trimmedName, description, finalFacilitator, instructor_id || null, start_date, end_date, access_duration_days, status]
+    );
+  }
 
   // Assign or generate active access code for this class
   const requestedCode = access_code ? access_code.trim().toUpperCase() : null;
+  const existingClassCode = db.get('SELECT * FROM course_access_codes WHERE class_id = ? AND is_active = 1 LIMIT 1', [classId]);
+
   if (requestedCode) {
     // Check if an unassigned course code matches requestedCode
     const existingCode = db.get(
@@ -63,7 +88,14 @@ function createClass({
         parsedMaxUses !== null ? parsedMaxUses : existingCode.max_uses,
         existingCode.id
       ]);
-    } else {
+    } else if (existingClassCode && existingClassCode.code !== requestedCode) {
+      db.run('UPDATE course_access_codes SET code = ?, expires_at = ?, max_uses = ? WHERE id = ?', [
+        requestedCode,
+        end_date,
+        parsedMaxUses !== null ? parsedMaxUses : existingClassCode.max_uses,
+        existingClassCode.id
+      ]);
+    } else if (!existingClassCode) {
       createCode({
         courseId,
         classId,
@@ -74,7 +106,7 @@ function createClass({
         adminUsername
       });
     }
-  } else {
+  } else if (!existingClassCode) {
     // Check if there is an unassigned active code on the course to claim for its first class
     const unassignedCode = db.get(
       'SELECT * FROM course_access_codes WHERE course_id = ? AND class_id IS NULL AND is_active = 1 ORDER BY created_at ASC LIMIT 1',
@@ -98,6 +130,8 @@ function createClass({
         adminUsername
       });
     }
+  } else if (parsedMaxUses !== null) {
+    db.run('UPDATE course_access_codes SET max_uses = ? WHERE id = ?', [parsedMaxUses, existingClassCode.id]);
   }
 
   logAction({
