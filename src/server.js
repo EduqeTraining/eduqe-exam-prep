@@ -235,7 +235,7 @@ async function handleRequest(req, res) {
       // 1. AUTHENTICATION ENDPOINTS
       // -------------------------------------------------------------
       if (req.method === 'POST' && pathname === '/api/auth/login') {
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh(['users']);
         const body = await parseBody(req);
         try {
           let result;
@@ -265,15 +265,17 @@ async function handleRequest(req, res) {
       }
 
       if (req.method === 'POST' && pathname === '/api/auth/register') {
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('questions');
-        await supabaseService.ensureTableFresh('assessment_questions');
+        await supabaseService.ensureTablesFresh([
+          'users',
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'questions',
+          'assessment_questions'
+        ]);
         const body = await parseBody(req);
         try {
           const result = authService.registerStudent({
@@ -312,7 +314,7 @@ async function handleRequest(req, res) {
       }
 
       if (req.method === 'GET' && pathname === '/api/auth/me') {
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh(['users']);
         const user = requireAuth(req, res);
         if (!user) return;
         return sendJson(res, 200, { user });
@@ -342,11 +344,13 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/student/redeem-code') {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
+        await supabaseService.ensureTablesFresh([
+          'users',
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments'
+        ]);
         const body = await parseBody(req);
         try {
           const result = accessCodeService.redeemCourseCode({
@@ -376,17 +380,19 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
 
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('questions');
-        await supabaseService.ensureTableFresh('assessment_questions');
-        await supabaseService.ensureTableFresh('student_attempts');
-        await supabaseService.ensureTableFresh('attempt_answers');
+        await supabaseService.ensureTablesFresh([
+          'users',
+          'courses',
+          'course_access_codes',
+          'classes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'questions',
+          'assessment_questions',
+          'student_attempts',
+          'attempt_answers'
+        ]);
 
         // Enforce rule: Purge questions and previous results for any expired certifications
         expirationRuleService.checkAndPurgeExpiredEnrollments({ userId: user.id });
@@ -401,7 +407,7 @@ async function handleRequest(req, res) {
           for (const enroll of student.enrollments) {
             if (enroll.enrollment_status === 'active') {
               const ensured = accessCodeService.ensureClassAssessment(db, enroll.course_id, enroll.class_id, enroll.course_name, user.id);
-              if (ensured && ensured.assessment && ensured.assessment.id) {
+              if (ensured && ensured.isNew && ensured.assessment && ensured.assessment.id) {
                 await supabaseService.syncAssessmentToSupabase(ensured.assessment.id);
               }
 
@@ -485,16 +491,17 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/student/attempts/start') {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('questions');
-        await supabaseService.ensureTableFresh('assessment_questions');
-        await supabaseService.ensureTableFresh('student_attempts');
+        await supabaseService.ensureTablesFresh([
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'questions',
+          'assessment_questions',
+          'student_attempts'
+        ]);
         const body = await parseBody(req);
         try {
           const attemptState = attemptService.startAttempt({
@@ -553,7 +560,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitMatch[1];
-        await supabaseService.ensureTableFresh('student_attempts');
+        await supabaseService.ensureTablesFresh(['student_attempts']);
         try {
           const result = attemptService.submitAttempt({
             attemptId,
@@ -595,8 +602,7 @@ async function handleRequest(req, res) {
       // 4. COURSES (Admin)
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/courses') {
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['courses', 'classes']);
         const courses = courseService.listCourses({
           query: query.q || query.query || '',
           status: query.status || '',
@@ -608,7 +614,7 @@ async function handleRequest(req, res) {
 
       const courseIdMatch = pathname.match(/^\/api\/courses\/([^\/]+)$/);
       if (req.method === 'GET' && courseIdMatch) {
-        await supabaseService.ensureTableFresh('courses');
+        await supabaseService.ensureTablesFresh(['courses']);
         const course = courseService.getCourse(courseIdMatch[1]);
         if (!course) return sendJson(res, 404, { error: 'Course not found' });
         return sendJson(res, 200, course);
@@ -752,24 +758,28 @@ async function handleRequest(req, res) {
       // 5. CLASSES (Multiple Classes per Course)
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/classes') {
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh([
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'users'
+        ]);
         const classes = classService.listClasses(query.course_id || null);
         return sendJson(res, 200, classes);
       }
 
       const classIdMatch = pathname.match(/^\/api\/classes\/([^\/]+)$/);
       if (req.method === 'GET' && classIdMatch) {
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh([
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'users'
+        ]);
         const cls = classService.getClass(classIdMatch[1]);
         if (!cls) return sendJson(res, 404, { error: 'Class not found' });
         return sendJson(res, 200, cls);
@@ -778,9 +788,7 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/classes') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh(['courses', 'classes', 'users']);
         const body = await parseBody(req);
         try {
           const created = classService.createClass({
@@ -801,9 +809,7 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && classIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('users');
+        await supabaseService.ensureTablesFresh(['courses', 'classes', 'users']);
         const body = await parseBody(req);
         try {
           const updated = classService.updateClass(classIdMatch[1], body, user.id, user.username);
@@ -1045,9 +1051,7 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/students') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'class_enrollments', 'classes']);
         const students = studentService.listStudents({
           query: query.q || '',
           account_status: query.account_status || '',
@@ -1061,9 +1065,7 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && studentIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'class_enrollments', 'classes']);
         const stu = studentService.getStudent(studentIdMatch[1]);
         if (!stu) return sendJson(res, 404, { error: 'Student not found' });
         return sendJson(res, 200, stu);
@@ -1142,8 +1144,7 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/instructors') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'classes']);
         const instructors = instructorService.listInstructors({
           query: query.q || '',
           status: query.status || ''
@@ -1155,8 +1156,7 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && instructorIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'classes']);
         const inst = instructorService.getInstructor(instructorIdMatch[1]);
         if (!inst) return sendJson(res, 404, { error: 'Instructor not found' });
         return sendJson(res, 200, inst);
@@ -1165,8 +1165,7 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/instructors') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'classes']);
         const body = await parseBody(req);
         try {
           const result = instructorService.createInstructor({
@@ -1186,8 +1185,7 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && instructorIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'classes']);
         const body = await parseBody(req);
         try {
           const updated = instructorService.updateInstructor(instructorIdMatch[1], body, user.id, user.username);
@@ -1201,8 +1199,7 @@ async function handleRequest(req, res) {
       if (req.method === 'DELETE' && instructorIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
+        await supabaseService.ensureTablesFresh(['users', 'classes']);
         try {
           const result = instructorService.deleteInstructor(instructorIdMatch[1], user.id, user.username);
           await supabaseService.deleteRecord('users', instructorIdMatch[1]);
@@ -1219,12 +1216,14 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
+        await supabaseService.ensureTablesFresh([
+          'courses',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes'
+        ]);
         const classes = (user.role === 'administrator')
           ? classService.listClasses()
           : classService.listClassesForInstructor(user.id);
@@ -1238,17 +1237,19 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('course_access_codes');
-        await supabaseService.ensureTableFresh('class_enrollments');
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('questions');
-        await supabaseService.ensureTableFresh('assessment_questions');
-        await supabaseService.ensureTableFresh('student_attempts');
-        await supabaseService.ensureTableFresh('attempt_answers');
+        await supabaseService.ensureTablesFresh([
+          'courses',
+          'users',
+          'classes',
+          'course_access_codes',
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'questions',
+          'assessment_questions',
+          'student_attempts',
+          'attempt_answers'
+        ]);
         try {
           const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
           const progress = instructorService.getInstructorClassProgress(targetInstructorId, query.class_id || null);
@@ -1499,9 +1500,7 @@ async function handleRequest(req, res) {
       // 9. ASSESSMENTS & ASSESSMENT BUILDER
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/assessments') {
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('assessment_questions');
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
         const assessments = assessmentService.listAssessments({
           course_id: query.course_id || '',
           status: query.status || '',
@@ -1513,9 +1512,7 @@ async function handleRequest(req, res) {
 
       const assessIdMatch = pathname.match(/^\/api\/assessments\/([^\/]+)$/);
       if (req.method === 'GET' && assessIdMatch) {
-        await supabaseService.ensureTableFresh('assessments');
-        await supabaseService.ensureTableFresh('assessment_classes');
-        await supabaseService.ensureTableFresh('assessment_questions');
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
         const a = assessmentService.getAssessment(assessIdMatch[1]);
         if (!a) return sendJson(res, 404, { error: 'Assessment not found' });
         return sendJson(res, 200, a);
@@ -1686,10 +1683,7 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/dashboard') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTableFresh('users');
-        await supabaseService.ensureTableFresh('courses');
-        await supabaseService.ensureTableFresh('classes');
-        await supabaseService.ensureTableFresh('student_attempts');
+        await supabaseService.ensureTablesFresh(['users', 'courses', 'classes', 'student_attempts']);
         const metrics = reportService.getDashboardMetrics();
         return sendJson(res, 200, metrics);
       }

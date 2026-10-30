@@ -46,7 +46,8 @@ async function supabaseRequest(tableOrPath, { method = 'GET', body = null, heade
 // -------------------------------------------------------------
 
 const tableLastSync = new Map();
-const SYNC_CACHE_TTL_MS = 2500; // 2.5 seconds cache window
+const inFlightPulls = new Map();
+const SYNC_CACHE_TTL_MS = 30000; // 30 seconds cache window (mutations immediately invalidate cache)
 
 function invalidateTableCache(tableName = null) {
   if (tableName) {
@@ -59,68 +60,79 @@ function invalidateTableCache(tableName = null) {
 async function pullTable(table) {
   const config = getSupabaseConfig();
   if (!config.isEnabled) return 0;
-  const db = getDatabase();
 
-  try {
-    const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
-    if (!Array.isArray(rows)) return 0;
-
-    const tableCols = db.all(`PRAGMA table_info("${table}")`);
-    if (!tableCols || tableCols.length === 0) return 0;
-
-    const hasId = tableCols.some(c => c.name === 'id');
-    const localColSet = new Set(tableCols.map(c => c.name));
-
-    if (rows.length === 0) {
-      // If remote table has 0 rows, preserve existing local cache rows to prevent
-      // wiping newly seeded records or in-flight attempts before they sync
-      tableLastSync.set(table, Date.now());
-      return 0;
-    }
-
-    const remoteCols = Object.keys(rows[0]);
-    const matchingCols = remoteCols.filter(c => localColSet.has(c));
-    if (matchingCols.length === 0) return 0;
-
-    const placeholders = matchingCols.map(() => '?').join(', ');
-    const colNames = matchingCols.map(c => `"${c}"`).join(', ');
-    const remoteIds = hasId ? new Set(rows.map(r => String(r.id))) : null;
-
-    // Temporarily turn OFF foreign key checks during hydration from Supabase
-    // to prevent rollback due to inter-table foreign key resolution order
-    try {
-      db.run('PRAGMA foreign_keys = OFF;');
-    } catch (e) {}
-
-    try {
-      db.transaction(() => {
-        // Upsert latest rows from Supabase into local cache without deleting local un-synced rows
-        for (const row of rows) {
-          const vals = matchingCols.map(c => {
-            const val = row[c];
-            if (val !== null && typeof val === 'object') {
-              return JSON.stringify(val);
-            }
-            return val;
-          });
-          db.run(
-            `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
-            vals
-          );
-        }
-      });
-    } finally {
-      try {
-        db.run('PRAGMA foreign_keys = ON;');
-      } catch (e) {}
-    }
-
-    tableLastSync.set(table, Date.now());
-    return rows.length;
-  } catch (err) {
-    console.warn(`[Supabase Pull Warning] Error pulling table ${table}:`, err.message);
-    return 0;
+  // Deduplicate concurrent in-flight requests for the same table
+  if (inFlightPulls.has(table)) {
+    return inFlightPulls.get(table);
   }
+
+  const pullPromise = (async () => {
+    const db = getDatabase();
+    try {
+      const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
+      if (!Array.isArray(rows)) return 0;
+
+      const tableCols = db.all(`PRAGMA table_info("${table}")`);
+      if (!tableCols || tableCols.length === 0) return 0;
+
+      const hasId = tableCols.some(c => c.name === 'id');
+      const localColSet = new Set(tableCols.map(c => c.name));
+
+      if (rows.length === 0) {
+        // If remote table has 0 rows, preserve existing local cache rows to prevent
+        // wiping newly seeded records or in-flight attempts before they sync
+        tableLastSync.set(table, Date.now());
+        return 0;
+      }
+
+      const remoteCols = Object.keys(rows[0]);
+      const matchingCols = remoteCols.filter(c => localColSet.has(c));
+      if (matchingCols.length === 0) return 0;
+
+      const placeholders = matchingCols.map(() => '?').join(', ');
+      const colNames = matchingCols.map(c => `"${c}"`).join(', ');
+
+      // Temporarily turn OFF foreign key checks during hydration from Supabase
+      // to prevent rollback due to inter-table foreign key resolution order
+      try {
+        db.run('PRAGMA foreign_keys = OFF;');
+      } catch (e) {}
+
+      try {
+        db.transaction(() => {
+          // Upsert latest rows from Supabase into local cache without deleting local un-synced rows
+          for (const row of rows) {
+            const vals = matchingCols.map(c => {
+              const val = row[c];
+              if (val !== null && typeof val === 'object') {
+                return JSON.stringify(val);
+              }
+              return val;
+            });
+            db.run(
+              `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
+              vals
+            );
+          }
+        });
+      } finally {
+        try {
+          db.run('PRAGMA foreign_keys = ON;');
+        } catch (e) {}
+      }
+
+      tableLastSync.set(table, Date.now());
+      return rows.length;
+    } catch (err) {
+      console.warn(`[Supabase Pull Warning] Error pulling table ${table}:`, err.message);
+      return 0;
+    } finally {
+      inFlightPulls.delete(table);
+    }
+  })();
+
+  inFlightPulls.set(table, pullPromise);
+  return pullPromise;
 }
 
 async function ensureTableFresh(table, maxAgeMs = SYNC_CACHE_TTL_MS) {
@@ -133,6 +145,22 @@ async function ensureTableFresh(table, maxAgeMs = SYNC_CACHE_TTL_MS) {
     return;
   }
   await pullTable(table);
+}
+
+async function ensureTablesFresh(tables = [], maxAgeMs = SYNC_CACHE_TTL_MS) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !tables || tables.length === 0) return;
+
+  const now = Date.now();
+  const needed = [...new Set(tables)].filter(table => {
+    const lastSync = tableLastSync.get(table) || 0;
+    return (now - lastSync) >= maxAgeMs;
+  });
+
+  if (needed.length === 0) return;
+
+  // Execute all required table refreshes concurrently in parallel
+  await Promise.all(needed.map(table => pullTable(table)));
 }
 
 // -------------------------------------------------------------
@@ -179,6 +207,53 @@ async function upsertRecord(tableName, record, conflictColumns = null) {
     return res;
   } catch (err) {
     console.warn(`[Supabase Sync Warning] Could not sync to ${tableName}:`, err.message);
+    return null;
+  }
+}
+
+async function upsertRecords(tableName, records, conflictColumns = null) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !records) return null;
+  const items = Array.isArray(records) ? records : [records];
+  if (items.length === 0) return [];
+
+  invalidateTableCache(tableName);
+
+  let conflictParam = conflictColumns || 'id';
+  if (!conflictColumns) {
+    if (tableName === 'class_enrollments') conflictParam = 'class_id,user_id';
+    else if (tableName === 'assessment_classes') conflictParam = 'assessment_id,class_id';
+    else if (tableName === 'course_access_codes') conflictParam = 'code';
+    else if (tableName === 'eduque_settings') conflictParam = 'key';
+  }
+
+  try {
+    let res;
+    try {
+      res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
+        method: 'POST',
+        headers: {
+          'Prefer': 'resolution=merge-duplicates,return=representation'
+        },
+        body: items
+      });
+    } catch (firstErr) {
+      if (conflictParam !== 'id') {
+        res = await supabaseRequest(`${tableName}?on_conflict=id`, {
+          method: 'POST',
+          headers: {
+            'Prefer': 'resolution=merge-duplicates,return=representation'
+          },
+          body: items
+        });
+      } else {
+        throw firstErr;
+      }
+    }
+    invalidateTableCache(tableName);
+    return res;
+  } catch (err) {
+    console.warn(`[Supabase Bulk Sync Warning] Could not sync batch to ${tableName}:`, err.message);
     return null;
   }
 }
@@ -340,20 +415,11 @@ async function syncAssessmentToSupabase(assessmentOrId) {
   try {
     const aqs = db.all('SELECT * FROM assessment_questions WHERE assessment_id = ?', [assess.id]);
     if (aqs && aqs.length > 0) {
-      for (const aq of aqs) {
-        if (aq.question_id) {
-          try {
-            await syncQuestionToSupabase(aq.question_id);
-          } catch (e) {}
-        }
-        await upsertRecord('assessment_questions', aq);
-      }
+      await upsertRecords('assessment_questions', aqs, 'id');
     }
     const acs = db.all('SELECT * FROM assessment_classes WHERE assessment_id = ?', [assess.id]);
     if (acs && acs.length > 0) {
-      for (const ac of acs) {
-        await upsertRecord('assessment_classes', ac);
-      }
+      await upsertRecords('assessment_classes', acs, 'assessment_id,class_id');
     }
   } catch (e) {
     // Ignore links error
@@ -387,9 +453,7 @@ async function syncPoolToSupabase(poolOrId) {
   try {
     const items = db.all('SELECT * FROM question_pool_items WHERE pool_id = ?', [pool.id]);
     if (items && items.length > 0) {
-      for (const item of items) {
-        await upsertRecord('question_pool_items', item);
-      }
+      await upsertRecords('question_pool_items', items, 'id');
     }
   } catch (e) {
     // Ignore
@@ -429,14 +493,7 @@ async function syncAttemptToSupabase(attemptId) {
   try {
     const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
     if (answers && answers.length > 0) {
-      for (const ans of answers) {
-        if (ans.question_id) {
-          try {
-            await syncQuestionToSupabase(ans.question_id);
-          } catch (e) {}
-        }
-        await upsertRecord('attempt_answers', ans);
-      }
+      await upsertRecords('attempt_answers', answers, 'id');
     }
   } catch (e) {
     // Ignore
@@ -449,9 +506,7 @@ async function syncAttemptAnswersToSupabase(attemptId) {
   try {
     const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
     if (answers && answers.length > 0) {
-      for (const ans of answers) {
-        await upsertRecord('attempt_answers', ans);
-      }
+      await upsertRecords('attempt_answers', answers, 'id');
     }
   } catch (e) {
     // Ignore
@@ -603,6 +658,7 @@ module.exports = {
   getSupabaseConfig,
   supabaseRequest,
   upsertRecord,
+  upsertRecords,
   deleteRecord,
   syncUserToSupabase,
   syncClassToSupabase,
@@ -625,6 +681,7 @@ module.exports = {
   pullFromSupabase,
   pullTable,
   ensureTableFresh,
+  ensureTablesFresh,
   invalidateTableCache,
   testSupabaseConnection
 };

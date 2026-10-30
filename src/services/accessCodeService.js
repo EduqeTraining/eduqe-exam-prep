@@ -502,11 +502,13 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
   }
 
   if (questions.length === 0 && !assignedAssessment) {
-    return { assessment: null, questions: [] };
+    return { assessment: null, questions: [], isNew: false };
   }
 
   // 4. If still no assessment exists, auto-create one
+  let isNew = false;
   if (!assignedAssessment) {
+    isNew = true;
     const assessId = generateId();
     db.run(
       `INSERT INTO assessments (id, course_id, name, description, duration_minutes, pass_mark_percentage, max_attempts, status, created_by, created_at, updated_at)
@@ -557,7 +559,8 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
 
   return {
     assessment: assignedAssessment,
-    questions
+    questions,
+    isNew
   };
 }
 
