@@ -564,4 +564,87 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     assert.equal(dupRes.status, 201);
     assert.equal(dupRes.data.id, emptyClassId, 'Reuses empty class ID instead of creating duplicate ghost class');
   });
+
+  await t.test('11. Strict cohort code isolation: students redeeming Code A must not leak into Cohort B sharing same course/assessment', async () => {
+    const coursesRes = await req('/api/courses', { token: adminToken });
+    const courseId = coursesRes.data[0].id;
+
+    // Create Cohort Alpha with code ALPHA-CODE-99
+    const alphaClassRes = await req('/api/classes', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        course_id: courseId,
+        name: 'Cohort Alpha',
+        instructor_id: seededInstructorId,
+        access_code: 'ALPHA-CODE-99'
+      }
+    });
+    assert.equal(alphaClassRes.status, 201);
+    const alphaClassId = alphaClassRes.data.id;
+
+    // Create Cohort Beta with code BETA-CODE-99
+    const betaClassRes = await req('/api/classes', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        course_id: courseId,
+        name: 'Cohort Beta',
+        instructor_id: seededInstructorId,
+        access_code: 'BETA-CODE-99'
+      }
+    });
+    assert.equal(betaClassRes.status, 201);
+    const betaClassId = betaClassRes.data.id;
+
+    // Register Student Alpha with ALPHA-CODE-99
+    const regAlpha = await req('/api/auth/register', {
+      method: 'POST',
+      body: {
+        first_name: 'AlphaUser',
+        surname: 'Student',
+        email: 'alpha.student@example.com',
+        username: 'alpha.student',
+        password: 'Password123!',
+        student_number: 'STU-ALPHA',
+        course_code: 'ALPHA-CODE-99'
+      }
+    });
+    assert.equal(regAlpha.status, 201);
+    const alphaUserId = regAlpha.data.user.id;
+
+    // Register Student Beta with BETA-CODE-99
+    const regBeta = await req('/api/auth/register', {
+      method: 'POST',
+      body: {
+        first_name: 'BetaUser',
+        surname: 'Student',
+        email: 'beta.student@example.com',
+        username: 'beta.student',
+        password: 'Password123!',
+        student_number: 'STU-BETA',
+        course_code: 'BETA-CODE-99'
+      }
+    });
+    assert.equal(regBeta.status, 201);
+    const betaUserId = regBeta.data.user.id;
+
+    // Instructor views Cohort Alpha
+    const alphaProgress = await req(`/api/instructor/progress?class_id=${alphaClassId}`, {
+      token: seededInstructorToken
+    });
+    assert.equal(alphaProgress.status, 200);
+    assert.equal(alphaProgress.data.summary.total_enrolled, 1, 'Cohort Alpha must have exactly 1 enrolled student');
+    assert.ok(alphaProgress.data.students.some(s => s.id === alphaUserId), 'AlphaUser must be in Cohort Alpha');
+    assert.ok(!alphaProgress.data.students.some(s => s.id === betaUserId), 'BetaUser must NOT be in Cohort Alpha');
+
+    // Instructor views Cohort Beta
+    const betaProgress = await req(`/api/instructor/progress?class_id=${betaClassId}`, {
+      token: seededInstructorToken
+    });
+    assert.equal(betaProgress.status, 200);
+    assert.equal(betaProgress.data.summary.total_enrolled, 1, 'Cohort Beta must have exactly 1 enrolled student');
+    assert.ok(betaProgress.data.students.some(s => s.id === betaUserId), 'BetaUser must be in Cohort Beta');
+    assert.ok(!betaProgress.data.students.some(s => s.id === alphaUserId), 'AlphaUser must NOT be in Cohort Beta');
+  });
 });
