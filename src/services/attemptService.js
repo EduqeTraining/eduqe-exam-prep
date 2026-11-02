@@ -100,9 +100,13 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     throw new Error('Assessment availability window has not opened yet.');
   }
   if (assessment.available_to && now > parseUtcDate(assessment.available_to).getTime()) {
-    // If the student has an active class enrollment whose access period extends beyond the assessment window,
+    // If the student has an active class enrollment whose access period extends beyond the assessment window (or has ongoing active access),
     // permit the enrolled student to take their assigned assessment.
-    const hasActiveClassAccess = Boolean(enrollment && enrollment.access_expires_at && parseUtcDate(enrollment.access_expires_at).getTime() > now);
+    const hasActiveClassAccess = Boolean(
+      enrollment &&
+      enrollment.status === 'active' &&
+      (!enrollment.access_expires_at || parseUtcDate(enrollment.access_expires_at).getTime() > now)
+    );
     if (!hasActiveClassAccess) {
       throw new Error('Assessment availability window has closed.');
     }

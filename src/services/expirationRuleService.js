@@ -23,7 +23,7 @@ function checkAndPurgeExpiredEnrollments({ userId = null, adminUserId = null, ad
   // Query candidate enrollments
   let sql = `
     SELECT ce.id as enrollment_id, ce.user_id, ce.class_id, ce.access_starts_at, ce.access_expires_at, ce.status as enrollment_status,
-           cl.name as class_name, cl.end_date as class_end_date,
+           cl.name as class_name, cl.end_date as class_end_date, cl.status as class_status,
            c.id as course_id, c.name as course_name, c.end_date as course_end_date, c.status as course_status,
            u.username
     FROM class_enrollments ce
@@ -60,8 +60,8 @@ function checkAndPurgeExpiredEnrollments({ userId = null, adminUserId = null, ad
       }
     }
 
-    // 3. Class end date has passed
-    if (!isExpired && enroll.class_end_date) {
+    // 3. Class end date has passed (only applicable if no explicit rolling access_expires_at was granted)
+    if (!isExpired && !enroll.access_expires_at && enroll.class_end_date) {
       const classExp = parseUtcDate(enroll.class_end_date);
       if (classExp && now.getTime() > classExp.getTime()) {
         isExpired = true;
@@ -70,7 +70,8 @@ function checkAndPurgeExpiredEnrollments({ userId = null, adminUserId = null, ad
     }
 
     // 4. Course end date has passed or course is closed/archived
-    if (!isExpired && enroll.course_end_date) {
+    // If the class is explicitly active and has not expired, an older parent course template end date does not terminate the active class cohort.
+    if (!isExpired && !enroll.access_expires_at && !enroll.class_end_date && enroll.class_status !== 'active' && enroll.course_end_date) {
       const courseExp = parseUtcDate(enroll.course_end_date);
       if (courseExp && now.getTime() > courseExp.getTime()) {
         isExpired = true;

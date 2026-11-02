@@ -337,19 +337,17 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
   const hasRollingDuration = Boolean(assignedClass && assignedClass.access_duration_days && assignedClass.access_duration_days > 0);
   const codeHasOwnExpiry = Boolean(codeRecord.expires_at);
 
-  // If the class has a rolling duration (e.g. 10 days from enrollment) or the code has its own explicit expiry,
-  // that explicit grant takes precedence over legacy course template end dates.
-  if (!hasRollingDuration && !codeHasOwnExpiry) {
-    if (assignedClass && assignedClass.end_date) {
-      const classEndDate = new Date(assignedClass.end_date).getTime();
-      if (now > classEndDate) {
-        throw new Error('This class / cohort access period has ended.');
-      }
-    } else if (course.end_date) {
-      const courseEndDate = new Date(course.end_date).getTime();
-      if (now > courseEndDate) {
-        throw new Error('Course access period has expired.');
-      }
+  // Cohort and code access checks:
+  // Active codes created by administrators and active cohorts take precedence over parent course templates.
+  if (assignedClass && assignedClass.end_date && !hasRollingDuration && !codeHasOwnExpiry) {
+    const classEndDate = new Date(assignedClass.end_date).getTime();
+    if (now > classEndDate) {
+      throw new Error('This class / cohort access period has ended.');
+    }
+  } else if (!assignedClass && course.end_date && !codeHasOwnExpiry) {
+    const courseEndDate = new Date(course.end_date).getTime();
+    if (now > courseEndDate) {
+      throw new Error('Course access period has expired.');
     }
   }
 
@@ -359,7 +357,7 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
     if (now < classStartDate) {
       throw new Error('Class access period has not started yet.');
     }
-  } else if (course.start_date && !hasRollingDuration && !codeHasOwnExpiry) {
+  } else if (!assignedClass && course.start_date && !hasRollingDuration && !codeHasOwnExpiry) {
     const courseStartDate = new Date(course.start_date).getTime();
     if (now < courseStartDate) {
       throw new Error('Course access period has not started yet.');
@@ -387,8 +385,15 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
       const expDate = new Date();
       expDate.setDate(expDate.getDate() + assignedClass.access_duration_days);
       accessExpiresAt = expDate.toISOString();
+    } else if (assignedClass.end_date) {
+      accessExpiresAt = assignedClass.end_date;
+    } else if (codeRecord.expires_at) {
+      accessExpiresAt = codeRecord.expires_at;
     } else if (course.end_date) {
-      accessExpiresAt = course.end_date;
+      const courseEnd = new Date(course.end_date).getTime();
+      if (courseEnd > now) {
+        accessExpiresAt = course.end_date;
+      }
     }
 
     db.run(

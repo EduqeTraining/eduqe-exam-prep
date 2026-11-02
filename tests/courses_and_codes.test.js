@@ -224,4 +224,56 @@ describe('Course & Access Code Lifecycle Tests', () => {
     const expiresMs = new Date(res.enrollment.access_expires_at).getTime();
     assert.ok(expiresMs > Date.now(), 'Access should expire in the future');
   });
+
+  test('Active code for cohort without fixed duration succeeds even if parent course has expired end_date and allows assessment attempts', () => {
+    const classService = require('../src/services/classService');
+    const attemptService = require('../src/services/attemptService');
+    const expirationRuleService = require('../src/services/expirationRuleService');
+    const pastDate = new Date(Date.now() - 7200000).toISOString(); // 2 hours ago
+
+    const course = courseService.createCourse({
+      name: 'Legacy Date Course',
+      code: 'LEGACY-01',
+      status: 'published',
+      end_date: pastDate
+    });
+
+    // Active cohort with open-ended duration (null duration, null end_date)
+    const openCohort = classService.createClass({
+      courseId: course.id,
+      name: 'Open Active Cohort',
+      access_code: 'OPEN-COHORT-CODE'
+    });
+
+    const { student } = studentService.createStudent({
+      first_name: 'Delegate',
+      surname: 'One',
+      email: 'delegate.one@example.com'
+    });
+
+    // Code redemption MUST succeed
+    const redeemRes = accessCodeService.redeemCourseCode({
+      userId: student.id,
+      rawCode: 'OPEN-COHORT-CODE'
+    });
+    assert.strictEqual(redeemRes.success, true);
+    assert.strictEqual(redeemRes.class.id, openCohort.id);
+
+    // Fetch assessment assigned to this class/course
+    const db = require('../src/db').getDatabase();
+    const assessment = db.get('SELECT * FROM assessments WHERE course_id = ? LIMIT 1', [course.id]);
+    assert.ok(assessment, 'An assessment should exist for the course');
+
+    // Delegate can start an attempt without being blocked
+    const attempt = attemptService.startAttempt({
+      userId: student.id,
+      assessmentId: assessment.id,
+      classId: openCohort.id
+    });
+    assert.ok(attempt && attempt.id, 'Student attempt should start successfully');
+
+    // Run expiration purge routine and ensure this active student is NOT purged
+    const purged = expirationRuleService.checkAndPurgeExpiredEnrollments({ userId: student.id });
+    assert.strictEqual(purged.length, 0, 'Active student should not be purged by parent course end_date');
+  });
 });
