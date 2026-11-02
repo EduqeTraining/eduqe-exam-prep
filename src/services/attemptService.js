@@ -16,6 +16,16 @@ function parseUtcDate(str) {
   return new Date(s.replace(' ', 'T') + 'Z');
 }
 
+function parseCompletedSections(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed.map(s => String(s).trim()).filter(Boolean) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function shuffleArray(arr) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -206,9 +216,9 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
 
   // Insert attempt record
   db.run(
-    `INSERT INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status)
-     VALUES (?, ?, ?, ?, ?, datetime('now'), ?, 'in_progress')`,
-    [attemptId, assessmentId, userId, targetClassId, newAttemptNumber, deadlineDate]
+    `INSERT INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, completed_sections)
+     VALUES (?, ?, ?, ?, ?, datetime('now'), ?, 'in_progress', ?)`,
+    [attemptId, assessmentId, userId, targetClassId, newAttemptNumber, deadlineDate, JSON.stringify([])]
   );
 
   // Initialize attempt answers with section_name and order_index
@@ -249,6 +259,21 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   if (now > deadline) {
     submitAttempt({ attemptId, userId, isAuto: true });
     throw new Error('Assessment timer has expired. Your attempt has been automatically submitted.');
+  }
+
+  // Check section lock and completion status
+  const answerRow = db.get('SELECT section_name FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, questionId]);
+  const secName = (answerRow?.section_name || 'Section 1').trim();
+
+  const completedSections = parseCompletedSections(attempt.completed_sections);
+  if (completedSections.includes(secName)) {
+    throw new Error(`Section '${secName}' has already been submitted and cannot be modified.`);
+  }
+
+  const { getUnlockedSectionsForClass } = require('./classService');
+  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
+  if (!unlockedSections.includes(secName)) {
+    throw new Error(`Section '${secName}' is currently locked. Please wait for your instructor to unlock it.`);
   }
 
   const answerJson = savedAnswer !== undefined && savedAnswer !== null ? JSON.stringify(savedAnswer) : null;
@@ -374,6 +399,11 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
   const isPassed = percentage >= (attempt.pass_mark_percentage || 70);
   const finalStatus = hasManualReview ? 'awaiting_review' : 'marked';
 
+  const allDistinctSections = db.all(
+    `SELECT DISTINCT section_name FROM attempt_answers WHERE attempt_id = ?`,
+    [attemptId]
+  ).map(r => r.section_name);
+
   db.run(
     `UPDATE student_attempts
      SET submitted_at = datetime('now'),
@@ -381,9 +411,10 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
          score = ?,
          max_score = ?,
          percentage = ?,
-         is_passed = ?
+         is_passed = ?,
+         completed_sections = ?
      WHERE id = ?`,
-    [finalStatus, totalScore, maxScore, percentage, isPassed ? 1 : 0, attemptId]
+    [finalStatus, totalScore, maxScore, percentage, isPassed ? 1 : 0, JSON.stringify(allDistinctSections), attemptId]
   );
 
   logAction({
@@ -395,6 +426,204 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
   });
 
   return getAttemptState(attemptId, userId);
+}
+
+function submitSection({ attemptId, userId, sectionName }) {
+  const db = getDatabase();
+  const attempt = db.get(
+    `SELECT sa.*, a.pass_mark_percentage, a.result_visibility, a.explanation_visibility, a.sections as assessment_sections
+     FROM student_attempts sa
+     JOIN assessments a ON a.id = sa.assessment_id
+     WHERE sa.id = ?`,
+    [attemptId]
+  );
+
+  if (!attempt) throw new Error('Attempt not found.');
+  if (attempt.user_id !== userId) {
+    throw new Error('Unauthorized attempt access.');
+  }
+  if (attempt.status !== 'in_progress') {
+    throw new Error('Cannot submit section for an assessment that is not in progress.');
+  }
+
+  const secName = (sectionName || '').trim();
+  if (!secName) throw new Error('Section name is required.');
+
+  // Check if section is unlocked for this class
+  const { getUnlockedSectionsForClass } = require('./classService');
+  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
+  if (!unlockedSections.includes(secName)) {
+    throw new Error(`Section '${secName}' is currently locked by the instructor.`);
+  }
+
+  // Fetch all answers in this section
+  const answers = db.all(
+    `SELECT aa.*, q.question_type, q.question_text, q.question_description,
+            q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
+            q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
+     FROM attempt_answers aa
+     JOIN questions q ON q.id = aa.question_id
+     WHERE aa.attempt_id = ? AND aa.section_name = ?`,
+    [attemptId, secName]
+  );
+
+  if (answers.length === 0) {
+    throw new Error(`No questions found for section '${secName}'.`);
+  }
+
+  let sectionScore = 0;
+  let sectionMaxScore = 0;
+  let hasManualReview = false;
+
+  for (const item of answers) {
+    let saved = null;
+    try { saved = item.saved_answer ? JSON.parse(item.saved_answer) : null; } catch (e) { saved = item.saved_answer; }
+    let correct = null;
+    try { correct = item.correct_answer ? JSON.parse(item.correct_answer) : null; } catch (e) { correct = item.correct_answer; }
+    let options = null;
+    try { options = item.answer_options ? JSON.parse(item.answer_options) : null; } catch (e) { options = item.answer_options; }
+
+    const questionObj = {
+      ...item,
+      points: item.max_points || item.points || 1,
+      correct_answer: correct,
+      answer_options: options,
+      partial_credit: Boolean(item.partial_credit),
+      requires_manual_review: Boolean(item.requires_manual_review)
+    };
+
+    const evalResult = evaluateQuestion(questionObj, saved);
+    if (evalResult.status === 'awaiting_review') {
+      hasManualReview = true;
+    }
+
+    sectionScore += evalResult.awardedPoints;
+    sectionMaxScore += evalResult.maxPoints;
+
+    db.run(
+      `UPDATE attempt_answers
+       SET is_correct = ?, awarded_points = ?, marked_status = ?
+       WHERE id = ?`,
+      [evalResult.isCorrect ? 1 : 0, evalResult.awardedPoints, evalResult.status, item.id]
+    );
+  }
+
+  if (sectionMaxScore === 0) sectionMaxScore = 1;
+  const sectionPercentage = Math.round((sectionScore / sectionMaxScore) * 1000) / 10;
+  const passMark = attempt.pass_mark_percentage || 70;
+  const isSectionPassed = sectionPercentage >= passMark;
+
+  const completedSections = parseCompletedSections(attempt.completed_sections);
+  if (!completedSections.includes(secName)) {
+    completedSections.push(secName);
+  }
+
+  // Check if all distinct sections in this attempt have been completed
+  const allDistinctSections = db.all(
+    `SELECT DISTINCT section_name FROM attempt_answers WHERE attempt_id = ?`,
+    [attemptId]
+  ).map(r => r.section_name);
+
+  const isAllCompleted = allDistinctSections.length > 0 && allDistinctSections.every(s => completedSections.includes(s));
+
+  if (isAllCompleted) {
+    // Score all answers across entire attempt
+    const allAnswers = db.all(
+      `SELECT aa.*, q.question_type, q.answer_options, q.correct_answer, q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
+       FROM attempt_answers aa
+       JOIN questions q ON q.id = aa.question_id
+       WHERE aa.attempt_id = ?`,
+      [attemptId]
+    );
+
+    let totalScore = 0;
+    let maxScore = 0;
+    for (const a of allAnswers) {
+      totalScore += (Number(a.awarded_points) || 0);
+      maxScore += (Number(a.max_points) || 1);
+    }
+    if (maxScore === 0) maxScore = 1;
+    const overallPercentage = Math.round((totalScore / maxScore) * 10000) / 100;
+    const isPassed = overallPercentage >= passMark;
+    const finalStatus = hasManualReview ? 'awaiting_review' : 'marked';
+
+    db.run(
+      `UPDATE student_attempts
+       SET submitted_at = datetime('now'),
+           status = ?,
+           score = ?,
+           max_score = ?,
+           percentage = ?,
+           is_passed = ?,
+           completed_sections = ?
+       WHERE id = ?`,
+      [finalStatus, totalScore, maxScore, overallPercentage, isPassed ? 1 : 0, JSON.stringify(completedSections), attemptId]
+    );
+
+    logAction({
+      userId,
+      action: 'SUBMIT_ASSESSMENT_ATTEMPT',
+      entityType: 'student_attempts',
+      entityId: attemptId,
+      details: { totalScore, maxScore, percentage: overallPercentage, isPassed, status: finalStatus, completedSections }
+    });
+  } else {
+    // Calculate current cumulative score so far
+    const currentScoredAnswers = db.all(
+      `SELECT aa.awarded_points, aa.max_points FROM attempt_answers aa WHERE aa.attempt_id = ? AND aa.marked_status = 'marked'`,
+      [attemptId]
+    );
+    let runningScore = 0;
+    let runningMaxScore = 0;
+    for (const ca of currentScoredAnswers) {
+      runningScore += (Number(ca.awarded_points) || 0);
+      runningMaxScore += (Number(ca.max_points) || 1);
+    }
+    const runningPct = runningMaxScore > 0 ? Math.round((runningScore / runningMaxScore) * 1000) / 10 : 0;
+
+    db.run(
+      `UPDATE student_attempts
+       SET score = ?,
+           max_score = ?,
+           percentage = ?,
+           completed_sections = ?
+       WHERE id = ?`,
+      [runningScore, runningMaxScore, runningPct, JSON.stringify(completedSections), attemptId]
+    );
+
+    logAction({
+      userId,
+      action: 'SUBMIT_ASSESSMENT_SECTION',
+      entityType: 'student_attempts',
+      entityId: attemptId,
+      details: { sectionName: secName, sectionScore, sectionMaxScore, sectionPercentage, isSectionPassed, completedSections }
+    });
+  }
+
+  // Next section resolution
+  const nextSectionIndex = allDistinctSections.indexOf(secName) + 1;
+  const nextSection = nextSectionIndex < allDistinctSections.length ? allDistinctSections[nextSectionIndex] : null;
+  const isNextUnlocked = nextSection ? unlockedSections.includes(nextSection) : false;
+
+  const attemptState = getAttemptState(attemptId, userId);
+
+  return {
+    success: true,
+    section_name: secName,
+    score: sectionScore,
+    max_score: sectionMaxScore,
+    percentage: sectionPercentage,
+    pass_mark_percentage: passMark,
+    is_passed: isSectionPassed,
+    is_all_completed: isAllCompleted,
+    completed_sections: completedSections,
+    unlocked_sections: unlockedSections,
+    next_section: nextSection,
+    is_next_unlocked: isNextUnlocked,
+    status: attemptState.status,
+    questions: attemptState.questions,
+    attempt_state: attemptState
+  };
 }
 
 function getAttemptState(attemptId, userId) {
@@ -448,6 +677,10 @@ function getAttemptState(attemptId, userId) {
   const showResults = !isInProgress && attempt.result_visibility !== 'hidden';
   const showExplanations = !isInProgress && (attempt.explanation_visibility === 'immediate' || attempt.explanation_visibility === 'after_submission');
 
+  const { getUnlockedSectionsForClass } = require('./classService');
+  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
+  const completedSections = parseCompletedSections(attempt.completed_sections);
+
   const questions = rawAnswers.map(row => {
     let savedAnswer = null;
     let answerOptions = [];
@@ -458,6 +691,9 @@ function getAttemptState(attemptId, userId) {
     if (!secName || (secName === 'General' && !configuredSections.includes('General'))) {
       secName = configuredSections[0] || 'Section 1';
     }
+
+    const isSecCompleted = completedSections.includes(secName);
+    const isSecUnlocked = unlockedSections.includes(secName);
 
     const item = {
       id: row.question_id,
@@ -471,14 +707,16 @@ function getAttemptState(attemptId, userId) {
       is_flagged: Boolean(row.is_flagged),
       max_points: row.max_points,
       topic: row.topic,
-      difficulty: row.difficulty
+      difficulty: row.difficulty,
+      is_completed_section: isSecCompleted,
+      is_locked: !isSecUnlocked
     };
 
-    if (showResults) {
+    if (showResults || isSecCompleted) {
       item.is_correct = Boolean(row.is_correct);
       item.awarded_points = row.awarded_points;
       item.marked_status = row.marked_status;
-      if (showExplanations) {
+      if (showExplanations || isSecCompleted) {
         let correct = null;
         try { correct = row.correct_answer ? JSON.parse(row.correct_answer) : null; } catch (e) { correct = row.correct_answer; }
         item.correct_answer = correct;
@@ -512,7 +750,8 @@ function getAttemptState(attemptId, userId) {
       const secScore = secQuestions.reduce((sum, q) => sum + (Number(q.awarded_points) || 0), 0);
       const secMaxScore = secQuestions.reduce((sum, q) => sum + (Number(q.max_points) || 1), 0);
       const secPct = secMaxScore > 0 ? Math.round((secScore / secMaxScore) * 1000) / 10 : 0;
-      const isCompleted = secQuestions.length > 0 && secAnswered === secQuestions.length;
+      const isCompleted = completedSections.includes(secName) || (!isInProgress && secQuestions.length > 0 && secAnswered === secQuestions.length);
+      const isUnlocked = unlockedSections.includes(secName);
 
       return {
         name: secName,
@@ -521,16 +760,20 @@ function getAttemptState(attemptId, userId) {
         answered_count: secAnswered,
         unanswered_count: secQuestions.length - secAnswered,
         is_completed: isCompleted,
-        score: showResults ? secScore : null,
+        is_unlocked: isUnlocked,
+        score: (isCompleted || showResults) ? secScore : null,
         max_score: secMaxScore,
-        percentage: showResults ? secPct : null,
-        needs_help: showResults && secQuestions.length > 0 ? secPct < passMark : false
+        percentage: (isCompleted || showResults) ? secPct : null,
+        is_passed: (isCompleted || showResults) ? (secPct >= passMark) : null,
+        needs_help: (isCompleted || showResults) && secQuestions.length > 0 ? secPct < passMark : false
       };
     })
     .filter(sec => sec.total_questions > 0 || orderedSectionNames.length <= 3);
 
-  const activeSecIdx = sectionsBreakdown.findIndex(s => s.total_questions > 0 && !s.is_completed);
-  const currentSectionIndex = activeSecIdx >= 0 ? activeSecIdx : Math.max(0, sectionsBreakdown.length - 1);
+  const activeSecObj = sectionsBreakdown.find(s => s.total_questions > 0 && !s.is_completed) || sectionsBreakdown[sectionsBreakdown.length - 1];
+  const activeSecName = activeSecObj ? activeSecObj.name : 'Section 1';
+  const isActiveSecUnlocked = activeSecObj ? activeSecObj.is_unlocked : true;
+  const currentSectionIndex = activeSecObj ? sectionsBreakdown.indexOf(activeSecObj) : 0;
 
   const answeredCount = questions.filter(q => q.saved_answer !== null && q.saved_answer !== undefined && q.saved_answer !== '').length;
   const unansweredCount = questions.length - answeredCount;
@@ -560,8 +803,12 @@ function getAttemptState(attemptId, userId) {
     allow_flagging: Boolean(attempt.allow_flagging),
     allow_review_screen: Boolean(attempt.allow_review_screen),
     sections: sectionsBreakdown,
+    completed_sections: completedSections,
+    unlocked_sections: unlockedSections,
+    active_section_name: activeSecName,
+    is_active_section_unlocked: isActiveSecUnlocked,
     current_section_index: currentSectionIndex,
-    current_section_name: sectionsBreakdown[currentSectionIndex]?.name || 'Section 1',
+    current_section_name: activeSecName,
     questions,
     total_questions: questions.length,
     answered_count: answeredCount,
@@ -691,6 +938,7 @@ module.exports = {
   startAttempt,
   autosaveAnswer,
   submitAttempt,
+  submitSection,
   endAttempt,
   restartAttempt,
   getAttemptState,

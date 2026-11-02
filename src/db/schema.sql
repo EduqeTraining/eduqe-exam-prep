@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS classes (
     start_date TEXT,
     end_date TEXT,
     access_duration_days INTEGER,
+    unlocked_sections TEXT DEFAULT '["Section 1"]',
     status TEXT NOT NULL DEFAULT 'active', -- 'active', 'archived'
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
@@ -198,6 +199,7 @@ CREATE TABLE IF NOT EXISTS student_attempts (
     deadline_at TEXT NOT NULL,
     submitted_at TEXT,
     status TEXT NOT NULL DEFAULT 'in_progress', -- 'in_progress', 'submitted', 'marked', 'awaiting_review', 'expired'
+    completed_sections TEXT DEFAULT '[]',
     score REAL DEFAULT 0,
     max_score REAL DEFAULT 0,
     percentage REAL DEFAULT 0,

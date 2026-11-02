@@ -77,12 +77,29 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <button type="button" class="btn btn-primary" id="btn-proceed-next-section" style="font-weight:700;">Move to Next Section &rarr;</button>
       </div>
     </dialog>
+
+    <!-- Section Submit for Review Modal -->
+    <dialog id="modal-submit-section" style="max-width:520px; width:95%;">
+      <div class="modal-header">
+        <h3 style="font-size:1.125rem; font-weight:700;" id="sec-submit-title">Submit Section for Review</h3>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-sec-submit">&times;</button>
+      </div>
+      <div class="modal-body" id="sec-submit-body"></div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-sec-submit">Return to Questions</button>
+        <button type="button" class="btn btn-primary" id="btn-confirm-sec-submit" style="font-weight:700;">
+          &#x2714; Confirm &amp; Submit Section for Review
+        </button>
+      </div>
+    </dialog>
   `;
 
   const viewContainer = container.querySelector('#player-view-container');
   const confirmModal = container.querySelector('#modal-confirm-submit');
   const restartModal = container.querySelector('#modal-confirm-restart');
   const sectionModal = container.querySelector('#modal-section-transition');
+  const secSubmitModal = container.querySelector('#modal-submit-section');
+  let sectionUnlockPoller = null;
 
   async function initPlayer() {
     try {
@@ -104,6 +121,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       }
 
       if (currentAttempt.status === 'in_progress') {
+        const distinctSecs = getDistinctSections();
+        const activeSec = distinctSecs.find(s => !s.is_submitted);
+        if (activeSec && !activeSec.is_unlocked) {
+          const prevSec = distinctSecs[distinctSecs.indexOf(activeSec) - 1];
+          renderSectionWaitingCard(prevSec ? prevSec.name : 'Previous Section', activeSec.name);
+          return;
+        }
         renderLiveExamInterface();
       } else {
         renderResultsScreen();
@@ -337,22 +361,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     };
 
     viewContainer.querySelector('#btn-next-q').onclick = () => {
-      if (activeQuestionIndex < currentAttempt.questions.length - 1) {
-        const currQ = currentAttempt.questions[activeQuestionIndex];
-        const nextQ = currentAttempt.questions[activeQuestionIndex + 1];
-        const currSec = currQ?.section_name || 'Section 1';
-        const nextSec = nextQ?.section_name || 'Section 1';
-
-        if (currSec !== nextSec) {
-          attemptTransitionToQuestion(activeQuestionIndex + 1, currSec, nextSec);
-        } else {
-          activeQuestionIndex++;
-          renderQuestion(activeQuestionIndex);
-          renderPalette();
-        }
-      } else {
-        openConfirmModal();
-      }
+      handleNextNavigation();
     };
 
     viewContainer.querySelector('#btn-flag-q').onclick = () => {
@@ -421,6 +430,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
   function getDistinctSections() {
     const map = new Map();
+    const unlockedList = currentAttempt.unlocked_sections || ['Section 1'];
+    const completedList = currentAttempt.completed_sections || [];
     (currentAttempt.questions || []).forEach((q, idx) => {
       const secName = q.section_name || 'Section 1';
       if (!map.has(secName)) {
@@ -435,13 +446,22 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         if (typeof ans === 'object') return Object.keys(ans).length > 0;
         return true;
       }).length;
+      const isSubmitted = completedList.includes(sec.name);
+      const isUnlocked = unlockedList.includes(sec.name);
+      const secMeta = (currentAttempt.sections || []).find(s => s.name === sec.name) || {};
       return {
         ...sec,
         section_index: sIdx,
         total: sec.indices.length,
         answered,
         unanswered: sec.indices.length - answered,
-        is_completed: sec.indices.length > 0 && answered === sec.indices.length
+        is_completed: isSubmitted || (sec.indices.length > 0 && answered === sec.indices.length),
+        is_submitted: isSubmitted,
+        is_unlocked: isUnlocked,
+        score: secMeta.score ?? null,
+        max_score: secMeta.max_score ?? sec.indices.length,
+        percentage: secMeta.percentage ?? null,
+        is_passed: secMeta.is_passed ?? false
       };
     });
   }
@@ -451,46 +471,68 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     const fromSec = sections.find(s => s.name === fromSecName);
     const toSec = sections.find(s => s.name === toSecName);
 
-    // If moving forward to a later section while current section has unanswered questions, prompt the student
-    if (fromSec && toSec && toSec.section_index > fromSec.section_index && fromSec.unanswered > 0 && sectionModal) {
-      const firstUnansweredIdx = fromSec.indices.find(i => {
-        const ans = currentAttempt.questions[i]?.saved_answer;
-        return ans === null || ans === undefined || ans === '';
-      });
+    // If target section is locked by instructor
+    if (toSec && !toSec.is_unlocked) {
+      if (fromSec && !fromSec.is_submitted) {
+        openSectionSubmitModal(fromSec.name);
+      } else {
+        renderSectionWaitingCard(fromSec ? fromSec.name : 'Previous Section', toSec.name);
+      }
+      return;
+    }
 
-      container.querySelector('#sec-trans-title').textContent = `Complete ${fromSec.name} Before Moving On`;
-      container.querySelector('#sec-trans-body').innerHTML = `
-        <div style="padding:0.25rem 0;">
-          <div class="card" style="background:var(--warning-bg); border-color:var(--warning-border); color:var(--warning); padding:0.85rem 1rem; margin-bottom:1rem; font-weight:700;">
-            &#x26A0; You have ${fromSec.unanswered} unanswered question(s) in <strong>${escapeHtml(fromSec.name)}</strong> (${fromSec.answered}/${fromSec.total} completed).
-          </div>
-          <p style="font-size:0.925rem; color:var(--text-main); margin-bottom:0.5rem;">
-            Students are encouraged to complete all questions in <strong>${escapeHtml(fromSec.name)}</strong> before moving over to <strong>${escapeHtml(toSec.name)}</strong> so your instructor can accurately track your mastery of each section.
-          </p>
-        </div>
-      `;
-
-      container.querySelector('#btn-close-sec-trans').onclick = () => sectionModal.close();
-      container.querySelector('#btn-stay-in-section').onclick = () => {
-        sectionModal.close();
-        if (firstUnansweredIdx !== undefined) {
-          activeQuestionIndex = firstUnansweredIdx;
-          renderQuestion(activeQuestionIndex);
-          renderPalette();
-        }
-      };
-      container.querySelector('#btn-proceed-next-section').onclick = () => {
-        sectionModal.close();
-        activeQuestionIndex = targetIdx;
-        renderQuestion(activeQuestionIndex);
-        renderPalette();
-      };
-
-      sectionModal.showModal();
+    // If moving forward to a later section while current section has not been submitted yet
+    if (fromSec && toSec && toSec.section_index > fromSec.section_index && !fromSec.is_submitted) {
+      openSectionSubmitModal(fromSec.name);
       return;
     }
 
     activeQuestionIndex = targetIdx;
+    renderQuestion(activeQuestionIndex);
+    renderPalette();
+  }
+
+  function handleNextNavigation() {
+    const q = currentAttempt.questions[activeQuestionIndex];
+    const secName = q?.section_name || 'Section 1';
+    const distinctSecs = getDistinctSections();
+    const currSec = distinctSecs.find(s => s.name === secName) || distinctSecs[0];
+    const nextQ = activeQuestionIndex < currentAttempt.questions.length - 1 ? currentAttempt.questions[activeQuestionIndex + 1] : null;
+    const isLastInSection = nextQ && (nextQ.section_name || 'Section 1') !== secName;
+    const isLastOverall = activeQuestionIndex === currentAttempt.questions.length - 1;
+
+    // If current section has not been submitted yet
+    if (!currSec.is_submitted) {
+      if (isLastInSection || isLastOverall) {
+        openSectionSubmitModal(secName);
+        return;
+      }
+      activeQuestionIndex++;
+      renderQuestion(activeQuestionIndex);
+      renderPalette();
+      return;
+    }
+
+    // Current section is already submitted (review mode)
+    if (isLastInSection) {
+      const nextSecName = nextQ?.section_name || 'Section 2';
+      const nextSec = distinctSecs.find(s => s.name === nextSecName);
+      if (nextSec && nextSec.is_unlocked) {
+        activeQuestionIndex++;
+        renderQuestion(activeQuestionIndex);
+        renderPalette();
+      } else {
+        renderSectionWaitingCard(secName, nextSecName);
+      }
+      return;
+    }
+
+    if (isLastOverall) {
+      openConfirmModal();
+      return;
+    }
+
+    activeQuestionIndex++;
     renderQuestion(activeQuestionIndex);
     renderPalette();
   }
@@ -520,18 +562,18 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
               class="btn-step-section"
               data-target-idx="${sec.indices[0] || 0}"
               data-sec-name="${escapeHtml(sec.name)}"
-              style="text-align:left; cursor:pointer; padding:0.65rem 0.85rem; border-radius:var(--radius-md); background:${isActive ? 'var(--primary-light)' : 'var(--surface-subtle)'}; border:2px solid ${isActive ? 'var(--brand-lime)' : (sec.is_completed ? 'var(--success-border)' : 'var(--border)')}; transition:all 0.15s ease;"
+              style="text-align:left; cursor:${sec.is_unlocked || sec.is_submitted ? 'pointer' : 'not-allowed'}; padding:0.65rem 0.85rem; border-radius:var(--radius-md); background:${isActive ? 'var(--primary-light)' : (sec.is_submitted ? 'var(--surface-accent)' : 'var(--surface-subtle)')}; border:2px solid ${isActive ? 'var(--brand-lime)' : (sec.is_submitted ? 'var(--success-border)' : (sec.is_unlocked ? 'var(--border)' : 'rgba(255,255,255,0.08)'))}; opacity:${sec.is_unlocked || sec.is_submitted ? '1' : '0.65'}; transition:all 0.15s ease;"
             >
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
                 <span style="font-family:var(--font-heading); font-weight:800; font-size:0.82rem; color:var(--text-main);">
                   ${idx + 1}. ${escapeHtml(sec.name)}
                 </span>
-                <span class="badge ${sec.is_completed ? 'badge-success' : (isActive ? 'badge-primary' : 'badge-neutral')}" style="font-size:0.68rem;">
-                  ${sec.is_completed ? '&#x2714; Completed' : `${sec.answered}/${sec.total}`}
+                <span class="badge ${sec.is_submitted ? 'badge-success' : (!sec.is_unlocked ? 'badge-warning' : (isActive ? 'badge-primary' : 'badge-neutral'))}" style="font-size:0.68rem;">
+                  ${sec.is_submitted ? `&#x2714; Submitted (${sec.percentage ?? 0}%)` : (!sec.is_unlocked ? '&#x1F512; Locked' : (isActive ? 'Active' : `${sec.answered}/${sec.total}`))}
                 </span>
               </div>
               <div style="height:5px; background:var(--border); border-radius:var(--radius-full); overflow:hidden;">
-                <div style="height:100%; width:${pct}%; background:var(--brand-lime); transition:width 0.25s ease;"></div>
+                <div style="height:100%; width:${sec.is_submitted ? 100 : pct}%; background:${sec.is_submitted ? 'var(--success)' : (sec.is_unlocked ? 'var(--brand-lime)' : 'var(--text-muted)')}; transition:width 0.25s ease;"></div>
               </div>
             </button>
           `;
@@ -566,10 +608,12 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     palette.style.gap = '0.85rem';
 
     palette.innerHTML = sections.map((sec, sIdx) => `
-      <div style="border:1px solid ${sec.name === activeSecName ? 'var(--brand-lime)' : 'var(--border)'}; border-radius:var(--radius-md); padding:0.6rem; background:${sec.name === activeSecName ? 'var(--surface-accent)' : 'var(--surface-subtle)'};">
+      <div style="border:1px solid ${sec.name === activeSecName ? 'var(--brand-lime)' : (sec.is_submitted ? 'var(--success-border)' : 'var(--border)')}; border-radius:var(--radius-md); padding:0.6rem; background:${sec.name === activeSecName ? 'var(--surface-accent)' : 'var(--surface-subtle)'}; opacity:${sec.is_unlocked || sec.is_submitted ? '1' : '0.7'};">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.45rem; font-size:0.75rem; font-family:var(--font-heading); font-weight:800;">
           <span>${sIdx + 1}. ${escapeHtml(sec.name)}</span>
-          <span style="color:var(--text-muted);">${sec.answered}/${sec.total}</span>
+          <span style="font-size:0.7rem; color:${sec.is_submitted ? 'var(--success)' : (!sec.is_unlocked ? 'var(--warning)' : 'var(--text-muted)')};">
+            ${sec.is_submitted ? `&#x2714; Submitted (${sec.percentage ?? 0}%)` : (!sec.is_unlocked ? '&#x1F512; Locked' : `${sec.answered}/${sec.total}`)}
+          </span>
         </div>
         <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:0.4rem;">
           ${sec.indices.map(idx => {
@@ -579,10 +623,14 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
             const classes = ['palette-btn'];
 
             if (isCurrent) classes.push('active');
-            if (isAnswered) classes.push('answered');
-            if (q.is_flagged) classes.push('flagged');
+            if (sec.is_submitted) {
+              classes.push(q.is_correct ? 'answered' : 'danger');
+            } else if (isAnswered) {
+              classes.push('answered');
+            }
+            if (q.is_flagged && !sec.is_submitted) classes.push('flagged');
 
-            return `<button type="button" class="${classes.join(' ')}" data-idx="${idx}" data-sec="${escapeHtml(sec.name)}">${idx + 1}</button>`;
+            return `<button type="button" class="${classes.join(' ')}" data-idx="${idx}" data-sec="${escapeHtml(sec.name)}" ${!sec.is_unlocked && !sec.is_submitted ? 'disabled style="cursor:not-allowed; opacity:0.5;"' : ''}>${!sec.is_unlocked && !sec.is_submitted ? '&#x1F512;' : (idx + 1)}</button>`;
           }).join('')}
         </div>
       </div>
@@ -614,28 +662,86 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     const posInSec = currSec ? currSec.indices.indexOf(idx) + 1 : idx + 1;
     const totalInSec = currSec ? currSec.total : currentAttempt.questions.length;
 
+    const isSecSubmitted = Boolean(currSec.is_submitted);
+    const isSecUnlocked = Boolean(currSec.is_unlocked);
+
+    // If section is locked and unsubmitted, show waiting card
+    if (!isSecUnlocked && !isSecSubmitted) {
+      renderSectionWaitingCard('Previous Section', q.section_name);
+      return;
+    }
+
     const nextQ = idx < currentAttempt.questions.length - 1 ? currentAttempt.questions[idx + 1] : null;
     const isLastInSection = nextQ && (nextQ.section_name || 'Section 1') !== (q.section_name || 'Section 1');
 
     prevBtn.disabled = idx === 0 || !currentAttempt.allow_back_navigation;
-    if (idx === currentAttempt.questions.length - 1) {
-      nextBtn.textContent = 'Complete Final Section & Submit →';
-    } else if (isLastInSection) {
-      nextBtn.textContent = `Complete ${q.section_name || 'Section'} & Move to ${nextQ.section_name} →`;
+
+    if (!isSecSubmitted) {
+      if (idx === currentAttempt.questions.length - 1) {
+        nextBtn.textContent = `Submit ${q.section_name || 'Final Section'} for Review →`;
+      } else if (isLastInSection) {
+        nextBtn.textContent = `Submit ${q.section_name || 'Section'} for Review →`;
+      } else {
+        nextBtn.textContent = 'Next Question →';
+      }
     } else {
-      nextBtn.textContent = 'Next Question →';
+      // Completed / submitted section
+      if (idx === currentAttempt.questions.length - 1) {
+        nextBtn.textContent = 'End & View Results →';
+      } else if (isLastInSection) {
+        const nextSecObj = sections.find(s => s.name === nextQ.section_name);
+        if (nextSecObj && nextSecObj.is_unlocked) {
+          nextBtn.textContent = `Proceed to ${nextQ.section_name} →`;
+        } else {
+          nextBtn.textContent = `🔒 Waiting for ${nextQ.section_name} →`;
+        }
+      } else {
+        nextBtn.textContent = 'Next Question →';
+      }
     }
+
     updateFlagButton(q.is_flagged);
 
     area.innerHTML = `
+      <!-- Section Review Mode Banner if Submitted -->
+      ${isSecSubmitted ? `
+        <div class="card" style="background:var(--surface-subtle); border:1px solid var(--border); border-left:4px solid var(--brand-lime); padding:0.85rem 1.15rem; margin-bottom:1.25rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+              <span style="font-weight:800; font-family:var(--font-heading); font-size:0.95rem; color:var(--text-main);">
+                &#x2714; ${escapeHtml(q.section_name || 'Section 1')} &bull; Submitted (Review Mode)
+              </span>
+              <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.15rem;">
+                Answers are sealed. Correct answers and explanations are revealed below for the instructor discussion.
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span class="badge ${q.is_correct ? 'badge-success' : 'badge-danger'}" style="font-size:0.8rem; font-weight:700;">
+                ${q.is_correct ? '&#x2714; CORRECT' : '&#x2718; INCORRECT'} (${q.awarded_points ?? 0}/${q.max_points ?? 1} pt)
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-show-discussion-status" style="font-size:0.75rem;">
+                &#x1F4AC; Discussion Status
+              </button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem; padding-bottom:0.75rem; border-bottom:1px solid var(--border);">
         <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-          <span class="badge badge-primary" style="font-weight:800;">
-            ${escapeHtml(q.section_name || 'Section 1')} (${posInSec} of ${totalInSec})
+          <span class="badge ${isSecSubmitted ? 'badge-success' : 'badge-primary'}" style="font-weight:800;">
+            ${escapeHtml(q.section_name || 'Section 1')} (${posInSec} of ${totalInSec}) ${isSecSubmitted ? '&#x2714; Submitted' : ''}
           </span>
           <span class="badge badge-neutral">Overall Question ${idx + 1} of ${currentAttempt.questions.length}</span>
         </div>
-        <span class="badge badge-neutral">${q.question_type.toUpperCase().replace(/_/g, ' ')} &bull; ${q.max_points || 1} pt(s)</span>
+        <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+          <span class="badge badge-neutral">${q.question_type.toUpperCase().replace(/_/g, ' ')} &bull; ${q.max_points || 1} pt(s)</span>
+          ${!isSecSubmitted ? `
+            <button type="button" class="btn btn-primary btn-sm" id="btn-submit-active-sec" style="font-weight:700;">
+              &#x2714; Submit ${escapeHtml(q.section_name || 'Section')} for Review
+            </button>
+          ` : ''}
+        </div>
       </div>
 
       <!-- Question Description Box (Scenario / Case Study) -->
@@ -653,14 +759,45 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
       <!-- Interactive Answer Area -->
       <div id="interactive-answer-area">
-        ${renderInteractiveInput(q)}
+        ${renderInteractiveInput(q, isSecSubmitted)}
       </div>
+
+      <!-- Revealed Explanation & Correct Answer in Review Mode -->
+      ${isSecSubmitted && q.correct_answer !== undefined && q.correct_answer !== null ? `
+        <div style="margin-top:1.25rem; padding:1rem; background:var(--surface-subtle); border-radius:var(--radius-md); border-left:4px solid var(--success); font-size:0.875rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+            <span style="font-weight:700; color:var(--success);">&#x2714; Correct Answer:</span>
+            <span class="badge badge-neutral" style="font-size:0.7rem;">Instructor Discussion Reference</span>
+          </div>
+          <div style="font-family:monospace; font-size:0.9rem; padding:0.4rem 0.6rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border); margin-bottom:0.5rem;">
+            ${escapeHtml(formatAnswerDisplay(q.correct_answer, q))}
+          </div>
+          ${q.answer_explanation ? `
+            <div style="padding-top:0.5rem; border-top:1px dashed var(--border); color:var(--text-main); font-size:0.825rem; line-height:1.45;">
+              <strong>Instructor Note / Explanation:</strong> ${escapeHtml(q.answer_explanation)}
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
     `;
 
-    attachInputHandlers(q);
+    const submitActiveSecBtn = area.querySelector('#btn-submit-active-sec');
+    if (submitActiveSecBtn) {
+      submitActiveSecBtn.onclick = () => openSectionSubmitModal(q.section_name);
+    }
+
+    const showDiscussionBtn = area.querySelector('#btn-show-discussion-status');
+    if (showDiscussionBtn) {
+      showDiscussionBtn.onclick = () => {
+        const nextSecObj = sections.find(s => s.section_index === currSec.section_index + 1);
+        renderSectionWaitingCard(currSec.name, nextSecObj ? nextSecObj.name : 'Next Section');
+      };
+    }
+
+    attachInputHandlers(q, isSecSubmitted);
   }
 
-  function renderInteractiveInput(q) {
+  function renderInteractiveInput(q, isSecSubmitted = false) {
     const type = q.question_type;
     const saved = q.saved_answer;
 
@@ -670,7 +807,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <div class="options-grid">
           ${options.map(opt => `
             <label class="option-card ${saved === opt ? 'selected' : ''}">
-              <input type="radio" name="active_radio" value="${opt}" ${saved === opt ? 'checked' : ''}>
+              <input type="radio" name="active_radio" value="${opt}" ${saved === opt ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
               <span style="font-size:1rem; font-weight:600;">${opt}</span>
             </label>
           `).join('')}
@@ -683,7 +820,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <div class="options-grid">
           ${(q.answer_options || []).map(opt => `
             <label class="option-card ${saved === opt.id ? 'selected' : ''}">
-              <input type="radio" name="active_radio" value="${opt.id}" ${saved === opt.id ? 'checked' : ''}>
+              <input type="radio" name="active_radio" value="${opt.id}" ${saved === opt.id ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
               <span>${escapeHtml(opt.text)}</span>
             </label>
           `).join('')}
@@ -698,7 +835,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <div class="options-grid">
           ${(q.answer_options || []).map(opt => `
             <label class="option-card ${selected.includes(opt.id) ? 'selected' : ''}">
-              <input type="checkbox" class="cb-multi" value="${opt.id}" ${selected.includes(opt.id) ? 'checked' : ''}>
+              <input type="checkbox" class="cb-multi" value="${opt.id}" ${selected.includes(opt.id) ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
               <span>${escapeHtml(opt.text)}</span>
             </label>
           `).join('')}
@@ -894,7 +1031,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     `;
   }
 
-  function attachInputHandlers(q) {
+  function attachInputHandlers(q, isSecSubmitted = false) {
+    if (isSecSubmitted) return;
     const area = viewContainer.querySelector('#interactive-answer-area');
 
     // Single choice / Yes-No / True-False
@@ -1110,6 +1248,245 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         badge.innerHTML = `<span style="color:var(--danger)">Save failed: ${err.message}</span>`;
       }
     });
+  }
+
+  
+  function openSectionSubmitModal(sectionName) {
+    const secName = (sectionName || 'Section 1').trim();
+    const sections = getDistinctSections();
+    const targetSec = sections.find(s => s.name === secName) || sections[0];
+
+    const modalTitle = container.querySelector('#sec-submit-title');
+    const modalBody = container.querySelector('#sec-submit-body');
+    const confirmBtn = container.querySelector('#btn-confirm-sec-submit');
+
+    modalTitle.textContent = `Submit ${escapeHtml(targetSec.name)} for Review`;
+
+    modalBody.innerHTML = `
+      <div style="padding:0.25rem 0;">
+        <div style="text-align:center; margin-bottom:1.25rem;">
+          <div style="font-size:2.25rem; font-weight:800; color:var(--primary); margin-bottom:0.25rem;">
+            ${targetSec.answered} / ${targetSec.total}
+          </div>
+          <div style="font-size:0.95rem; font-weight:700; color:var(--text-main);">
+            Questions Answered in ${escapeHtml(targetSec.name)}
+          </div>
+        </div>
+
+        ${targetSec.unanswered > 0 ? `
+          <div class="card" style="background:var(--warning-bg); border-color:var(--warning-border); color:var(--warning); padding:0.75rem 1rem; margin-bottom:1rem; font-weight:700;">
+            &#x26A0; You have ${targetSec.unanswered} unanswered question(s) in this section! Unanswered questions will receive 0 points.
+          </div>
+        ` : `
+          <div class="card" style="background:var(--success-bg); border-color:var(--success-border); color:var(--success); padding:0.75rem 1rem; margin-bottom:1rem; font-weight:600;">
+            &#x2714; All questions in this section have been answered.
+          </div>
+        `}
+
+        <div class="card" style="background:var(--surface-subtle); border:1px solid var(--border); padding:0.85rem 1rem; font-size:0.85rem; color:var(--text-muted); line-height:1.45;">
+          <strong style="color:var(--text-main); display:block; margin-bottom:0.35rem;">What happens next?</strong>
+          <ul style="padding-left:1.15rem; margin:0; display:flex; flex-direction:column; gap:0.35rem;">
+            <li>Your score and percentage for <strong>${escapeHtml(targetSec.name)}</strong> will be calculated immediately.</li>
+            <li>Your answers will be sealed, and correct answers &amp; explanations will be revealed for the group review.</li>
+            <li>Your score is sent to your instructor's cohort dashboard for the review discussion.</li>
+            <li>The next section will be unlocked by your instructor once the discussion is concluded.</li>
+          </ul>
+        </div>
+      </div>
+    `;
+
+    secSubmitModal.showModal();
+
+    container.querySelector('#btn-close-sec-submit').onclick = () => secSubmitModal.close();
+    container.querySelector('#btn-cancel-sec-submit').onclick = () => secSubmitModal.close();
+
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = `✔ Confirm & Submit ${targetSec.name} for Review`;
+
+    confirmBtn.onclick = async () => {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Submitting section...';
+      try {
+        const updatedAttempt = await api.submitSection(currentAttempt.id, targetSec.name);
+        secSubmitModal.close();
+        currentAttempt = updatedAttempt;
+
+        // If the entire attempt is now marked or awaiting review, show final results
+        if (currentAttempt.status !== 'in_progress') {
+          renderResultsScreen();
+          return;
+        }
+
+        // Check next section
+        const distinctSecs = getDistinctSections();
+        const submittedIndex = distinctSecs.findIndex(s => s.name === targetSec.name);
+        const nextSec = distinctSecs[submittedIndex + 1];
+
+        if (nextSec) {
+          if (nextSec.is_unlocked) {
+            activeQuestionIndex = nextSec.indices[0] || 0;
+            renderLiveExamInterface();
+          } else {
+            renderSectionWaitingCard(targetSec.name, nextSec.name);
+          }
+        } else {
+          renderResultsScreen();
+        }
+      } catch (err) {
+        alert('Failed to submit section: ' + err.message);
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `✔ Confirm & Submit ${targetSec.name} for Review`;
+      }
+    };
+  }
+
+  function renderSectionWaitingCard(submittedSecName, nextSecName) {
+    if (sectionUnlockPoller) clearInterval(sectionUnlockPoller);
+
+    const targetSecMeta = (currentAttempt.sections || []).find(s => s.name === submittedSecName) || {};
+    const secScore = targetSecMeta.score ?? 0;
+    const secMax = targetSecMeta.max_score ?? 0;
+    const secPct = targetSecMeta.percentage ?? 0;
+    const isPassed = targetSecMeta.is_passed ?? (secPct >= (currentAttempt.pass_mark_percentage || 70));
+
+    viewContainer.innerHTML = `
+      <!-- Assessment Top Banner -->
+      <div class="card" style="padding:0.75rem 1.25rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1.25rem;">
+        <div style="display:flex; align-items:center; gap:0.85rem;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-save-exit-waiting">
+            &larr; Save &amp; Exit
+          </button>
+          <div>
+            <div style="font-weight:700; font-size:1.1rem; color:var(--text-main);">${escapeHtml(currentAttempt.assessment_name)}</div>
+            <div style="font-size:0.8125rem; color:var(--text-muted);">${escapeHtml(currentAttempt.course_name)} &bull; Attempt #${currentAttempt.attempt_number}</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+          <div class="timer-badge" id="exam-timer">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span id="timer-display">--:--:--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-Assessment Section Progression Stepper -->
+      <div class="card" id="section-stepper-bar" style="padding:0.9rem 1.25rem; margin-bottom:1.25rem; background:var(--surface);"></div>
+
+      <!-- Center Discussion & Waiting Card -->
+      <div class="card" style="max-width:760px; margin:1.5rem auto; padding:2rem; text-align:center;">
+        <div style="font-size:2.8rem; margin-bottom:0.5rem;">&#x1F389;</div>
+        <span class="badge ${isPassed ? 'badge-success' : 'badge-danger'}" style="font-size:0.85rem; padding:0.35rem 0.85rem; margin-bottom:0.75rem;">
+          ${escapeHtml(submittedSecName)} &bull; ${isPassed ? 'PASSED' : 'NEEDS HELP'}
+        </span>
+        <h2 style="font-size:1.6rem; font-weight:800; margin-bottom:0.35rem;">
+          ${escapeHtml(submittedSecName)} Completed &amp; Submitted!
+        </h2>
+        <p class="form-hint" style="font-size:0.95rem; margin-bottom:1.5rem;">
+          Your answers for <strong>${escapeHtml(submittedSecName)}</strong> have been submitted and registered with your instructor.
+        </p>
+
+        <div class="stats-grid" style="grid-template-columns:repeat(3, 1fr); max-width:540px; margin:0 auto 1.75rem auto;">
+          <div class="stat-card">
+            <span class="stat-label">Section Score</span>
+            <span class="stat-value" style="font-size:1.5rem;">${secScore} / ${secMax}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Percentage</span>
+            <span class="stat-value" style="font-size:1.5rem; color:${isPassed ? 'var(--success)' : 'var(--danger)'};">${secPct}%</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Pass Mark</span>
+            <span class="stat-value" style="font-size:1.5rem;">${currentAttempt.pass_mark_percentage || 70}%</span>
+          </div>
+        </div>
+
+        <!-- Instructor Review & Lock Box -->
+        <div class="card" id="waiting-lock-box" style="background:var(--surface-subtle); border:1px solid var(--border); border-left:4px solid var(--warning); padding:1.25rem; text-align:left; margin-bottom:1.75rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span style="font-size:1.25rem;">&#x1F4AC;</span>
+              <h4 style="font-weight:800; margin:0; font-size:1.05rem;">Instructor Discussion in Progress</h4>
+            </div>
+            <span class="badge badge-warning" id="badge-lock-indicator">&#x1F512; ${escapeHtml(nextSecName)} Locked</span>
+          </div>
+          <p style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem; line-height:1.5;">
+            Your instructor is conducting the group discussion for <strong>${escapeHtml(submittedSecName)}</strong>. Please participate in the review to discuss any questions or misconceptions. Once concluded, the instructor will unlock <strong>${escapeHtml(nextSecName)}</strong> for the cohort.
+          </p>
+          <div id="unlock-polling-indicator" style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; font-weight:600; color:var(--text-muted);">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--warning); animation:pulse 1.5s infinite;"></span>
+            <span>Checking cohort unlock status automatically every 4 seconds...</span>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:center; gap:1rem; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary btn-lg" id="btn-review-submitted-sec">
+            &#x1F441;&#xFE0F; Review ${escapeHtml(submittedSecName)} Questions &amp; Explanations
+          </button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-proceed-unlocked-sec" style="display:none; font-weight:800; background:var(--brand-lime); color:#000;">
+            &#x1F513; Begin ${escapeHtml(nextSecName)} &rarr;
+          </button>
+        </div>
+      </div>
+    `;
+
+    startAuthoritativeTimer();
+    renderSectionStepper();
+
+    viewContainer.querySelector('#btn-save-exit-waiting').onclick = () => {
+      if (timerInterval) clearInterval(timerInterval);
+      if (sectionUnlockPoller) clearInterval(sectionUnlockPoller);
+      if (onExit) onExit();
+    };
+
+    viewContainer.querySelector('#btn-review-submitted-sec').onclick = () => {
+      if (sectionUnlockPoller) clearInterval(sectionUnlockPoller);
+      const distinctSecs = getDistinctSections();
+      const sec = distinctSecs.find(s => s.name === submittedSecName);
+      activeQuestionIndex = (sec && sec.indices[0]) || 0;
+      renderLiveExamInterface();
+    };
+
+    const beginBtn = viewContainer.querySelector('#btn-proceed-unlocked-sec');
+    beginBtn.onclick = async () => {
+      if (sectionUnlockPoller) clearInterval(sectionUnlockPoller);
+      currentAttempt = await api.get(`/student/attempts/${currentAttempt.id}`);
+      const distinctSecs = getDistinctSections();
+      const sec = distinctSecs.find(s => s.name === nextSecName);
+      activeQuestionIndex = (sec && sec.indices[0]) || 0;
+      renderLiveExamInterface();
+    };
+
+    // Start unlock polling
+    sectionUnlockPoller = setInterval(async () => {
+      try {
+        const status = await api.getAttemptUnlockStatus(currentAttempt.id);
+        const unlockedList = status.unlocked_sections || ['Section 1'];
+        if (unlockedList.includes(nextSecName)) {
+          clearInterval(sectionUnlockPoller);
+          sectionUnlockPoller = null;
+
+          const lockBox = viewContainer.querySelector('#waiting-lock-box');
+          const badgeLock = viewContainer.querySelector('#badge-lock-indicator');
+          const pollingIndicator = viewContainer.querySelector('#unlock-polling-indicator');
+
+          if (lockBox) lockBox.style.borderLeftColor = 'var(--brand-lime)';
+          if (badgeLock) {
+            badgeLock.className = 'badge badge-success';
+            badgeLock.innerHTML = `&#x1F513; ${escapeHtml(nextSecName)} Unlocked!`;
+          }
+          if (pollingIndicator) {
+            pollingIndicator.style.color = 'var(--success)';
+            pollingIndicator.innerHTML = `&#x2714; <strong>${escapeHtml(nextSecName)} has been unlocked by your instructor.</strong> You may now proceed.`;
+          }
+          if (beginBtn) {
+            beginBtn.style.display = 'inline-flex';
+          }
+        }
+      } catch (e) {
+        // Silently continue polling
+      }
+    }, 4000);
   }
 
   // Open End / Final Submission Review Confirmation (Section 25)

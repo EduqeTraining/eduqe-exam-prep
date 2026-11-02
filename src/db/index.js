@@ -91,6 +91,22 @@ function initDatabase(dbPath) {
     // Column already exists
   }
   try {
+    db.exec(`ALTER TABLE classes ADD COLUMN unlocked_sections TEXT DEFAULT '["Section 1"]';`);
+  } catch (err) {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE student_attempts ADD COLUMN completed_sections TEXT DEFAULT '[]';`);
+  } catch (err) {
+    // Column already exists
+  }
+  try {
+    db.exec(`UPDATE classes SET unlocked_sections = '["Section 1"]' WHERE unlocked_sections IS NULL;`);
+  } catch (err) {}
+  try {
+    db.exec(`UPDATE student_attempts SET completed_sections = '[]' WHERE completed_sections IS NULL;`);
+  } catch (err) {}
+  try {
     db.exec('CREATE TABLE IF NOT EXISTS revoked_tokens (token TEXT PRIMARY KEY, revoked_at TEXT DEFAULT (datetime(\'now\')));');
   } catch (err) {
     // Table already exists

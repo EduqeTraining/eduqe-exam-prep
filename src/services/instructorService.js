@@ -353,6 +353,13 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     }
   }
 
+  if (targetClass && !isAllCohorts) {
+    const { getUnlockedSectionsForClass } = require('./classService');
+    targetClass.unlocked_sections = getUnlockedSectionsForClass(targetClass.id);
+  } else if (targetClass && isAllCohorts) {
+    targetClass.unlocked_sections = ['Section 1'];
+  }
+
   const targetClassIds = isAllCohorts ? assignedClasses.map(c => c.id) : [targetClass.id];
   const targetCourseIds = isAllCohorts
     ? [...new Set(assignedClasses.map(c => c.course_id).filter(Boolean))]
@@ -669,8 +676,16 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             }
           }
 
+          let completedSectionsList = [];
+          try {
+            const parsed = typeof att.completed_sections === 'string' ? JSON.parse(att.completed_sections) : att.completed_sections;
+            if (Array.isArray(parsed)) completedSectionsList = parsed;
+          } catch (e) {
+            completedSectionsList = [];
+          }
+          const isSecSubmitted = completedSectionsList.includes(secName);
           const totalQs = secAnswers.length;
-          const isSecCompleted = totalQs > 0 && (isGraded || answeredCount === totalQs);
+          const isSecCompleted = totalQs > 0 && (isGraded || isSecSubmitted || answeredCount === totalQs);
           const isSecInProgress = !isSecCompleted && answeredCount > 0;
           const secPct = (isSecCompleted || isSecInProgress) && maxPts > 0
             ? Math.round((awardedPts / maxPts) * 1000) / 10
@@ -682,6 +697,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             attempt_status: att.status,
             is_graded: isGraded,
             is_completed: isSecCompleted,
+            is_submitted: isSecSubmitted,
             is_in_progress: isSecInProgress,
             section_name: secName,
             total_questions: totalQs,
@@ -797,6 +813,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           best_percentage: bestPct,
           avg_percentage: overallAvgPct,
           is_completed: isCompleted,
+          is_submitted: isCompleted || activeOrCompletedRecords.some(r => r.is_submitted),
           is_in_progress: isInProgress,
           status: statusStr,
           needs_help: needsHelp,
@@ -916,6 +933,8 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     }
   });
 
+  const classUnlocked = (targetClass && targetClass.unlocked_sections) || ['Section 1'];
+
   const sectionsAnalysis = Array.from(sectionStatsMap.values()).map((sec, idx) => {
     // Overall point-weighted accuracy across all attempts in this section
     const overallAccuracyPct = sec.total_max_points > 0
@@ -938,6 +957,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
       name: sec.section_name,
       section_name: sec.section_name,
       order_index: idx,
+      is_unlocked: classUnlocked.includes(sec.section_name),
       question_count: sec.question_count,
       pass_mark_percentage: passMark,
       total_enrolled: students.length,

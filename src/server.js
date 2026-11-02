@@ -598,6 +598,45 @@ async function handleRequest(req, res) {
         }
       }
 
+      const submitSectionMatch = pathname.match(/^\/api\/student\/attempts\/([^\/]+)\/submit-section$/);
+      if (req.method === 'POST' && submitSectionMatch) {
+        const user = requireAuth(req, res, 'student');
+        if (!user) return;
+        const attemptId = submitSectionMatch[1];
+        const body = await parseBody(req);
+        try {
+          const result = attemptService.submitSection({
+            attemptId,
+            userId: user.id,
+            sectionName: body.section_name
+          });
+          await supabaseService.syncAttemptToSupabase(attemptId);
+          await supabaseService.syncAttemptAnswersToSupabase(attemptId);
+          return sendJson(res, 200, result);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
+      const unlockStatusMatch = pathname.match(/^\/api\/student\/attempts\/([^\/]+)\/unlock-status$/);
+      if (req.method === 'GET' && unlockStatusMatch) {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        const attemptId = unlockStatusMatch[1];
+        try {
+          const state = attemptService.getAttemptState(attemptId, user.id);
+          return sendJson(res, 200, {
+            attempt_id: attemptId,
+            unlocked_sections: state?.unlocked_sections || ['Section 1'],
+            completed_sections: state?.completed_sections || [],
+            active_section_name: state?.active_section_name || 'Section 1',
+            is_active_section_unlocked: Boolean(state?.is_active_section_unlocked),
+            status: state?.status
+          });
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
       // -------------------------------------------------------------
       // 4. COURSES (Admin)
       // -------------------------------------------------------------
@@ -1209,6 +1248,51 @@ async function handleRequest(req, res) {
         }
       }
 
+      const classUnlockedSecMatch = pathname.match(/^\/api\/(?:instructor\/)?classes\/([^\/]+)\/unlocked-sections$/);
+      if ((req.method === 'PUT' || req.method === 'POST') && classUnlockedSecMatch) {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        if (user.role !== 'instructor' && user.role !== 'administrator') {
+          return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
+        }
+        const classId = classUnlockedSecMatch[1];
+        const body = await parseBody(req);
+        try {
+          let updatedList;
+          if (Array.isArray(body.unlocked_sections)) {
+            updatedList = classService.setUnlockedSectionsForClass(classId, body.unlocked_sections, user.id, user.username);
+          } else if (body.section_name) {
+            const current = classService.getUnlockedSectionsForClass(classId);
+            const targetSec = String(body.section_name).trim();
+            if (body.action === 'lock') {
+              updatedList = classService.setUnlockedSectionsForClass(
+                classId,
+                current.filter(s => s !== targetSec || s === 'Section 1'),
+                user.id,
+                user.username
+              );
+            } else {
+              if (!current.includes(targetSec)) current.push(targetSec);
+              updatedList = classService.setUnlockedSectionsForClass(classId, current, user.id, user.username);
+            }
+          } else {
+            throw new Error('Either unlocked_sections array or section_name is required.');
+          }
+
+          await supabaseService.syncClassToSupabase(classId);
+          return sendJson(res, 200, { success: true, class_id: classId, unlocked_sections: updatedList });
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
+      if (req.method === 'GET' && classUnlockedSecMatch) {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        const classId = classUnlockedSecMatch[1];
+        const unlocked = classService.getUnlockedSectionsForClass(classId);
+        return sendJson(res, 200, { class_id: classId, unlocked_sections: unlocked });
+      }
       // Instructor's own assigned classes
       if (req.method === 'GET' && pathname === '/api/instructor/classes') {
         const user = requireAuth(req, res);

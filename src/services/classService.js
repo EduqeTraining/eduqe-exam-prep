@@ -66,9 +66,9 @@ function createClass({
   } else {
     classId = generateId();
     db.run(
-      `INSERT INTO classes (id, course_id, name, description, facilitator_name, instructor_id, start_date, end_date, access_duration_days, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-      [classId, courseId, trimmedName, description, finalFacilitator, instructor_id || null, start_date, end_date, access_duration_days, status]
+      `INSERT INTO classes (id, course_id, name, description, facilitator_name, instructor_id, start_date, end_date, access_duration_days, unlocked_sections, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [classId, courseId, trimmedName, description, finalFacilitator, instructor_id || null, start_date, end_date, access_duration_days, JSON.stringify(['Section 1']), status]
     );
   }
 
@@ -219,8 +219,17 @@ function getClass(classId) {
     );
   }
 
+  let unlockedSections = ['Section 1'];
+  if (cls.unlocked_sections) {
+    try {
+      const p = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
+      if (Array.isArray(p) && p.length > 0) unlockedSections = p;
+    } catch (e) {}
+  }
+
   return {
     ...cls,
+    unlocked_sections: unlockedSections,
     active_code: activeCode?.code || null,
     code_max_uses: activeCode?.max_uses ?? null,
     code_used_count: activeCode?.used_count ?? 0,
@@ -607,11 +616,50 @@ function deleteClass(classId, adminUserId = null, adminUsername = 'admin') {
   });
 }
 
+function getUnlockedSectionsForClass(classId) {
+  const db = getDatabase();
+  const cls = db.get('SELECT unlocked_sections FROM classes WHERE id = ?', [classId]);
+  if (!cls || !cls.unlocked_sections) return ['Section 1'];
+  try {
+    const parsed = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : ['Section 1'];
+  } catch (e) {
+    return ['Section 1'];
+  }
+}
+
+function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = null, adminUsername = 'instructor') {
+  const db = getDatabase();
+  const cls = db.get('SELECT id, name FROM classes WHERE id = ?', [classId]);
+  if (!cls) throw new Error('Class not found.');
+
+  const sectionsArray = Array.isArray(unlockedSections)
+    ? unlockedSections.map(s => String(s).trim()).filter(Boolean)
+    : ['Section 1'];
+  const uniqueSections = sectionsArray.length > 0 ? [...new Set(sectionsArray)] : ['Section 1'];
+  const jsonStr = JSON.stringify(uniqueSections);
+
+  db.run("UPDATE classes SET unlocked_sections = ?, updated_at = datetime('now') WHERE id = ?", [jsonStr, classId]);
+
+  logAction({
+    userId: adminUserId,
+    username: adminUsername,
+    action: 'SET_CLASS_UNLOCKED_SECTIONS',
+    entityType: 'classes',
+    entityId: classId,
+    details: { className: cls.name, unlocked_sections: uniqueSections }
+  });
+
+  return uniqueSections;
+}
+
 module.exports = {
   createClass,
   getClass,
   listClasses,
   listClassesForInstructor,
+  getUnlockedSectionsForClass,
+  setUnlockedSectionsForClass,
   updateClass,
   duplicateClass,
   archiveClass,

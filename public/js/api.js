@@ -159,5 +159,9 @@ export const api = {
     if (instructorId) params.set('instructor_id', instructorId);
     const q = params.toString();
     return apiRequest(`/instructor/progress${q ? `?${q}` : ''}`);
-  }
+  },
+  submitSection: (attemptId, sectionName) => apiRequest(`/student/attempts/${attemptId}/submit-section`, { method: 'POST', body: { section_name: sectionName } }),
+  getAttemptUnlockStatus: (attemptId) => apiRequest(`/student/attempts/${attemptId}/unlock-status`),
+  setUnlockedSections: (classId, unlockedSections) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`, { method: 'PUT', body: { unlocked_sections: unlockedSections } }),
+  getUnlockedSections: (classId) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`)
 };

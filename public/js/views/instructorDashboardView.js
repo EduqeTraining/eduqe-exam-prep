@@ -452,11 +452,77 @@ export function renderInstructorDashboard(container, router) {
                   </div>
                 `}
               </div>
+
+              <!-- Cohort Section Access Control & Progressive Unlocking -->
+              <div style="border-top:1px solid var(--border); padding-top:0.65rem; margin-top:0.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                <div style="display:flex; align-items:center; gap:0.4rem;">
+                  <span class="badge ${sec.is_unlocked ? 'badge-success' : 'badge-warning'}" style="font-size:0.72rem; font-weight:700;">
+                    ${sec.is_unlocked ? '&#x1F513; UNLOCKED FOR COHORT' : '&#x1F512; LOCKED FOR COHORT'}
+                  </span>
+                </div>
+                <div>
+                  ${activeClassId !== 'all' ? `
+                    ${!sec.is_unlocked ? `
+                      <button type="button" class="btn btn-primary btn-sm btn-cohort-unlock" data-sec="${escapeHtml(secName)}" style="font-weight:700; font-size:0.75rem; padding:0.25rem 0.65rem;">
+                        &#x1F513; Unlock ${escapeHtml(secName)} for Cohort
+                      </button>
+                    ` : (idx > 0 ? `
+                      <button type="button" class="btn btn-secondary btn-sm btn-cohort-relock" data-sec="${escapeHtml(secName)}" style="font-size:0.72rem; padding:0.2rem 0.5rem; color:var(--text-muted);" title="Re-lock this section if needed">
+                        &#x1F512; Re-Lock
+                      </button>
+                    ` : `
+                      <span style="font-size:0.72rem; color:var(--text-muted); font-weight:600;">(Default Unlocked)</span>
+                    `)}
+                  ` : `
+                    <span style="font-size:0.72rem; color:var(--text-muted);">(Select cohort above to manage locks)</span>
+                  `}
+                </div>
+              </div>
+
             </div>
           `;
         }).join('')}
       </div>
     `;
+
+    // Attach unlock / relock event listeners
+    sectionsContainer.querySelectorAll('.btn-cohort-unlock').forEach(btn => {
+      btn.onclick = async () => {
+        const secToUnlock = btn.dataset.sec;
+        if (!secToUnlock) return;
+        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
+        const nextList = [...new Set([...currentUnlocked, secToUnlock])];
+        btn.disabled = true;
+        btn.textContent = 'Unlocking...';
+        try {
+          await api.setUnlockedSections(activeClassId, nextList);
+          await loadDashboardData();
+        } catch (err) {
+          alert('Failed to unlock section: ' + err.message);
+          btn.disabled = false;
+          btn.textContent = `🔓 Unlock ${secToUnlock} for Cohort`;
+        }
+      };
+    });
+
+    sectionsContainer.querySelectorAll('.btn-cohort-relock').forEach(btn => {
+      btn.onclick = async () => {
+        const secToLock = btn.dataset.sec;
+        if (!secToLock) return;
+        if (!confirm(`Are you sure you want to lock ${secToLock} for this cohort?`)) return;
+        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
+        const nextList = currentUnlocked.filter(s => s !== secToLock);
+        btn.disabled = true;
+        btn.textContent = 'Locking...';
+        try {
+          await api.setUnlockedSections(activeClassId, nextList);
+          await loadDashboardData();
+        } catch (err) {
+          alert('Failed to lock section: ' + err.message);
+          btn.disabled = false;
+        }
+      };
+    });
   }
 
   function renderStudentRoster() {
@@ -502,19 +568,24 @@ export function renderInstructorDashboard(container, router) {
 
       let sectionCellHtml = '<span style="font-size:0.8rem; color:var(--text-muted);">No section data yet</span>';
       if (secBreakdown.length > 0) {
+        const secUnlockedList = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
         sectionCellHtml = `
           <div style="display:flex; flex-wrap:wrap; gap:0.35rem; margin-bottom:${helpSections.length > 0 ? '0.35rem' : '0'};">
             ${secBreakdown.map(sec => {
               const secTitle = sec.name || sec.section_name || 'Section';
-              const isComp = Boolean(sec.is_completed || sec.status === 'Completed');
+              const isComp = Boolean(sec.is_completed || sec.status === 'Completed' || sec.is_submitted);
               const isInProg = Boolean(sec.is_in_progress || sec.status === 'In Progress');
+              const isLocked = !secUnlockedList.includes(secTitle);
               const attHistory = Array.isArray(sec.attempt_history) ? sec.attempt_history : [];
               const historyTitle = attHistory.length > 0
                 ? attHistory.map(a => `Attempt #${a.attempt_number}: ${a.correct_count}/${a.total_questions} (${a.percentage}%)`).join(' | ')
                 : `${secTitle}: ${sec.correct_count ?? 0}/${sec.total_questions ?? 0} correct`;
 
               if (!isComp && !isInProg && (sec.answered_count === 0 || sec.status === 'Not Started' || sec.status === 'Pending')) {
-                return `<span class="badge badge-neutral" style="font-size:0.7rem;" title="${escapeHtml(secTitle)}: Not started">${escapeHtml(secTitle)}: Pending</span>`;
+                if (isLocked) {
+                  return `<span class="badge badge-neutral" style="font-size:0.7rem; opacity:0.8;" title="${escapeHtml(secTitle)}: Locked for cohort">&#x1F512; ${escapeHtml(secTitle)}: Locked</span>`;
+                }
+                return `<span class="badge badge-neutral" style="font-size:0.7rem;" title="${escapeHtml(secTitle)}: Ready to start">&#x23F3; ${escapeHtml(secTitle)}: Ready</span>`;
               }
               if (isInProg) {
                 return `<span class="badge badge-warning" style="font-size:0.7rem;" title="Currently working on ${escapeHtml(secTitle)}">&#x23F3; ${escapeHtml(secTitle)}: ${sec.answered_count}/${sec.total_questions} (${sec.percentage ?? 0}%)</span>`;
@@ -524,7 +595,7 @@ export function renderInstructorDashboard(container, router) {
                 : `${sec.percentage ?? 0}% (${sec.correct_count ?? 0}/${sec.total_questions ?? 0})`;
               return `
                 <span class="badge ${sec.needs_help ? 'badge-danger' : 'badge-success'}" style="font-size:0.7rem;" title="${escapeHtml(historyTitle)}">
-                  ${escapeHtml(secTitle)}: ${pctText} ${sec.needs_help ? '&#x26A0;&#xFE0F;' : '&#x2713;'}
+                  ${escapeHtml(secTitle)}: ${pctText} ${sec.needs_help ? '&#x26A0;&#xFE0F;' : '&#x2713; (Submitted)'}
                 </span>
               `;
             }).join('')}
