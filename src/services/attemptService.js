@@ -620,11 +620,23 @@ function submitSection({ attemptId, userId, sectionName }) {
     completedSections.push(secName);
   }
 
-  // Check if all distinct sections in this attempt have been completed
-  const allDistinctSections = db.all(
+  // Authoritative check across all sections belonging to this assessment:
+  const assRow = db.get('SELECT sections FROM assessments WHERE id = ?', [attempt.assessment_id]);
+  const configuredSections = parseStoredSections(assRow?.sections);
+  const aqSections = db.all(
+    `SELECT DISTINCT section_name FROM assessment_questions WHERE assessment_id = ?`,
+    [attempt.assessment_id]
+  ).map(r => (r.section_name || '').trim()).filter(Boolean);
+  const aaSections = db.all(
     `SELECT DISTINCT section_name FROM attempt_answers WHERE attempt_id = ?`,
     [attemptId]
-  ).map(r => r.section_name);
+  ).map(r => (r.section_name || '').trim()).filter(Boolean);
+
+  const allDistinctSections = [...new Set([
+    ...configuredSections,
+    ...aqSections,
+    ...aaSections
+  ])].filter(Boolean);
 
   const isAllCompleted = allDistinctSections.length > 0 && allDistinctSections.every(s => completedSections.includes(s));
 
@@ -1177,6 +1189,17 @@ function restartAttempt({ attemptId = null, userId, assessmentId = null, classId
   });
 }
 
+function getActiveAttemptForUser(userId, assessmentId) {
+  const db = getDatabase();
+  return db.get(
+    `SELECT id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, is_paused, paused_remaining_seconds, completed_sections
+     FROM student_attempts
+     WHERE user_id = ? AND assessment_id = ? AND status = 'in_progress'
+     ORDER BY started_at DESC LIMIT 1`,
+    [userId, assessmentId]
+  );
+}
+
 module.exports = {
   startAttempt,
   autosaveAnswer,
@@ -1186,5 +1209,6 @@ module.exports = {
   endAttempt,
   restartAttempt,
   getAttemptState,
+  getActiveAttemptForUser,
   recalculateAttemptScore
 };

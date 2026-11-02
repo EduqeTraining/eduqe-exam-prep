@@ -558,6 +558,56 @@ async function syncAttemptAnswersToSupabase(attemptId) {
   }
 }
 
+async function pullAttemptAnswersForAttempt(attemptId) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !attemptId) return 0;
+
+  try {
+    const rows = await supabaseRequest(`attempt_answers?attempt_id=eq.${attemptId}&select=*`, { method: 'GET' });
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+
+    const db = getDatabase();
+    const tableCols = db.all('PRAGMA table_info("attempt_answers")');
+    if (!tableCols || tableCols.length === 0) return 0;
+
+    const localColSet = new Set(tableCols.map(c => c.name));
+    const remoteCols = Object.keys(rows[0]);
+    const matchingCols = remoteCols.filter(c => localColSet.has(c));
+    if (matchingCols.length === 0) return 0;
+
+    const placeholders = matchingCols.map(() => '?').join(', ');
+    const colNames = matchingCols.map(c => `"${c}"`).join(', ');
+
+    try {
+      db.run('PRAGMA foreign_keys = OFF;');
+    } catch (_) {}
+
+    try {
+      db.transaction(() => {
+        for (const row of rows) {
+          const vals = matchingCols.map(c => {
+            const val = row[c];
+            return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
+          });
+          db.run(
+            `INSERT OR REPLACE INTO "attempt_answers" (${colNames}) VALUES (${placeholders})`,
+            vals
+          );
+        }
+      });
+    } finally {
+      try {
+        db.run('PRAGMA foreign_keys = ON;');
+      } catch (_) {}
+    }
+
+    return rows.length;
+  } catch (err) {
+    console.warn(`[Supabase Pull Warning] Error pulling attempt_answers for attempt ${attemptId}:`, err.message);
+    return 0;
+  }
+}
+
 // -------------------------------------------------------------
 // BULK DATA SYNC (PUSH ALL LOCAL DATA -> SUPABASE)
 // -------------------------------------------------------------
@@ -721,6 +771,7 @@ module.exports = {
   deletePoolFromSupabase,
   syncAttemptToSupabase,
   syncAttemptAnswersToSupabase,
+  pullAttemptAnswersForAttempt,
   syncSettingToSupabase,
   syncOnStartup,
   pushAllToSupabase,

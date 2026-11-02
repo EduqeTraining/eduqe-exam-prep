@@ -151,10 +151,26 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           force_new: true
         });
       } else {
-        // Pre-flight instruction screen
-        const assessment = await api.get(`/assessments/${assessmentId}`);
-        renderPreflightScreen(assessment);
-        return;
+        // Check if student already has an active in-progress attempt for this assessment
+        try {
+          const activeCheck = await api.getActiveAttempt(assessmentId);
+          if (activeCheck && activeCheck.has_active && activeCheck.attempt_id) {
+            currentAttempt = await api.get(`/student/attempts/${activeCheck.attempt_id}`);
+          }
+        } catch (_) {}
+
+        if (!currentAttempt) {
+          // Pre-flight instruction screen
+          const assessment = await api.get(`/assessments/${assessmentId}`);
+          renderPreflightScreen(assessment);
+          return;
+        }
+      }
+
+      if (currentAttempt && currentAttempt.id && typeof window !== 'undefined') {
+        if (window.location.hash !== `#exam-attempt/${currentAttempt.id}`) {
+          try { history.replaceState(null, '', `#exam-attempt/${currentAttempt.id}`); } catch (_) {}
+        }
       }
 
       if (currentAttempt.status === 'in_progress') {
@@ -269,6 +285,9 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           assessment_id: assessment.id,
           class_id: classId
         });
+        if (currentAttempt && currentAttempt.id && typeof window !== 'undefined') {
+          try { history.replaceState(null, '', `#exam-attempt/${currentAttempt.id}`); } catch (_) {}
+        }
         renderLiveExamInterface();
       } catch (err) {
         alert(err.message);
@@ -281,6 +300,11 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   // Live In-Assessment Interface
   function renderLiveExamInterface() {
     if (timerInterval) clearInterval(timerInterval);
+    if (currentAttempt && currentAttempt.id && typeof window !== 'undefined') {
+      if (window.location.hash !== `#exam-attempt/${currentAttempt.id}`) {
+        try { history.replaceState(null, '', `#exam-attempt/${currentAttempt.id}`); } catch (_) {}
+      }
+    }
 
     viewContainer.innerHTML = `
       <!-- Assessment Top Banner -->
@@ -588,6 +612,12 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         return;
       }
 
+      (currentAttempt.questions || []).forEach(q => {
+        if (currentAttempt.unlocked_sections.includes(q.section_name || 'Section 1')) {
+          q.is_locked = false;
+        }
+      });
+
       const distinctSecs = getDistinctSections();
       const targetSec = distinctSecs.find(s => s.name === nextSecName);
 
@@ -658,6 +688,11 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     proceedBtn.onclick = async () => {
       if (lockedModalPoller) clearInterval(lockedModalPoller);
       secLockedModal.close();
+      (currentAttempt.questions || []).forEach(q => {
+        if (currentAttempt.unlocked_sections.includes(q.section_name || 'Section 1')) {
+          q.is_locked = false;
+        }
+      });
       if (currentAttempt.is_paused) {
         try {
           const resumed = await api.resumeAttemptTimer(currentAttempt.id, nextSecName);
@@ -682,6 +717,11 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           clearInterval(lockedModalPoller);
           lockedModalPoller = null;
           currentAttempt.unlocked_sections = unlockedList;
+          (currentAttempt.questions || []).forEach(q => {
+            if (unlockedList.includes(q.section_name || 'Section 1')) {
+              q.is_locked = false;
+            }
+          });
 
           const pollEl = container.querySelector('#modal-unlock-polling');
           const pollText = container.querySelector('#modal-unlock-polling-text');
@@ -790,10 +830,23 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       btn.onclick = async () => {
         const targetIdx = parseInt(btn.dataset.targetIdx, 10);
         const targetSecName = btn.dataset.secName;
-        const targetSecObj = sections.find(s => s.name === targetSecName);
+        let targetSecObj = sections.find(s => s.name === targetSecName);
         if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
-          openSectionLockedModal(targetSecName);
-          return;
+          try {
+            const status = await api.getAttemptUnlockStatus(currentAttempt.id);
+            currentAttempt.unlocked_sections = status.unlocked_sections || ['Section 1'];
+            (currentAttempt.questions || []).forEach(q => {
+              if (currentAttempt.unlocked_sections.includes(q.section_name || 'Section 1')) {
+                q.is_locked = false;
+              }
+            });
+          } catch (_) {}
+          const refreshedSecs = getDistinctSections();
+          targetSecObj = refreshedSecs.find(s => s.name === targetSecName);
+          if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
+            openSectionLockedModal(targetSecName);
+            return;
+          }
         }
         if (targetSecName !== activeSecName) {
           await attemptTransitionToQuestion(targetIdx, activeSecName, targetSecName);
@@ -850,10 +903,23 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       btn.onclick = async () => {
         const targetIdx = parseInt(btn.dataset.idx, 10);
         const targetSec = btn.dataset.sec;
-        const targetSecObj = sections.find(s => s.name === targetSec);
+        let targetSecObj = sections.find(s => s.name === targetSec);
         if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
-          openSectionLockedModal(targetSec);
-          return;
+          try {
+            const status = await api.getAttemptUnlockStatus(currentAttempt.id);
+            currentAttempt.unlocked_sections = status.unlocked_sections || ['Section 1'];
+            (currentAttempt.questions || []).forEach(q => {
+              if (currentAttempt.unlocked_sections.includes(q.section_name || 'Section 1')) {
+                q.is_locked = false;
+              }
+            });
+          } catch (_) {}
+          const refreshedSecs = getDistinctSections();
+          targetSecObj = refreshedSecs.find(s => s.name === targetSec);
+          if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
+            openSectionLockedModal(targetSec);
+            return;
+          }
         }
         if (targetSec !== activeSecName) {
           await attemptTransitionToQuestion(targetIdx, activeSecName, targetSec);
@@ -1899,6 +1965,12 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         if (unlockedList.includes(nextSecName)) {
           clearInterval(sectionUnlockPoller);
           sectionUnlockPoller = null;
+          currentAttempt.unlocked_sections = unlockedList;
+          (currentAttempt.questions || []).forEach(q => {
+            if (unlockedList.includes(q.section_name || 'Section 1')) {
+              q.is_locked = false;
+            }
+          });
 
           const lockBox = viewContainer.querySelector('#waiting-lock-box');
           const badgeLock = viewContainer.querySelector('#badge-lock-indicator');

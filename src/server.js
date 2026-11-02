@@ -515,8 +515,27 @@ async function handleRequest(req, res) {
           const attemptId = attemptState?.id || attemptState?.attempt?.id;
           if (attemptId) {
             await supabaseService.syncAttemptToSupabase(attemptId);
+            await supabaseService.pullAttemptAnswersForAttempt(attemptId);
           }
           return sendJson(res, 200, attemptState);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
+      const activeAttemptMatch = pathname.match(/^\/api\/student\/assessments\/([^\/]+)\/active-attempt$/);
+      if (req.method === 'GET' && activeAttemptMatch) {
+        const user = requireAuth(req, res, 'student');
+        if (!user) return;
+        const assessmentId = activeAttemptMatch[1];
+        await supabaseService.ensureTablesFresh(['student_attempts']);
+        try {
+          const active = attemptService.getActiveAttemptForUser(user.id, assessmentId);
+          if (active) {
+            await supabaseService.pullAttemptAnswersForAttempt(active.id);
+            return sendJson(res, 200, { has_active: true, attempt_id: active.id, attempt: active });
+          }
+          return sendJson(res, 200, { has_active: false, attempt_id: null });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
         }
@@ -527,7 +546,8 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = attemptMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
+        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, state);
@@ -541,7 +561,8 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
+        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.autosaveAnswer({
@@ -551,7 +572,7 @@ async function handleRequest(req, res) {
             savedAnswer: body.saved_answer,
             isFlagged: body.is_flagged
           });
-          supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
+          await supabaseService.syncAttemptAnswersToSupabase(attemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -606,7 +627,8 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
+        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.submitSection({
@@ -627,7 +649,8 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = resumeTimerMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
+        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.resumeAttemptTimer({
@@ -647,7 +670,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings']);
+        await supabaseService.ensureTablesFresh(['classes', 'eduque_settings', 'student_attempts'], 0);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, {

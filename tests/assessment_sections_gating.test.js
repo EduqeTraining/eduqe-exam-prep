@@ -12,7 +12,7 @@ process.env.SUPABASE_SYNC = 'false';
 const { initDatabase, getDatabase } = require('../src/db');
 const { seedDatabase } = require('../src/db/seed');
 const { createClass, getUnlockedSectionsForClass, setUnlockedSectionsForClass } = require('../src/services/classService');
-const { startAttempt, autosaveAnswer, submitSection, submitAttempt, getAttemptState } = require('../src/services/attemptService');
+const { startAttempt, autosaveAnswer, submitSection, submitAttempt, getAttemptState, getActiveAttemptForUser } = require('../src/services/attemptService');
 const { getInstructorClassProgress } = require('../src/services/instructorService');
 
 test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', async (t) => {
@@ -193,6 +193,19 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
         isFlagged: false
       });
     }, /has already been submitted and cannot be modified/i);
+  });
+
+  await t.test('4b. Submitting Section 1 keeps attempt in_progress and retrievable via getActiveAttemptForUser with saved answers', () => {
+    const active = getActiveAttemptForUser(student.id, assessment.id);
+    assert.ok(active, 'Must find active in_progress attempt after Section 1 submission');
+    assert.equal(active.id, attempt.id);
+    assert.equal(active.status, 'in_progress');
+
+    const resumedState = getAttemptState(attempt.id, student.id);
+    assert.equal(resumedState.status, 'in_progress');
+    const sec1Q = resumedState.questions.find(q => (q.section_name || 'Section 1') === 'Section 1');
+    assert.ok(sec1Q.saved_answer, 'Saved answer for Section 1 question must be preserved upon resume/refresh');
+    assert.equal(sec1Q.is_completed_section, true);
   });
 
   await t.test('5. Instructor dashboard shows Section 1 completion and scores in real time', () => {
