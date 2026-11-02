@@ -113,6 +113,11 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     assert.ok(result.completed_sections.includes('Section 1'));
     assert.equal(result.status, 'in_progress');
 
+    // Verify attempt timer is paused after completing Section 1
+    const stateAfterSec1 = getAttemptState(attempt.id, student.id);
+    assert.equal(stateAfterSec1.is_paused, true, 'Attempt timer must pause upon section submission');
+    assert.ok(stateAfterSec1.paused_remaining_seconds > 0, 'Remaining time must be frozen');
+
     // Section 1 questions must now have revealed explanations & correct answers
     const sec1Q = result.questions.find(q => (q.section_name || 'Section 1') === 'Section 1');
     assert.equal(sec1Q.is_completed_section, true);
@@ -166,6 +171,10 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
         isFlagged: false
       });
       assert.ok(saveRes.success);
+
+      // Verify timer resumed when student starts Section 2
+      const stateAfterSec2Start = getAttemptState(attempt.id, student.id);
+      assert.equal(stateAfterSec2Start.is_paused, false, 'Attempt timer must resume when starting new section');
     }
   });
 

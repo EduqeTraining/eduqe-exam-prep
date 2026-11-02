@@ -161,6 +161,7 @@ export const api = {
     return apiRequest(`/instructor/progress${q ? `?${q}` : ''}`);
   },
   submitSection: (attemptId, sectionName) => apiRequest(`/student/attempts/${attemptId}/submit-section`, { method: 'POST', body: { section_name: sectionName } }),
+  resumeAttemptTimer: (attemptId, sectionName = null) => apiRequest(`/student/attempts/${attemptId}/resume-timer`, { method: 'POST', body: { section_name: sectionName } }),
   getAttemptUnlockStatus: (attemptId) => apiRequest(`/student/attempts/${attemptId}/unlock-status`),
   setUnlockedSections: (classId, unlockedSections) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`, { method: 'PUT', body: { unlocked_sections: unlockedSections } }),
   getUnlockedSections: (classId) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`)

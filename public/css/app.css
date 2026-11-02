@@ -1303,6 +1303,18 @@ textarea.form-control {
   animation: pulseDanger 1s infinite;
 }
 
+.timer-badge.paused {
+  background: rgba(234, 179, 8, 0.12);
+  color: #eab308;
+  border-color: #eab308;
+  box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.2);
+}
+[data-theme="dark"] .timer-badge.paused {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fde047;
+  border-color: #fde047;
+}
+
 @keyframes pulseWarning {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.75; }

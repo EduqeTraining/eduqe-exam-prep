@@ -619,6 +619,25 @@ async function handleRequest(req, res) {
         }
       }
 
+      const resumeTimerMatch = pathname.match(/^\/api\/student\/attempts\/([^\/]+)\/resume-timer$/);
+      if (req.method === 'POST' && resumeTimerMatch) {
+        const user = requireAuth(req, res, 'student');
+        if (!user) return;
+        const attemptId = resumeTimerMatch[1];
+        const body = await parseBody(req);
+        try {
+          const result = attemptService.resumeAttemptTimer({
+            attemptId,
+            userId: user.id,
+            sectionName: body.section_name || null
+          });
+          await supabaseService.syncAttemptToSupabase(attemptId);
+          return sendJson(res, 200, result);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
       const unlockStatusMatch = pathname.match(/^\/api\/student\/attempts\/([^\/]+)\/unlock-status$/);
       if (req.method === 'GET' && unlockStatusMatch) {
         const user = requireAuth(req, res);

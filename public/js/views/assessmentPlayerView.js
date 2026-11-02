@@ -429,8 +429,25 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   }
 
   function startAuthoritativeTimer() {
+    if (timerInterval) clearInterval(timerInterval);
     const timerDisplay = viewContainer.querySelector('#timer-display');
     const timerBadge = viewContainer.querySelector('#exam-timer');
+    if (!timerDisplay || !timerBadge) return;
+
+    if (currentAttempt.is_paused) {
+      const remainingSec = currentAttempt.paused_remaining_seconds !== null && currentAttempt.paused_remaining_seconds !== undefined
+        ? currentAttempt.paused_remaining_seconds
+        : (currentAttempt.time_remaining_seconds || 0);
+      const hours = Math.floor(remainingSec / 3600);
+      const mins = Math.floor((remainingSec % 3600) / 60);
+      const secs = remainingSec % 60;
+      timerDisplay.textContent = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} (Paused)`;
+      timerBadge.className = 'timer-badge paused';
+      timerBadge.title = 'Timer is paused during section review & discussion. Resumes when you begin the next section.';
+      return;
+    }
+
+    timerBadge.title = 'Assessment countdown timer';
     const deadlineMs = parseUtc(currentAttempt.deadline_at).getTime();
 
     function updateClock() {
@@ -457,6 +474,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         timerBadge.className = 'timer-badge warning';
       } else if (totalSec < 60) {
         timerBadge.className = 'timer-badge danger';
+      } else {
+        timerBadge.className = 'timer-badge';
       }
     }
 
@@ -539,6 +558,16 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       return;
     }
 
+    // If target section is an uncompleted section and attempt was paused, resume timer!
+    if (toSec && !toSec.is_submitted && currentAttempt.is_paused) {
+      try {
+        const resumed = await api.resumeAttemptTimer(currentAttempt.id, toSec.name);
+        currentAttempt = resumed.attempt_state || resumed;
+      } catch (e) {
+        console.warn('Failed to resume timer:', e);
+      }
+    }
+
     activeQuestionIndex = targetIdx;
     renderQuestion(activeQuestionIndex);
     renderPalette();
@@ -564,6 +593,17 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
       if (currentAttempt.unlocked_sections.includes(nextSecName)) {
         if (secLockedModal.open) secLockedModal.close();
+
+        // Resume timer now that student is starting the new section
+        if (currentAttempt.is_paused) {
+          try {
+            const resumed = await api.resumeAttemptTimer(currentAttempt.id, nextSecName);
+            currentAttempt = resumed.attempt_state || resumed;
+          } catch (e) {
+            console.warn('Failed to resume timer:', e);
+          }
+        }
+
         if (targetSec && targetSec.indices && targetSec.indices.length > 0) {
           activeQuestionIndex = targetSec.indices[0];
         }
@@ -615,9 +655,17 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       secLockedModal.close();
     };
 
-    proceedBtn.onclick = () => {
+    proceedBtn.onclick = async () => {
       if (lockedModalPoller) clearInterval(lockedModalPoller);
       secLockedModal.close();
+      if (currentAttempt.is_paused) {
+        try {
+          const resumed = await api.resumeAttemptTimer(currentAttempt.id, nextSecName);
+          currentAttempt = resumed.attempt_state || resumed;
+        } catch (e) {
+          console.warn('Failed to resume timer:', e);
+        }
+      }
       const distinctSecs = getDistinctSections();
       const targetSec = distinctSecs.find(s => s.name === nextSecName);
       if (targetSec && targetSec.indices && targetSec.indices.length > 0) {
@@ -1529,6 +1577,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           <ul style="padding-left:1.15rem; margin:0; display:flex; flex-direction:column; gap:0.35rem;">
             <li>Your score and percentage for <strong>${escapeHtml(targetSec.name)}</strong> will be calculated immediately.</li>
             <li>Your answers will be sealed, and correct answers &amp; explanations will be revealed for the group review.</li>
+            <li><strong>The timer is paused</strong> during your section review and instructor discussion, preserving your remaining exam time!</li>
             <li>Your score is sent to your instructor's cohort dashboard for the review discussion.</li>
             <li>The next section will be unlocked by your instructor once the discussion is concluded.</li>
           </ul>
@@ -1606,6 +1655,9 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           <h2 style="font-size:1.5rem; font-weight:800; margin-bottom:0.5rem;">
             Section Score: ${secScore} / ${secMax} (${secPct}%)
           </h2>
+          <div style="display:inline-flex; align-items:center; gap:0.4rem; padding:0.3rem 0.75rem; border-radius:var(--radius-full); background:rgba(234,179,8,0.15); border:1px solid #eab308; color:#eab308; font-size:0.8rem; font-weight:700; margin-bottom:0.75rem;">
+            &#x23F8; Exam Timer is Paused for Review &amp; Discussion
+          </div>
           <p class="form-hint" style="font-size:0.92rem; margin-bottom:1.25rem;">
             ${correctCount} of ${totalSecQ} questions correct &bull; Pass Mark: ${currentAttempt.pass_mark_percentage || 70}%
           </p>

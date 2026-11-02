@@ -161,12 +161,27 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
         });
       }
     } else {
-      const deadline = parseUtcDate(existingInProgress.deadline_at).getTime();
-      if (now >= deadline) {
-        // Auto-submit expired attempt
-        submitAttempt({ attemptId: existingInProgress.id, userId, isAuto: true });
+      let isPaused = Boolean(existingInProgress.is_paused);
+      if (!isPaused) {
+        const timerSetting = db.get("SELECT value FROM eduque_settings WHERE key = ?", [`attempt_timer_${existingInProgress.id}`]);
+        if (timerSetting && timerSetting.value) {
+          try {
+            const parsed = JSON.parse(timerSetting.value);
+            if (parsed && parsed.is_paused) isPaused = true;
+          } catch (_) {}
+        }
+      }
+      if (!isPaused) {
+        const deadline = parseUtcDate(existingInProgress.deadline_at).getTime();
+        if (now >= deadline) {
+          // Auto-submit expired attempt
+          submitAttempt({ attemptId: existingInProgress.id, userId, isAuto: true });
+        } else {
+          // Resume active attempt
+          return getAttemptState(existingInProgress.id, userId);
+        }
       } else {
-        // Resume active attempt
+        // Resume paused active attempt
         return getAttemptState(existingInProgress.id, userId);
       }
     }
@@ -263,6 +278,28 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   if (!attempt) throw new Error('Attempt not found.');
   if (attempt.status !== 'in_progress') {
     throw new Error('Cannot edit an assessment attempt that is not in progress.');
+  }
+
+  // If attempt was paused and student is now answering, auto-resume timer
+  let isAttemptPaused = Boolean(attempt.is_paused);
+  if (!isAttemptPaused) {
+    const timerSetting = db.get("SELECT value FROM eduque_settings WHERE key = ?", [`attempt_timer_${attemptId}`]);
+    if (timerSetting && timerSetting.value) {
+      try {
+        const parsed = JSON.parse(timerSetting.value);
+        if (parsed && parsed.is_paused) isAttemptPaused = true;
+      } catch (_) {}
+    }
+  }
+
+  if (isAttemptPaused) {
+    resumeAttemptTimer({ attemptId, userId });
+    const refreshed = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+    if (refreshed) {
+      attempt.deadline_at = refreshed.deadline_at;
+      attempt.is_paused = 0;
+      attempt.paused_remaining_seconds = null;
+    }
   }
 
   // Authoritative server-side deadline check
@@ -593,14 +630,23 @@ function submitSection({ attemptId, userId, sectionName }) {
     }
     const runningPct = runningMaxScore > 0 ? Math.round((runningScore / runningMaxScore) * 1000) / 10 : 0;
 
+    // Calculate remaining seconds to freeze for the review/discussion
+    const now = Date.now();
+    const deadlineMs = parseUtcDate(attempt.deadline_at).getTime();
+    let remainingSec = attempt.is_paused && attempt.paused_remaining_seconds !== null
+      ? attempt.paused_remaining_seconds
+      : Math.max(0, Math.floor((deadlineMs - now) / 1000));
+
     db.run(
       `UPDATE student_attempts
        SET score = ?,
            max_score = ?,
            percentage = ?,
-           completed_sections = ?
+           completed_sections = ?,
+           is_paused = 1,
+           paused_remaining_seconds = ?
        WHERE id = ?`,
-      [runningScore, runningMaxScore, runningPct, JSON.stringify(completedSections), attemptId]
+      [runningScore, runningMaxScore, runningPct, JSON.stringify(completedSections), remainingSec, attemptId]
     );
 
     try {
@@ -614,6 +660,16 @@ function submitSection({ attemptId, userId, sectionName }) {
       );
       const supabaseService = require('./supabaseService');
       supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
+
+      const timerKey = `attempt_timer_${attemptId}`;
+      const timerId = `setting-timer-${attemptId}`;
+      db.run(
+        `INSERT INTO eduque_settings (id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        [timerId, timerKey, JSON.stringify({ is_paused: true, paused_remaining_seconds: remainingSec })]
+      );
+      supabaseService.syncSettingToSupabase(timerKey).catch(() => {});
     } catch (e) {}
 
     logAction({
@@ -677,8 +733,23 @@ function getAttemptState(attemptId, userId) {
     }
   }
 
-  // Check if active attempt deadline has passed
-  if (attempt.status === 'in_progress') {
+  let isPaused = Boolean(attempt.is_paused);
+  let pausedRemainingSec = attempt.paused_remaining_seconds;
+  if (!isPaused) {
+    const timerSetting = db.get("SELECT value FROM eduque_settings WHERE key = ?", [`attempt_timer_${attempt.id}`]);
+    if (timerSetting && timerSetting.value) {
+      try {
+        const parsed = JSON.parse(timerSetting.value);
+        if (parsed && parsed.is_paused) {
+          isPaused = true;
+          pausedRemainingSec = parsed.paused_remaining_seconds;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Check if active attempt deadline has passed (only when timer is not paused)
+  if (attempt.status === 'in_progress' && !isPaused) {
     const deadline = parseUtcDate(attempt.deadline_at).getTime();
     if (Date.now() >= deadline) {
       return submitAttempt({ attemptId, userId: attempt.user_id, isAuto: true });
@@ -817,6 +888,11 @@ function getAttemptState(attemptId, userId) {
     deadline_at: attempt.deadline_at,
     submitted_at: attempt.submitted_at,
     status: attempt.status,
+    is_paused: isPaused,
+    paused_remaining_seconds: pausedRemainingSec,
+    time_remaining_seconds: isPaused
+      ? pausedRemainingSec
+      : Math.max(0, Math.floor((parseUtcDate(attempt.deadline_at).getTime() - Date.now()) / 1000)),
     score: attempt.score,
     max_score: attempt.max_score,
     percentage: attempt.percentage,
@@ -845,6 +921,76 @@ function getAttemptState(attemptId, userId) {
 /**
  * Score Recalculation (Section 14)
  */
+
+function resumeAttemptTimer({ attemptId, userId, sectionName = null }) {
+  const db = getDatabase();
+  const attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+  if (!attempt) throw new Error('Attempt not found.');
+  if (userId && attempt.user_id !== userId) {
+    const requestingUser = db.get('SELECT role FROM users WHERE id = ?', [userId]);
+    if (requestingUser?.role !== 'administrator' && requestingUser?.role !== 'instructor') {
+      throw new Error('Access denied: Unauthorized attempt access.');
+    }
+  }
+
+  if (attempt.status !== 'in_progress') {
+    return getAttemptState(attemptId, userId);
+  }
+
+  let isPaused = Boolean(attempt.is_paused);
+  let pausedRemainingSec = attempt.paused_remaining_seconds;
+
+  if (!isPaused) {
+    const timerSetting = db.get("SELECT value FROM eduque_settings WHERE key = ?", [`attempt_timer_${attemptId}`]);
+    if (timerSetting && timerSetting.value) {
+      try {
+        const parsed = JSON.parse(timerSetting.value);
+        if (parsed && parsed.is_paused) {
+          isPaused = true;
+          pausedRemainingSec = parsed.paused_remaining_seconds;
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (isPaused && pausedRemainingSec !== null && pausedRemainingSec !== undefined) {
+    const now = Date.now();
+    const newDeadline = new Date(now + (Math.max(1, pausedRemainingSec) * 1000)).toISOString();
+    db.run(
+      `UPDATE student_attempts
+       SET is_paused = 0,
+           paused_remaining_seconds = NULL,
+           deadline_at = ?
+       WHERE id = ?`,
+      [newDeadline, attemptId]
+    );
+
+    try {
+      const timerKey = `attempt_timer_${attemptId}`;
+      const timerId = `setting-timer-${attemptId}`;
+      db.run(
+        `INSERT INTO eduque_settings (id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        [timerId, timerKey, JSON.stringify({ is_paused: false, paused_remaining_seconds: null })]
+      );
+      const supabaseService = require('./supabaseService');
+      supabaseService.syncSettingToSupabase(timerKey).catch(() => {});
+    } catch (e) {}
+
+    logAction({
+      userId,
+      username: 'student',
+      action: 'RESUME_ATTEMPT_TIMER',
+      entityType: 'student_attempts',
+      entityId: attemptId,
+      details: { sectionName, resumedAt: new Date(now).toISOString(), newDeadline, remainingSeconds: pausedRemainingSec }
+    });
+  }
+
+  return getAttemptState(attemptId, userId);
+}
+
 function recalculateAttemptScore(attemptId, reason, adminUserId = null, adminUsername = 'admin') {
   const db = getDatabase();
   const attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
@@ -964,6 +1110,7 @@ module.exports = {
   autosaveAnswer,
   submitAttempt,
   submitSection,
+  resumeAttemptTimer,
   endAttempt,
   restartAttempt,
   getAttemptState,

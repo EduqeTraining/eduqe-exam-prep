@@ -202,6 +202,8 @@ CREATE TABLE IF NOT EXISTS student_attempts (
     submitted_at TEXT,
     status TEXT NOT NULL DEFAULT 'in_progress',
     completed_sections TEXT DEFAULT '[]',
+    is_paused INTEGER DEFAULT 0,
+    paused_remaining_seconds INTEGER,
     score REAL DEFAULT 0,
     max_score REAL DEFAULT 0,
     percentage REAL DEFAULT 0,

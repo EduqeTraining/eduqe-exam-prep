@@ -101,6 +101,12 @@ function initDatabase(dbPath) {
     // Column already exists
   }
   try {
+    db.exec(`ALTER TABLE student_attempts ADD COLUMN is_paused INTEGER DEFAULT 0;`);
+  } catch (err) {}
+  try {
+    db.exec(`ALTER TABLE student_attempts ADD COLUMN paused_remaining_seconds INTEGER DEFAULT NULL;`);
+  } catch (err) {}
+  try {
     db.exec(`UPDATE classes SET unlocked_sections = '["Section 1"]' WHERE unlocked_sections IS NULL;`);
   } catch (err) {}
   try {
