@@ -103,6 +103,66 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     }
   });
 
+  await t.test('3b. Autosave to locked section is blocked and preserves paused timer without unpausing', () => {
+    const sec2Q = attempt.questions.find(q => (q.section_name || '') === 'Section 2');
+    if (sec2Q) {
+      // Temporarily pause attempt to test that locked autosave does NOT unpause timer
+      db.run('UPDATE student_attempts SET is_paused = 1, paused_remaining_seconds = 1800 WHERE id = ?', [attempt.id]);
+
+      assert.throws(() => {
+        autosaveAnswer({
+          attemptId: attempt.id,
+          userId: student.id,
+          questionId: sec2Q.id,
+          savedAnswer: 'opt_1',
+          isFlagged: false
+        });
+      }, /is currently locked/i);
+
+      // Verify timer was NOT unpaused
+      const checkAttempt = db.get('SELECT class_id, is_paused, paused_remaining_seconds FROM student_attempts WHERE id = ?', [attempt.id]);
+      assert.equal(checkAttempt.is_paused, 1, 'timer must NOT be resumed when autosave fails on locked section');
+      assert.equal(checkAttempt.paused_remaining_seconds, 1800);
+
+      // Reset is_paused back to 0 for subsequent steps
+      db.run('UPDATE student_attempts SET is_paused = 0, paused_remaining_seconds = NULL WHERE id = ?', [attempt.id]);
+    }
+  });
+
+  await t.test('3c. Starting attempt without explicit classId auto-resolves class and locks future sections', () => {
+    const autoStudentId = 'auto-student-' + Date.now();
+    db.run("INSERT INTO users (id, email, username, first_name, surname, password_hash, role, account_status) VALUES (?, ?, ?, 'Auto', 'User', 'hash', 'student', 'active')", [
+      autoStudentId, `auto.${Date.now()}@eduqe.test`, `autouser_${Date.now()}`
+    ]);
+    db.run("INSERT INTO class_enrollments (id, class_id, user_id, status) VALUES (?, ?, ?, 'active')", [
+      'enroll-auto-' + Date.now(), testClass.id, autoStudentId
+    ]);
+
+    const autoClassAttempt = startAttempt({
+      userId: autoStudentId,
+      assessmentId: assessment.id,
+      classId: null, // Omit classId to test auto-resolution
+      forceNew: true
+    });
+
+    assert.equal(autoClassAttempt.class_id, testClass.id, 'class_id should be auto-resolved from enrollment');
+    assert.deepEqual(autoClassAttempt.unlocked_sections, ['Section 1']);
+
+    const sec2Q = autoClassAttempt.questions.find(q => (q.section_name || '') === 'Section 2');
+    if (sec2Q) {
+      assert.equal(sec2Q.is_locked, true, 'Section 2 must be locked in auto-resolved attempt');
+      assert.throws(() => {
+        autosaveAnswer({
+          attemptId: autoClassAttempt.id,
+          userId: autoStudentId,
+          questionId: sec2Q.id,
+          savedAnswer: 'opt_1',
+          isFlagged: false
+        });
+      }, /is currently locked/i);
+    }
+  });
+
   await t.test('4. Submitting Section 1 grades the section and seals answers for instructor discussion', () => {
     const result = submitSection({
       attemptId: attempt.id,

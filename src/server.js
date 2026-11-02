@@ -527,6 +527,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = attemptMatch[1];
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, state);
@@ -540,6 +541,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
         const body = await parseBody(req);
         try {
           const result = attemptService.autosaveAnswer({
@@ -604,6 +606,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
         const body = await parseBody(req);
         try {
           const result = attemptService.submitSection({
@@ -624,6 +627,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = resumeTimerMatch[1];
+        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes']);
         const body = await parseBody(req);
         try {
           const result = attemptService.resumeAttemptTimer({

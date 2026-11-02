@@ -280,7 +280,57 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
     throw new Error('Cannot edit an assessment attempt that is not in progress.');
   }
 
-  // If attempt was paused and student is now answering, auto-resume timer
+  // Resolve targetClassId if missing
+  let targetClassId = attempt.class_id;
+  if (!targetClassId) {
+    const enroll = db.get(
+      `SELECT ce.class_id FROM class_enrollments ce
+       JOIN classes cl ON cl.id = ce.class_id
+       JOIN assessments a ON a.course_id = cl.course_id
+       WHERE ce.user_id = ? AND a.id = ? AND ce.status = 'active'
+       ORDER BY ce.enrolled_at DESC LIMIT 1`,
+      [userId, attempt.assessment_id]
+    );
+    if (enroll) {
+      targetClassId = enroll.class_id;
+      db.run('UPDATE student_attempts SET class_id = ? WHERE id = ?', [targetClassId, attemptId]);
+      attempt.class_id = targetClassId;
+    }
+  }
+
+  // Check section lock and completion status FIRST before doing anything else
+  const answerRow = db.get(
+    `SELECT aa.section_name,
+            (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = sa.assessment_id AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
+     FROM attempt_answers aa
+     JOIN student_attempts sa ON sa.id = aa.attempt_id
+     WHERE aa.attempt_id = ? AND aa.question_id = ?`,
+    [attemptId, questionId]
+  );
+  if (!answerRow) {
+    throw new Error('Question not found in this attempt.');
+  }
+
+  const assRow = db.get('SELECT sections FROM assessments WHERE id = ?', [attempt.assessment_id]);
+  const configuredSections = parseStoredSections(assRow?.sections);
+
+  let secName = (answerRow.aq_section_name || answerRow.section_name || '').trim();
+  if (!secName || (secName === 'General' && !configuredSections.includes('General'))) {
+    secName = configuredSections[0] || 'Section 1';
+  }
+
+  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
+  if (completedSections.includes(secName)) {
+    throw new Error(`Section '${secName}' has already been submitted and cannot be modified.`);
+  }
+
+  const { getUnlockedSectionsForClass } = require('./classService');
+  const unlockedSections = getUnlockedSectionsForClass(targetClassId);
+  if (!unlockedSections.includes(secName)) {
+    throw new Error(`Section '${secName}' is currently locked. Please wait for your instructor to unlock it.`);
+  }
+
+  // If attempt was paused and student is now answering an unlocked section, auto-resume timer
   let isAttemptPaused = Boolean(attempt.is_paused);
   if (!isAttemptPaused) {
     const timerSetting = db.get("SELECT value FROM eduque_settings WHERE key = ?", [`attempt_timer_${attemptId}`]);
@@ -308,21 +358,6 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   if (now > deadline) {
     submitAttempt({ attemptId, userId, isAuto: true });
     throw new Error('Assessment timer has expired. Your attempt has been automatically submitted.');
-  }
-
-  // Check section lock and completion status
-  const answerRow = db.get('SELECT section_name FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, questionId]);
-  const secName = (answerRow?.section_name || 'Section 1').trim();
-
-  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
-  if (completedSections.includes(secName)) {
-    throw new Error(`Section '${secName}' has already been submitted and cannot be modified.`);
-  }
-
-  const { getUnlockedSectionsForClass } = require('./classService');
-  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
-  if (!unlockedSections.includes(secName)) {
-    throw new Error(`Section '${secName}' is currently locked. Please wait for your instructor to unlock it.`);
   }
 
   const answerJson = savedAnswer !== undefined && savedAnswer !== null ? JSON.stringify(savedAnswer) : null;
@@ -498,9 +533,27 @@ function submitSection({ attemptId, userId, sectionName }) {
   const secName = (sectionName || '').trim();
   if (!secName) throw new Error('Section name is required.');
 
+  // Resolve targetClassId if missing
+  let targetClassId = attempt.class_id;
+  if (!targetClassId) {
+    const enroll = db.get(
+      `SELECT ce.class_id FROM class_enrollments ce
+       JOIN classes cl ON cl.id = ce.class_id
+       JOIN assessments a ON a.course_id = cl.course_id
+       WHERE ce.user_id = ? AND a.id = ? AND ce.status = 'active'
+       ORDER BY ce.enrolled_at DESC LIMIT 1`,
+      [userId, attempt.assessment_id]
+    );
+    if (enroll) {
+      targetClassId = enroll.class_id;
+      db.run('UPDATE student_attempts SET class_id = ? WHERE id = ?', [targetClassId, attemptId]);
+      attempt.class_id = targetClassId;
+    }
+  }
+
   // Check if section is unlocked for this class
   const { getUnlockedSectionsForClass } = require('./classService');
-  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
+  const unlockedSections = getUnlockedSectionsForClass(targetClassId);
   if (!unlockedSections.includes(secName)) {
     throw new Error(`Section '${secName}' is currently locked by the instructor.`);
   }
@@ -773,8 +826,26 @@ function getAttemptState(attemptId, userId) {
   const showResults = !isInProgress && attempt.result_visibility !== 'hidden';
   const showExplanations = !isInProgress && (attempt.explanation_visibility === 'immediate' || attempt.explanation_visibility === 'after_submission');
 
+  // Resolve classId if missing on attempt
+  let classId = attempt.class_id;
+  if (!classId) {
+    const enroll = db.get(
+      `SELECT ce.class_id FROM class_enrollments ce
+       JOIN classes cl ON cl.id = ce.class_id
+       JOIN assessments a ON a.course_id = cl.course_id
+       WHERE ce.user_id = ? AND a.id = ? AND ce.status = 'active'
+       ORDER BY ce.enrolled_at DESC LIMIT 1`,
+      [attempt.user_id, attempt.assessment_id]
+    );
+    if (enroll) {
+      classId = enroll.class_id;
+      db.run('UPDATE student_attempts SET class_id = ? WHERE id = ?', [classId, attemptId]);
+      attempt.class_id = classId;
+    }
+  }
+
   const { getUnlockedSectionsForClass } = require('./classService');
-  const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
+  const unlockedSections = getUnlockedSectionsForClass(classId);
   const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
 
   const questions = rawAnswers.map(row => {
@@ -882,6 +953,7 @@ function getAttemptState(attemptId, userId) {
     assessment_description: attempt.assessment_description,
     instructions: attempt.instructions,
     course_name: attempt.course_name,
+    class_id: classId,
     class_name: attempt.class_name,
     attempt_number: attempt.attempt_number,
     started_at: attempt.started_at,

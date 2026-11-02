@@ -118,6 +118,48 @@ function initDatabase(dbPath) {
     // Table already exists
   }
 
+  // Idempotent migration to ensure AZ-900 / AZ-104 questions are evenly distributed across sections (14, 14, 13)
+  try {
+    const s1Row = db.prepare(`SELECT COUNT(*) as count FROM assessment_questions WHERE assessment_id = '49f35cbd-3b72-4e1c-849c-c898f08f41e9' AND section_name = 'Section 1'`).get();
+    const s2Row = db.prepare(`SELECT COUNT(*) as count FROM assessment_questions WHERE assessment_id = '49f35cbd-3b72-4e1c-849c-c898f08f41e9' AND section_name = 'Section 2'`).get();
+    const s1Count = s1Row ? s1Row.count : 0;
+    const s2Count = s2Row ? s2Row.count : 0;
+    if (s1Count >= 25 && s2Count <= 5) {
+      const allQuestions = db.prepare(`SELECT id, question_id FROM assessment_questions WHERE assessment_id = '49f35cbd-3b72-4e1c-849c-c898f08f41e9' ORDER BY order_index ASC, id ASC`).all();
+      const updateAqStmt = db.prepare(`UPDATE assessment_questions SET section_name = ?, order_index = ? WHERE id = ?`);
+      const updateAaStmt = db.prepare(`UPDATE attempt_answers SET section_name = ?, order_index = ? WHERE question_id = ? AND attempt_id IN (SELECT id FROM student_attempts WHERE assessment_id = '49f35cbd-3b72-4e1c-849c-c898f08f41e9')`);
+      allQuestions.forEach((q, idx) => {
+        let sec = 'Section 1';
+        if (idx >= 28) sec = 'Section 3';
+        else if (idx >= 14) sec = 'Section 2';
+        updateAqStmt.run(sec, idx, q.id);
+        try {
+          updateAaStmt.run(sec, idx, q.question_id);
+        } catch (_) {}
+      });
+    }
+  } catch (err) {}
+
+  try {
+    db.exec(`
+      UPDATE attempt_answers
+      SET section_name = (
+        SELECT aq.section_name
+        FROM assessment_questions aq
+        JOIN student_attempts sa ON sa.id = attempt_answers.attempt_id
+        WHERE aq.assessment_id = sa.assessment_id AND aq.question_id = attempt_answers.question_id
+        LIMIT 1
+      )
+      WHERE EXISTS (
+        SELECT 1
+        FROM assessment_questions aq
+        JOIN student_attempts sa ON sa.id = attempt_answers.attempt_id
+        WHERE aq.assessment_id = sa.assessment_id AND aq.question_id = attempt_answers.question_id
+          AND aq.section_name != attempt_answers.section_name
+      );
+    `);
+  } catch (err) {}
+
   const wrapper = {
     raw: db,
     dbPath,

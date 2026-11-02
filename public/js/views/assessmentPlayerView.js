@@ -537,17 +537,17 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     });
   }
 
-  function attemptTransitionToQuestion(targetIdx, fromSecName, toSecName) {
+  async function attemptTransitionToQuestion(targetIdx, fromSecName, toSecName) {
     const sections = getDistinctSections();
     const fromSec = sections.find(s => s.name === fromSecName);
     const toSec = sections.find(s => s.name === toSecName);
 
     // If target section is locked by instructor
-    if (toSec && !toSec.is_unlocked) {
+    if (toSec && !toSec.is_unlocked && !toSec.is_submitted) {
       if (fromSec && !fromSec.is_submitted) {
         openSectionSubmitModal(fromSec.name);
       } else {
-        handleGoToNextSection(toSec.name);
+        await handleGoToNextSection(toSec.name);
       }
       return;
     }
@@ -787,11 +787,16 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     `;
 
     stepperEl.querySelectorAll('.btn-step-section').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const targetIdx = parseInt(btn.dataset.targetIdx, 10);
         const targetSecName = btn.dataset.secName;
+        const targetSecObj = sections.find(s => s.name === targetSecName);
+        if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
+          openSectionLockedModal(targetSecName);
+          return;
+        }
         if (targetSecName !== activeSecName) {
-          attemptTransitionToQuestion(targetIdx, activeSecName, targetSecName);
+          await attemptTransitionToQuestion(targetIdx, activeSecName, targetSecName);
         } else {
           activeQuestionIndex = targetIdx;
           renderQuestion(activeQuestionIndex);
@@ -842,11 +847,16 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     `).join('');
 
     palette.querySelectorAll('.palette-btn').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const targetIdx = parseInt(btn.dataset.idx, 10);
         const targetSec = btn.dataset.sec;
+        const targetSecObj = sections.find(s => s.name === targetSec);
+        if (targetSecObj && !targetSecObj.is_unlocked && !targetSecObj.is_submitted) {
+          openSectionLockedModal(targetSec);
+          return;
+        }
         if (targetSec !== activeSecName) {
-          attemptTransitionToQuestion(targetIdx, activeSecName, targetSec);
+          await attemptTransitionToQuestion(targetIdx, activeSecName, targetSec);
         } else {
           activeQuestionIndex = targetIdx;
           renderQuestion(activeQuestionIndex);
@@ -869,10 +879,57 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
     const isSecSubmitted = Boolean(currSec.is_submitted);
     const isSecUnlocked = Boolean(currSec.is_unlocked);
+    const isQuestionLocked = (!isSecUnlocked && !isSecSubmitted) || Boolean(q.is_locked);
 
-    // If section is locked and unsubmitted, show waiting card
-    if (!isSecUnlocked && !isSecSubmitted) {
-      renderSectionWaitingCard('Previous Section', q.section_name);
+    // If section or question is locked, show locked placeholder and prevent answering
+    if (isQuestionLocked) {
+      prevBtn.disabled = idx === 0 || !currentAttempt.allow_back_navigation;
+      nextBtn.disabled = true;
+      nextBtn.textContent = '🔒 Section Locked by Instructor';
+
+      area.innerHTML = `
+        <div class="card" style="text-align:center; padding:3rem 1.5rem; border:2px dashed var(--warning); background:var(--surface-subtle); margin:1.5rem 0; border-radius:var(--radius-lg);">
+          <div style="font-size:3rem; margin-bottom:0.75rem;">🔒</div>
+          <h3 style="font-family:var(--font-heading); font-weight:800; font-size:1.35rem; margin-bottom:0.5rem; color:var(--text-main);">
+            ${escapeHtml(currSec.name)} is Locked
+          </h3>
+          <p style="color:var(--text-muted); max-width:520px; margin:0 auto 1.5rem auto; font-size:0.95rem; line-height:1.5;">
+            This section is currently locked by your instructor. Please wait for the group review discussion to finish before proceeding.
+          </p>
+          <div style="display:flex; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary" id="btn-return-unlocked-q">
+              ← Return to Previous Section
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-poll-unlock-q">
+              Check Unlock Status
+            </button>
+          </div>
+        </div>
+      `;
+
+      const returnBtn = area.querySelector('#btn-return-unlocked-q');
+      if (returnBtn) {
+        returnBtn.onclick = () => {
+          const prevSec = sections.slice(0, currSec.section_index).reverse().find(s => s.is_submitted || s.is_unlocked);
+          if (prevSec && prevSec.indices.length > 0) {
+            activeQuestionIndex = prevSec.indices[0];
+            renderQuestion(activeQuestionIndex);
+            renderPalette();
+          } else {
+            activeQuestionIndex = 0;
+            renderQuestion(0);
+            renderPalette();
+          }
+        };
+      }
+
+      const pollBtn = area.querySelector('#btn-poll-unlock-q');
+      if (pollBtn) {
+        pollBtn.onclick = () => {
+          handleGoToNextSection(currSec.name);
+        };
+      }
+
       return;
     }
 
@@ -969,7 +1026,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
       <!-- Interactive Answer Area -->
       <div id="interactive-answer-area">
-        ${renderInteractiveInput(q, isSecSubmitted)}
+        ${renderInteractiveInput(q, isSecSubmitted, isQuestionLocked)}
       </div>
 
       <!-- Revealed Explanation & Correct Answer in Review Mode -->
@@ -1005,10 +1062,11 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       headerViewResults.onclick = () => renderResultsScreen();
     }
 
-    attachInputHandlers(q, isSecSubmitted);
+    attachInputHandlers(q, isSecSubmitted, isQuestionLocked);
   }
 
-  function renderInteractiveInput(q, isSecSubmitted = false) {
+  function renderInteractiveInput(q, isSecSubmitted = false, isQuestionLocked = false) {
+    const isLocked = Boolean(isSecSubmitted) || Boolean(isQuestionLocked) || Boolean(q.is_locked);
     const type = q.question_type;
     const saved = q.saved_answer;
 
@@ -1037,8 +1095,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
               cardClass = 'selected';
             }
             return `
-              <label class="option-card ${cardClass}">
-                <input type="radio" name="active_radio" value="${opt}" ${isUserChoice ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
+              <label class="option-card ${cardClass}" ${isLocked ? 'style="pointer-events:none;"' : ''}>
+                <input type="radio" name="active_radio" value="${opt}" ${isUserChoice ? 'checked' : ''} ${isLocked ? 'disabled style="pointer-events:none;"' : ''}>
                 <span style="font-size:1rem; font-weight:600;">${opt}</span>
                 ${badgeHtml}
               </label>
@@ -1072,8 +1130,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
               cardClass = 'selected';
             }
             return `
-              <label class="option-card ${cardClass}">
-                <input type="radio" name="active_radio" value="${escapeHtml(opt.id)}" ${isUserChoice ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
+              <label class="option-card ${cardClass}" ${isLocked ? 'style="pointer-events:none;"' : ''}>
+                <input type="radio" name="active_radio" value="${escapeHtml(opt.id)}" ${isUserChoice ? 'checked' : ''} ${isLocked ? 'disabled style="pointer-events:none;"' : ''}>
                 <span>${escapeHtml(opt.text)}</span>
                 ${badgeHtml}
               </label>
@@ -1121,8 +1179,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
               cardClass = 'selected';
             }
             return `
-              <label class="option-card ${cardClass}">
-                <input type="checkbox" class="cb-multi" value="${escapeHtml(opt.id)}" ${isUserChoice ? 'checked' : ''} ${isSecSubmitted ? 'disabled' : ''}>
+              <label class="option-card ${cardClass}" ${isLocked ? 'style="pointer-events:none;"' : ''}>
+                <input type="checkbox" class="cb-multi" value="${escapeHtml(opt.id)}" ${isUserChoice ? 'checked' : ''} ${isLocked ? 'disabled style="pointer-events:none;"' : ''}>
                 <span>${escapeHtml(opt.text)}</span>
                 ${badgeHtml}
               </label>
@@ -1175,7 +1233,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
               <div class="ms-drag-column-title">${escapeHtml(sourceTitle)}</div>
               <div id="ms-drag-sources-container">
                 ${sources.map(s => `
-                  <div class="ms-drag-card" draggable="true" data-source-id="${escapeHtml(s.id)}" data-source-text="${escapeHtml(s.text)}" tabindex="0" role="button" aria-label="Draggable option: ${escapeHtml(s.text)}" title="Drag or click to select">
+                  <div class="ms-drag-card" ${isLocked ? 'draggable="false" style="cursor:not-allowed; opacity:0.6; pointer-events:none;"' : 'draggable="true"'} data-source-id="${escapeHtml(s.id)}" data-source-text="${escapeHtml(s.text)}" tabindex="0" role="button" aria-label="Draggable option: ${escapeHtml(s.text)}" title="${isLocked ? 'Locked' : 'Drag or click to select'}">
                     <span>${escapeHtml(s.text)}</span>
                     <span style="color:#00a4ef; font-size:0.85rem; opacity:0.8;">&#x283f;</span>
                   </div>
@@ -1198,11 +1256,11 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
                   return `
                     <div class="ms-drag-target-row" data-target-id="${escapeHtml(t.id)}">
-                      <div class="ms-drag-dropzone ${isFilled ? 'filled' : 'empty'}" data-target-id="${escapeHtml(t.id)}" tabindex="0" role="region" aria-label="Drop slot for ${escapeHtml(t.text)}" title="${isFilled ? 'Filled: ' + escapeHtml(filledText) : 'Drop here'}">
+                      <div class="ms-drag-dropzone ${isFilled ? 'filled' : 'empty'}" data-target-id="${escapeHtml(t.id)}" tabindex="0" role="region" aria-label="Drop slot for ${escapeHtml(t.text)}" title="${isFilled ? 'Filled: ' + escapeHtml(filledText) : 'Drop here'}" ${isLocked ? 'style="pointer-events:none;"' : ''}>
                         ${isFilled ? `
                           <div class="dz-filled-content">
                             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;">${escapeHtml(filledText)}</span>
-                            <button type="button" class="btn-clear-dz" data-target-id="${escapeHtml(t.id)}" title="Clear slot">&times;</button>
+                            ${isLocked ? '' : `<button type="button" class="btn-clear-dz" data-target-id="${escapeHtml(t.id)}" title="Clear slot">&times;</button>`}
                           </div>
                         ` : `
                           <span class="dz-placeholder">Drop here</span>
@@ -1235,8 +1293,8 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
                 <span>${escapeHtml(itemsMap[id] || id)}</span>
               </div>
               <div class="accessible-action-btns">
-                <button type="button" class="btn btn-secondary btn-sm btn-order-up" data-pos="${pos}" ${pos === 0 ? 'disabled' : ''}>&uarr;</button>
-                <button type="button" class="btn btn-secondary btn-sm btn-order-down" data-pos="${pos}" ${pos === studentSeq.length - 1 ? 'disabled' : ''}>&darr;</button>
+                <button type="button" class="btn btn-secondary btn-sm btn-order-up" data-pos="${pos}" ${pos === 0 || isLocked ? 'disabled style="pointer-events:none;"' : ''}>&uarr;</button>
+                <button type="button" class="btn btn-secondary btn-sm btn-order-down" data-pos="${pos}" ${pos === studentSeq.length - 1 || isLocked ? 'disabled style="pointer-events:none;"' : ''}>&darr;</button>
               </div>
             </div>
           `).join('')}
@@ -1248,7 +1306,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       return `
         <div class="form-group" style="max-width:420px; margin-top:1rem;">
           <label class="form-label">Your Answer:</label>
-          <input type="text" id="input-fill-blank" class="form-control" value="${escapeHtml(saved || '')}" placeholder="Type your answer here..." autocomplete="off">
+          <input type="text" id="input-fill-blank" class="form-control" value="${escapeHtml(saved || '')}" placeholder="Type your answer here..." autocomplete="off" ${isLocked ? 'disabled readonly style="pointer-events:none; opacity:0.65;"' : ''}>
         </div>
       `;
     }
@@ -1258,7 +1316,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <p class="form-hint" style="margin-bottom:0.75rem;">Select the correct component / region:</p>
         <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
           ${(q.answer_options || []).map(r => `
-            <button type="button" class="btn ${saved === r.id ? 'btn-primary' : 'btn-secondary'} btn-hot-region" data-id="${r.id}" style="padding:0.75rem 1.25rem;">
+            <button type="button" class="btn ${saved === r.id ? 'btn-primary' : 'btn-secondary'} btn-hot-region" data-id="${r.id}" style="padding:0.75rem 1.25rem; ${isLocked ? 'pointer-events:none; opacity:0.65;' : ''}" ${isLocked ? 'disabled' : ''}>
               ${escapeHtml(r.label)}
             </button>
           `).join('')}
@@ -1293,14 +1351,14 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
                   return `
                     <tr style="border-bottom:1px solid var(--border);">
                       <td style="padding:1rem 1.25rem; font-size:0.95rem; line-height:1.5;">${escapeHtml(sText)}</td>
-                      <td style="text-align:center; vertical-align:middle; cursor:pointer;" onclick="this.querySelector('input').click()">
-                        <label style="display:inline-flex; align-items:center; justify-content:center; width:100%; height:100%; margin:0; cursor:pointer;" title="Yes">
-                          <input type="radio" class="hotspot-radio" name="hotspot_${escapeHtml(sId)}" data-stmt="${escapeHtml(sId)}" value="Yes" ${currentVal === 'Yes' ? 'checked' : ''} style="width:1.25rem; height:1.25rem; accent-color:var(--brand-magenta); cursor:pointer;">
+                      <td style="text-align:center; vertical-align:middle; ${isLocked ? 'pointer-events:none;' : 'cursor:pointer;'}" ${isLocked ? '' : `onclick="this.querySelector('input').click()"`}>
+                        <label style="display:inline-flex; align-items:center; justify-content:center; width:100%; height:100%; margin:0; ${isLocked ? 'pointer-events:none;' : 'cursor:pointer;'}" title="Yes">
+                          <input type="radio" class="hotspot-radio" name="hotspot_${escapeHtml(sId)}" data-stmt="${escapeHtml(sId)}" value="Yes" ${currentVal === 'Yes' ? 'checked' : ''} ${isLocked ? 'disabled style="pointer-events:none;"' : ''} style="width:1.25rem; height:1.25rem; accent-color:var(--brand-magenta); cursor:pointer;">
                         </label>
                       </td>
-                      <td style="text-align:center; vertical-align:middle; cursor:pointer;" onclick="this.querySelector('input').click()">
-                        <label style="display:inline-flex; align-items:center; justify-content:center; width:100%; height:100%; margin:0; cursor:pointer;" title="No">
-                          <input type="radio" class="hotspot-radio" name="hotspot_${escapeHtml(sId)}" data-stmt="${escapeHtml(sId)}" value="No" ${currentVal === 'No' ? 'checked' : ''} style="width:1.25rem; height:1.25rem; accent-color:var(--brand-magenta); cursor:pointer;">
+                      <td style="text-align:center; vertical-align:middle; ${isLocked ? 'pointer-events:none;' : 'cursor:pointer;'}" ${isLocked ? '' : `onclick="this.querySelector('input').click()"`}>
+                        <label style="display:inline-flex; align-items:center; justify-content:center; width:100%; height:100%; margin:0; ${isLocked ? 'pointer-events:none;' : 'cursor:pointer;'}" title="No">
+                          <input type="radio" class="hotspot-radio" name="hotspot_${escapeHtml(sId)}" data-stmt="${escapeHtml(sId)}" value="No" ${currentVal === 'No' ? 'checked' : ''} ${isLocked ? 'disabled style="pointer-events:none;"' : ''} style="width:1.25rem; height:1.25rem; accent-color:var(--brand-magenta); cursor:pointer;">
                         </label>
                       </td>
                     </tr>
@@ -1315,13 +1373,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
     return `
       <div class="form-group">
-        <textarea id="generic-input" class="form-control" placeholder="Enter answer...">${escapeHtml(saved ? JSON.stringify(saved) : '')}</textarea>
+        <textarea id="generic-input" class="form-control" placeholder="Enter answer..." ${isLocked ? 'disabled readonly style="pointer-events:none; opacity:0.65;"' : ''}>${escapeHtml(saved ? JSON.stringify(saved) : '')}</textarea>
       </div>
     `;
   }
 
-  function attachInputHandlers(q, isSecSubmitted = false) {
-    if (isSecSubmitted) return;
+  function attachInputHandlers(q, isSecSubmitted = false, isQuestionLocked = false) {
+    if (isSecSubmitted || isQuestionLocked || Boolean(q.is_locked)) return;
     const area = viewContainer.querySelector('#interactive-answer-area');
 
     // Single choice / Yes-No / True-False
@@ -1516,6 +1574,16 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   }
 
   function triggerAutosave(questionId, savedAnswer, isFlagged) {
+    const q = currentAttempt.questions.find(item => item.id === questionId);
+    if (!q) return;
+    const secName = q.section_name || 'Section 1';
+    const unlockedList = currentAttempt.unlocked_sections || ['Section 1'];
+    const completedList = currentAttempt.completed_sections || [];
+    if (!unlockedList.includes(secName) || completedList.includes(secName) || q.is_locked) {
+      console.warn(`[Autosave Blocked] Question ${questionId} is in locked/completed section '${secName}'.`);
+      return;
+    }
+
     const badge = viewContainer.querySelector('#autosave-badge');
     if (badge) {
       badge.innerHTML = '<span style="color:var(--text-muted)">Saving...</span>';
