@@ -777,6 +777,8 @@ function attachAuthHandlers(isLogin) {
 
         if (res.redeemedCourse) {
           showToast(`Welcome to Eduqe, ${res.user.first_name}! You are enrolled in ${res.redeemedCourse.course?.name || 'your course'}.`, 'success');
+        } else if (res.redemptionError) {
+          showToast(`Welcome ${res.user.first_name}! Account created, but code could not be redeemed: ${res.redemptionError}`, 'warning');
         } else {
           showToast(`Welcome to Eduqe, ${res.user.first_name}! Your student account is ready.`, 'success');
         }

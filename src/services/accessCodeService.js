@@ -307,21 +307,6 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
     throw new Error('This course is not currently published.');
   }
 
-  // Step 8 & 9: Check course access period if defined
-  const now = Date.now();
-  if (course.start_date) {
-    const startDate = new Date(course.start_date).getTime();
-    if (now < startDate) {
-      throw new Error('Course access period has not started yet.');
-    }
-  }
-  if (course.end_date) {
-    const endDate = new Date(course.end_date).getTime();
-    if (now > endDate) {
-      throw new Error('Course access period has expired.');
-    }
-  }
-
   // Resolve target class: codeRecord.class_id -> targetClassId -> default/first class under course
   let assignedClass = null;
   if (codeRecord.class_id) {
@@ -345,6 +330,40 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
       [defaultClassId, course.id, `${course.name} - General Enrolment`, 'Default class for enrolled students']
     );
     assignedClass = db.get('SELECT * FROM classes WHERE id = ?', [defaultClassId]);
+  }
+
+  // Step 8 & 9: Check access period
+  const now = Date.now();
+  const hasRollingDuration = Boolean(assignedClass && assignedClass.access_duration_days && assignedClass.access_duration_days > 0);
+  const codeHasOwnExpiry = Boolean(codeRecord.expires_at);
+
+  // If the class has a rolling duration (e.g. 10 days from enrollment) or the code has its own explicit expiry,
+  // that explicit grant takes precedence over legacy course template end dates.
+  if (!hasRollingDuration && !codeHasOwnExpiry) {
+    if (assignedClass && assignedClass.end_date) {
+      const classEndDate = new Date(assignedClass.end_date).getTime();
+      if (now > classEndDate) {
+        throw new Error('This class / cohort access period has ended.');
+      }
+    } else if (course.end_date) {
+      const courseEndDate = new Date(course.end_date).getTime();
+      if (now > courseEndDate) {
+        throw new Error('Course access period has expired.');
+      }
+    }
+  }
+
+  // Check start date if defined
+  if (assignedClass && assignedClass.start_date) {
+    const classStartDate = new Date(assignedClass.start_date).getTime();
+    if (now < classStartDate) {
+      throw new Error('Class access period has not started yet.');
+    }
+  } else if (course.start_date && !hasRollingDuration && !codeHasOwnExpiry) {
+    const courseStartDate = new Date(course.start_date).getTime();
+    if (now < courseStartDate) {
+      throw new Error('Course access period has not started yet.');
+    }
   }
 
   // Check if student is already enrolled in this class

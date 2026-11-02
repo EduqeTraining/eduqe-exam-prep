@@ -410,6 +410,7 @@ function registerStudent({
   );
 
   let redeemedCourse = null;
+  let redemptionError = null;
   if (trimmedCourseCode) {
     const accessCodeService = require('./accessCodeService');
     try {
@@ -419,6 +420,7 @@ function registerStudent({
       });
     } catch (redeemErr) {
       console.warn('Course redemption warning during student self-registration:', redeemErr.message);
+      redemptionError = redeemErr.message;
     }
   }
 
@@ -479,7 +481,8 @@ function registerStudent({
       account_status: 'active',
       must_change_password: false
     },
-    redeemedCourse
+    redeemedCourse,
+    redemptionError
   };
 }
 

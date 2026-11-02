@@ -100,7 +100,12 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     throw new Error('Assessment availability window has not opened yet.');
   }
   if (assessment.available_to && now > parseUtcDate(assessment.available_to).getTime()) {
-    throw new Error('Assessment availability window has closed.');
+    // If the student has an active class enrollment whose access period extends beyond the assessment window,
+    // permit the enrolled student to take their assigned assessment.
+    const hasActiveClassAccess = Boolean(enrollment && enrollment.access_expires_at && parseUtcDate(enrollment.access_expires_at).getTime() > now);
+    if (!hasActiveClassAccess) {
+      throw new Error('Assessment availability window has closed.');
+    }
   }
 
   // Check active in-progress attempt for recovery or restart

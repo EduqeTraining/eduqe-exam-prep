@@ -184,4 +184,44 @@ describe('Course & Access Code Lifecycle Tests', () => {
       /This course is not currently published/
     );
   });
+
+  test('Active class with rolling duration or active code can be redeemed even if parent course has older end_date', () => {
+    const classService = require('../src/services/classService');
+    const pastDate = new Date(Date.now() - 3600000).toISOString(); // 1 hour ago
+
+    // Create course with a past end_date
+    const course = courseService.createCourse({
+      name: 'Ongoing Tech Course',
+      code: 'TECH999',
+      status: 'published',
+      end_date: pastDate
+    });
+
+    // Create an active cohort under this course with 10 days access duration
+    const newClass = classService.createClass({
+      courseId: course.id,
+      name: 'November Cohort',
+      access_duration_days: 10,
+      access_code: 'TECH-NOV-10D'
+    });
+
+    const { student } = studentService.createStudent({
+      first_name: 'Tracy',
+      surname: 'Govender',
+      email: 'tracy.test@example.com'
+    });
+
+    // Redeeming code for this active cohort succeeds and grants 10 days rolling access
+    const res = accessCodeService.redeemCourseCode({
+      userId: student.id,
+      rawCode: 'TECH-NOV-10D'
+    });
+
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.course.code, 'TECH999');
+    assert.strictEqual(res.class.id, newClass.id);
+    assert.ok(res.enrollment.access_expires_at, 'Enrollment should have access_expires_at set');
+    const expiresMs = new Date(res.enrollment.access_expires_at).getTime();
+    assert.ok(expiresMs > Date.now(), 'Access should expire in the future');
+  });
 });
