@@ -100,7 +100,7 @@ async function pullTable(table) {
 
       try {
         db.transaction(() => {
-          // Upsert latest rows from Supabase into local cache without deleting local un-synced rows
+          // Upsert latest rows from Supabase into local cache without deleting local un-synced rows or columns
           for (const row of rows) {
             const vals = matchingCols.map(c => {
               const val = row[c];
@@ -109,6 +109,23 @@ async function pullTable(table) {
               }
               return val;
             });
+
+            if (hasId && row.id) {
+              const existing = db.get(`SELECT id FROM "${table}" WHERE id = ?`, [row.id]);
+              if (existing) {
+                const updateCols = matchingCols.filter(c => c !== 'id');
+                if (updateCols.length > 0) {
+                  const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
+                  const updateVals = updateCols.map(c => {
+                    const val = row[c];
+                    return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
+                  });
+                  db.run(`UPDATE "${table}" SET ${setClause} WHERE id = ?`, [...updateVals, row.id]);
+                }
+                continue;
+              }
+            }
+
             db.run(
               `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
               vals
@@ -191,6 +208,24 @@ async function upsertRecord(tableName, record, conflictColumns = null) {
         body: record
       });
     } catch (firstErr) {
+      // If error is about a missing column in Supabase schema cache (e.g. unlocked_sections or completed_sections):
+      if (firstErr && firstErr.message && /column.*does not exist|Could not find the.*column/i.test(firstErr.message)) {
+        const colMatch = firstErr.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || firstErr.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
+        const colToOmit = colMatch ? colMatch[1] : null;
+        if (colToOmit && record[colToOmit] !== undefined) {
+          const stripped = { ...record };
+          delete stripped[colToOmit];
+          try {
+            res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
+              method: 'POST',
+              headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
+              body: stripped
+            });
+            invalidateTableCache(tableName);
+            return res;
+          } catch (retryErr) {}
+        }
+      }
       if (conflictParam !== 'id') {
         res = await supabaseRequest(`${tableName}?on_conflict=id`, {
           method: 'POST',
@@ -500,6 +535,16 @@ async function syncAttemptToSupabase(attemptId) {
   }
 }
 
+async function syncSettingToSupabase(keyOrRecord) {
+  if (!keyOrRecord) return;
+  const db = getDatabase();
+  const setting = typeof keyOrRecord === 'string'
+    ? db.get('SELECT * FROM eduque_settings WHERE key = ?', [keyOrRecord])
+    : keyOrRecord;
+  if (!setting) return;
+  return await upsertRecord('eduque_settings', setting, 'key');
+}
+
 async function syncAttemptAnswersToSupabase(attemptId) {
   if (!attemptId) return;
   const db = getDatabase();
@@ -676,6 +721,7 @@ module.exports = {
   deletePoolFromSupabase,
   syncAttemptToSupabase,
   syncAttemptAnswersToSupabase,
+  syncSettingToSupabase,
   syncOnStartup,
   pushAllToSupabase,
   pullFromSupabase,

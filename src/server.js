@@ -391,7 +391,8 @@ async function handleRequest(req, res) {
           'questions',
           'assessment_questions',
           'student_attempts',
-          'attempt_answers'
+          'attempt_answers',
+          'eduque_settings'
         ]);
 
         // Enforce rule: Purge questions and previous results for any expired certifications
@@ -623,6 +624,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
+        await supabaseService.ensureTablesFresh(['eduque_settings']);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, {

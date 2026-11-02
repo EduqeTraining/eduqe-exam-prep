@@ -618,14 +618,28 @@ function deleteClass(classId, adminUserId = null, adminUsername = 'admin') {
 
 function getUnlockedSectionsForClass(classId) {
   const db = getDatabase();
-  const cls = db.get('SELECT unlocked_sections FROM classes WHERE id = ?', [classId]);
-  if (!cls || !cls.unlocked_sections) return ['Section 1'];
+  if (!classId) return ['Section 1'];
+
+  // Check eduque_settings first (cloud persistent store)
   try {
-    const parsed = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : ['Section 1'];
-  } catch (e) {
-    return ['Section 1'];
-  }
+    const settingKey = `cohort_unlocked_sections_${classId}`;
+    const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [settingKey]);
+    if (setting && setting.value) {
+      const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
+      if (Array.isArray(parsed) && parsed.length > 0) return [...new Set(parsed)];
+    }
+  } catch (e) {}
+
+  // Fallback to classes.unlocked_sections
+  try {
+    const cls = db.get('SELECT unlocked_sections FROM classes WHERE id = ?', [classId]);
+    if (cls && cls.unlocked_sections) {
+      const parsed = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
+      if (Array.isArray(parsed) && parsed.length > 0) return [...new Set(parsed)];
+    }
+  } catch (e) {}
+
+  return ['Section 1'];
 }
 
 function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = null, adminUsername = 'instructor') {
@@ -639,7 +653,26 @@ function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = nu
   const uniqueSections = sectionsArray.length > 0 ? [...new Set(sectionsArray)] : ['Section 1'];
   const jsonStr = JSON.stringify(uniqueSections);
 
-  db.run("UPDATE classes SET unlocked_sections = ?, updated_at = datetime('now') WHERE id = ?", [jsonStr, classId]);
+  try {
+    db.run("UPDATE classes SET unlocked_sections = ?, updated_at = datetime('now') WHERE id = ?", [jsonStr, classId]);
+  } catch (e) {}
+
+  // Also persist to eduque_settings table for guaranteed persistence & Supabase sync
+  try {
+    const settingKey = `cohort_unlocked_sections_${classId}`;
+    const settingId = `setting-unlocked-${classId}`;
+    db.run(
+      `INSERT INTO eduque_settings (id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [settingId, settingKey, jsonStr]
+    );
+  } catch (e) {}
+
+  try {
+    const supabaseService = require('./supabaseService');
+    supabaseService.syncSettingToSupabase(`cohort_unlocked_sections_${classId}`).catch(() => {});
+  } catch (e) {}
 
   logAction({
     userId: adminUserId,

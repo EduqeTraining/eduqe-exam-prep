@@ -495,10 +495,13 @@ export function renderInstructorDashboard(container, router) {
         btn.disabled = true;
         btn.textContent = 'Unlocking...';
         try {
-          await api.setUnlockedSections(activeClassId, nextList);
+          const res = await api.setUnlockedSections(activeClassId, nextList);
+          if (currentData && currentData.selected_class) {
+            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
+          }
           await loadDashboardData();
         } catch (err) {
-          alert('Failed to unlock section: ' + err.message);
+          alert('Failed to unlock section: ' + (err.message || 'Error occurred'));
           btn.disabled = false;
           btn.textContent = `🔓 Unlock ${secToUnlock} for Cohort`;
         }
@@ -515,10 +518,13 @@ export function renderInstructorDashboard(container, router) {
         btn.disabled = true;
         btn.textContent = 'Locking...';
         try {
-          await api.setUnlockedSections(activeClassId, nextList);
+          const res = await api.setUnlockedSections(activeClassId, nextList);
+          if (currentData && currentData.selected_class) {
+            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
+          }
           await loadDashboardData();
         } catch (err) {
-          alert('Failed to lock section: ' + err.message);
+          alert('Failed to lock section: ' + (err.message || 'Error occurred'));
           btn.disabled = false;
         }
       };

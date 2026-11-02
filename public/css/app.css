@@ -1016,6 +1016,24 @@ textarea.form-control {
   box-shadow: 0 0 0 1px var(--brand-lime);
 }
 
+.option-card.review-correct {
+  border-color: var(--success) !important;
+  background-color: rgba(34, 197, 94, 0.12) !important;
+  box-shadow: 0 0 0 1.5px var(--success) !important;
+}
+
+.option-card.review-incorrect {
+  border-color: var(--danger) !important;
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  box-shadow: 0 0 0 1.5px var(--danger) !important;
+}
+
+.option-card.review-missed {
+  border-color: var(--success) !important;
+  border-style: dashed !important;
+  background-color: rgba(34, 197, 94, 0.06) !important;
+}
+
 .option-card input[type="radio"],
 .option-card input[type="checkbox"] {
   width: 1.2rem;
@@ -1334,6 +1352,32 @@ textarea.form-control {
 }
 [data-theme="dark"] .palette-btn.answered {
   color: var(--brand-lime);
+}
+
+.palette-btn.correct {
+  background: rgba(34, 197, 94, 0.16) !important;
+  border-color: var(--success) !important;
+  color: var(--success) !important;
+  font-weight: 800;
+}
+[data-theme="dark"] .palette-btn.correct {
+  background: rgba(34, 197, 94, 0.25) !important;
+  border-color: var(--brand-lime) !important;
+  color: var(--brand-lime) !important;
+}
+
+.palette-btn.danger,
+.palette-btn.incorrect {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+  font-weight: 800;
+}
+[data-theme="dark"] .palette-btn.danger,
+[data-theme="dark"] .palette-btn.incorrect {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: #ef4444 !important;
+  color: #f87171 !important;
 }
 
 .palette-btn.flagged::after {

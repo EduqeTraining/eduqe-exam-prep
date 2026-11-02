@@ -683,6 +683,15 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           } catch (e) {
             completedSectionsList = [];
           }
+          if (completedSectionsList.length === 0 && att && att.id) {
+            try {
+              const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`completed_sections_attempt_${att.id}`]);
+              if (setting && setting.value) {
+                const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
+                if (Array.isArray(parsed)) completedSectionsList = parsed;
+              }
+            } catch (e) {}
+          }
           const isSecSubmitted = completedSectionsList.includes(secName);
           const totalQs = secAnswers.length;
           const isSecCompleted = totalQs > 0 && (isGraded || isSecSubmitted || answeredCount === totalQs);

@@ -16,14 +16,26 @@ function parseUtcDate(str) {
   return new Date(s.replace(' ', 'T') + 'Z');
 }
 
-function parseCompletedSections(raw) {
-  if (!raw) return [];
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return Array.isArray(parsed) ? parsed.map(s => String(s).trim()).filter(Boolean) : [];
-  } catch (e) {
-    return [];
+function parseCompletedSections(raw, attemptId = null) {
+  let list = [];
+  if (raw) {
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) list = parsed.map(s => String(s).trim()).filter(Boolean);
+    } catch (e) {}
   }
+
+  if (attemptId && list.length === 0) {
+    try {
+      const db = getDatabase();
+      const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`completed_sections_attempt_${attemptId}`]);
+      if (setting && setting.value) {
+        const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
+        if (Array.isArray(parsed)) list = parsed.map(s => String(s).trim()).filter(Boolean);
+      }
+    } catch (e) {}
+  }
+  return [...new Set(list)];
 }
 
 function shuffleArray(arr) {
@@ -265,7 +277,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   const answerRow = db.get('SELECT section_name FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, questionId]);
   const secName = (answerRow?.section_name || 'Section 1').trim();
 
-  const completedSections = parseCompletedSections(attempt.completed_sections);
+  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
   if (completedSections.includes(secName)) {
     throw new Error(`Section '${secName}' has already been submitted and cannot be modified.`);
   }
@@ -513,7 +525,7 @@ function submitSection({ attemptId, userId, sectionName }) {
   const passMark = attempt.pass_mark_percentage || 70;
   const isSectionPassed = sectionPercentage >= passMark;
 
-  const completedSections = parseCompletedSections(attempt.completed_sections);
+  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
   if (!completedSections.includes(secName)) {
     completedSections.push(secName);
   }
@@ -590,6 +602,19 @@ function submitSection({ attemptId, userId, sectionName }) {
        WHERE id = ?`,
       [runningScore, runningMaxScore, runningPct, JSON.stringify(completedSections), attemptId]
     );
+
+    try {
+      const settingKey = `completed_sections_attempt_${attemptId}`;
+      const settingId = `setting-compsec-${attemptId}`;
+      db.run(
+        `INSERT INTO eduque_settings (id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        [settingId, settingKey, JSON.stringify(completedSections)]
+      );
+      const supabaseService = require('./supabaseService');
+      supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
+    } catch (e) {}
 
     logAction({
       userId,
@@ -679,7 +704,7 @@ function getAttemptState(attemptId, userId) {
 
   const { getUnlockedSectionsForClass } = require('./classService');
   const unlockedSections = getUnlockedSectionsForClass(attempt.class_id);
-  const completedSections = parseCompletedSections(attempt.completed_sections);
+  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
 
   const questions = rawAnswers.map(row => {
     let savedAnswer = null;
