@@ -438,42 +438,35 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     const classPlaceholders = targetClassIds.map(() => '?').join(',');
     students = db.all(
       `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
-              COALESCE(ce.enrolled_at, sa.started_at, u.created_at) as enrolled_at,
+              COALESCE(ce.enrolled_at, u.created_at) as enrolled_at,
               COALESCE(ce.status, 'active') as enrollment_status,
               cl.name as class_name,
               cl.id as class_id
        FROM users u
-       LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND ce.class_id IN (${classPlaceholders})
-       LEFT JOIN student_attempts sa ON sa.user_id = u.id AND sa.class_id IN (${classPlaceholders})
-       LEFT JOIN classes cl ON cl.id = COALESCE(ce.class_id, sa.class_id)
-       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner') 
-         AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
+       JOIN class_enrollments ce ON ce.user_id = u.id AND ce.class_id IN (${classPlaceholders}) AND ce.status = 'active'
+       JOIN classes cl ON cl.id = ce.class_id
+       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner')
        GROUP BY u.id
        ORDER BY u.surname, u.first_name`,
-      [...targetClassIds, ...targetClassIds]
+      [...targetClassIds]
     );
   } else {
     students = db.all(
       `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.surname, u.student_number, 
-              COALESCE(ce.enrolled_at, sa.started_at, u.created_at) as enrolled_at,
+              COALESCE(ce.enrolled_at, u.created_at) as enrolled_at,
               COALESCE(ce.status, 'active') as enrollment_status,
               cl.name as class_name,
               cl.id as class_id
        FROM users u
-       LEFT JOIN class_enrollments ce ON ce.user_id = u.id AND (
+       JOIN class_enrollments ce ON ce.user_id = u.id AND (
          ce.class_id = ? 
          OR ce.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-       )
-       LEFT JOIN student_attempts sa ON sa.user_id = u.id AND (
-         sa.class_id = ? 
-         OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-       )
-       LEFT JOIN classes cl ON cl.id = COALESCE(ce.class_id, sa.class_id)
-       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner') 
-         AND (ce.id IS NOT NULL OR sa.id IS NOT NULL)
+       ) AND ce.status = 'active'
+       JOIN classes cl ON cl.id = ce.class_id
+       WHERE (u.role = 'student' OR u.role = 'delegate' OR u.role = 'learner')
        GROUP BY u.id
        ORDER BY u.surname, u.first_name`,
-      [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, targetClass.name, targetClass.course_id]
+      [targetClass.id, targetClass.name, targetClass.course_id]
     );
   }
 
