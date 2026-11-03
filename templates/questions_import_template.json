@@ -1,0 +1,244 @@
+[
+  {
+    "question_type": "single_choice",
+    "topic": "Storage Services",
+    "difficulty": "medium",
+    "points": 1,
+    "section_module": "Section 1 - Storage",
+    "tags": ["AZ-104", "Storage", "Tiers"],
+    "question_text": "Which Azure Storage redundancy tier copies data synchronously across three Azure availability zones in the primary region?",
+    "question_description": "A company is designing a high-availability architecture for their storage account.",
+    "answer_options": [
+      { "id": "opt_lrs", "text": "Locally-redundant storage (LRS)" },
+      { "id": "opt_zrs", "text": "Zone-redundant storage (ZRS)" },
+      { "id": "opt_grs", "text": "Geo-redundant storage (GRS)" },
+      { "id": "opt_gzrs", "text": "Geo-zone-redundant storage (GZRS)" }
+    ],
+    "correct_answer": "opt_zrs",
+    "answer_explanation": "Zone-redundant storage (ZRS) replicates your Azure Storage data synchronously across three Azure availability zones in the primary region."
+  },
+  {
+    "question_type": "multiple_response",
+    "topic": "Compute & Networking",
+    "difficulty": "medium",
+    "points": 2,
+    "partial_credit": true,
+    "section_module": "Section 1 - Virtual Machines",
+    "tags": ["AZ-104", "Networking", "Security"],
+    "question_text": "Which TWO of the following services can be used to control inbound traffic to an Azure Virtual Machine? (Choose two)",
+    "question_description": "Select the two services that provide network access filtering for VMs.",
+    "answer_options": [
+      { "id": "opt_nsg", "text": "Network Security Group (NSG)" },
+      { "id": "opt_bastion", "text": "Azure Bastion" },
+      { "id": "opt_fw", "text": "Azure Firewall" },
+      { "id": "opt_advisor", "text": "Azure Advisor" }
+    ],
+    "correct_answer": ["opt_nsg", "opt_fw"],
+    "answer_explanation": "Network Security Groups (NSGs) and Azure Firewall can filter inbound network traffic to Virtual Machines. Azure Bastion provides secure RDP/SSH connectivity, and Advisor provides best practice recommendations."
+  },
+  {
+    "question_type": "yes_no",
+    "topic": "Cloud Governance",
+    "difficulty": "easy",
+    "points": 1,
+    "section_module": "Section 1 - Governance",
+    "tags": ["Governance", "Resource Groups"],
+    "question_text": "Can a resource in Azure belong to multiple Resource Groups simultaneously?",
+    "question_description": "Consider Azure Resource Manager hierarchy and scope boundaries.",
+    "answer_options": ["Yes", "No"],
+    "correct_answer": "No",
+    "answer_explanation": "A resource can only exist in one Resource Group at any given time. However, resources can be moved between Resource Groups."
+  },
+  {
+    "question_type": "true_false",
+    "topic": "Identity",
+    "difficulty": "easy",
+    "points": 1,
+    "section_module": "Section 1 - Identity",
+    "tags": ["Entra ID", "Security"],
+    "question_text": "Microsoft Entra ID Free edition supports Conditional Access policies.",
+    "question_description": "Evaluate feature licensing for Microsoft Entra ID tiers.",
+    "answer_options": ["True", "False"],
+    "correct_answer": "False",
+    "answer_explanation": "Conditional Access requires Microsoft Entra ID P1 or P2 licensing. It is not included in the Free tier."
+  },
+  {
+    "question_type": "matching",
+    "topic": "Storage",
+    "difficulty": "hard",
+    "points": 3,
+    "partial_credit": true,
+    "section_module": "Section 2 - Advanced Storage",
+    "tags": ["Storage", "Drag-and-Drop", "Microsoft Style"],
+    "question_text": "Match each Azure Storage service to its appropriate use case. To answer, drag the correct storage service from the left column to the appropriate requirement on the right.",
+    "question_description": "Each service may be used once, more than once, or not at all.",
+    "answer_options": {
+      "source_title": "Storage Service",
+      "target_title": "Requirement",
+      "sources": [
+        { "id": "src_blob", "text": "Azure Blob storage" },
+        { "id": "src_files", "text": "Azure Files" },
+        { "id": "src_queue", "text": "Azure Queue Storage" },
+        { "id": "src_disk", "text": "Azure Disk Storage" }
+      ],
+      "targets": [
+        { "id": "tgt_smb", "text": "Provides shared file access via SMB 3.0 or NFS protocols" },
+        { "id": "tgt_msg", "text": "Stores large numbers of messages that can be accessed from anywhere via HTTP/HTTPS" },
+        { "id": "tgt_tier", "text": "Supports Archive, Cool, and Hot access tiers for unstructured object storage" }
+      ]
+    },
+    "correct_answer": {
+      "tgt_smb": "src_files",
+      "tgt_msg": "src_queue",
+      "tgt_tier": "src_blob"
+    },
+    "answer_explanation": "Azure Files supports SMB and NFS shares; Azure Queue Storage supports asynchronous messaging; Azure Blob storage provides tiering (Hot, Cool, Cold, Archive) for massive unstructured data."
+  },
+  {
+    "question_type": "ordering",
+    "topic": "Disaster Recovery",
+    "difficulty": "medium",
+    "points": 2,
+    "partial_credit": false,
+    "section_module": "Section 2 - Business Continuity",
+    "tags": ["Azure Backup", "Recovery Services"],
+    "question_text": "You need to configure Azure Backup for an Azure Virtual Machine. In which order should you perform the configuration steps? (Place the steps in sequential order from top to bottom)",
+    "question_description": "Arrange the steps to successfully back up a VM using a Recovery Services vault.",
+    "answer_options": [
+      { "id": "step_create_vault", "text": "Create a Recovery Services vault" },
+      { "id": "step_define_policy", "text": "Define or select a Backup Policy specifying schedule and retention" },
+      { "id": "step_enable_backup", "text": "Enable backup and select the target Virtual Machine" },
+      { "id": "step_trigger_initial", "text": "Trigger an initial backup or await the scheduled backup window" }
+    ],
+    "correct_answer": [
+      "step_create_vault",
+      "step_define_policy",
+      "step_enable_backup",
+      "step_trigger_initial"
+    ],
+    "answer_explanation": "First create the Recovery Services vault, then define the backup policy, attach the policy to the VM to enable protection, and finally execute the initial backup."
+  },
+  {
+    "question_type": "categorisation",
+    "topic": "Cloud Concepts",
+    "difficulty": "medium",
+    "points": 3,
+    "partial_credit": true,
+    "section_module": "Section 1 - Cloud Architecture",
+    "tags": ["IaaS", "PaaS", "SaaS", "Architecture"],
+    "question_text": "Classify each Azure service into its corresponding cloud service model (IaaS, PaaS, or SaaS).",
+    "question_description": "Assign the cloud resources to the correct service model categories.",
+    "answer_options": ["IaaS", "PaaS", "SaaS"],
+    "correct_answer": {
+      "IaaS": ["Azure Virtual Machines", "Virtual Network"],
+      "PaaS": ["Azure SQL Database", "Azure App Service"],
+      "SaaS": ["Microsoft 365"]
+    },
+    "answer_explanation": "Virtual Machines and Virtual Networks are Infrastructure-as-a-Service (IaaS). Azure SQL and App Service are Platform-as-a-Service (PaaS). Microsoft 365 is Software-as-a-Service (SaaS)."
+  },
+  {
+    "question_type": "dropdown",
+    "topic": "Storage Redundancy",
+    "difficulty": "medium",
+    "points": 2,
+    "partial_credit": true,
+    "section_module": "Section 1 - Storage Replication",
+    "tags": ["Storage", "Redundancy"],
+    "question_text": "To achieve high availability within a single region across three separate data centers, configure [blank1]. To add read-only access to a secondary paired region, enable [blank2].",
+    "question_description": "Complete the statements by selecting the correct replication options from each dropdown list.",
+    "answer_options": {
+      "blank1": ["LRS", "ZRS", "GRS"],
+      "blank2": ["RA-GRS", "LRS", "ZRS"]
+    },
+    "correct_answer": {
+      "blank1": "ZRS",
+      "blank2": "RA-GRS"
+    },
+    "answer_explanation": "ZRS synchronously replicates across three availability zones within the primary region. RA-GRS replicates to a secondary region and enables read access on the secondary endpoint."
+  },
+  {
+    "question_type": "fill_blank",
+    "topic": "Azure CLI",
+    "difficulty": "medium",
+    "points": 1,
+    "section_module": "Section 2 - Administration Tools",
+    "tags": ["CLI", "Automation"],
+    "question_text": "Which Azure CLI command is used to create a new resource group named 'rg-prod' in the 'westeurope' location?",
+    "question_description": "Enter the complete Azure CLI command syntax below.",
+    "answer_options": {
+      "case_sensitive": false,
+      "ignore_spaces": true,
+      "ignore_punctuation": false
+    },
+    "correct_answer": "az group create --name rg-prod --location westeurope|az group create -n rg-prod -l westeurope|az group create --location westeurope --name rg-prod",
+    "answer_explanation": "The Azure CLI command is 'az group create --name rg-prod --location westeurope' (or shorthand flags '-n rg-prod -l westeurope'). Multiple valid parameter orderings are accepted via the pipe (|) separator."
+  },
+  {
+    "question_type": "hotspot",
+    "topic": "Cloud Concepts",
+    "difficulty": "medium",
+    "points": 3,
+    "partial_credit": true,
+    "section_module": "Section 1 - Cloud Fundamentals",
+    "tags": ["Microsoft Style", "Hotspot", "Yes/No Matrix"],
+    "question_text": "For each of the following statements, select Yes if the statement is true. Otherwise, select No.",
+    "question_description": "Note: Each correct selection is worth one point.",
+    "answer_options": [
+      {
+        "id": "stmt_1",
+        "statement": "To achieve a hybrid cloud model, a company must always migrate from a private cloud model."
+      },
+      {
+        "id": "stmt_2",
+        "statement": "A company can extend the capacity of its internal network by using the public cloud."
+      },
+      {
+        "id": "stmt_3",
+        "statement": "In a public cloud model, only guest users at your company can access resources in the cloud."
+      }
+    ],
+    "correct_answer": {
+      "stmt_1": "No",
+      "stmt_2": "Yes",
+      "stmt_3": "No"
+    },
+    "answer_explanation": "1. No: A hybrid cloud can be created starting from on-premises or public cloud without needing a full prior private cloud. 2. Yes: Cloud bursting and hybrid networking extend capacity. 3. No: Public cloud resources are accessed by authenticated internal users, developers, administrators, or public users depending on configuration."
+  },
+  {
+    "question_type": "hot_area",
+    "topic": "Network Architecture",
+    "difficulty": "hard",
+    "points": 1,
+    "section_module": "Section 2 - Hub-and-Spoke Topology",
+    "tags": ["Networking", "Architecture", "Diagram"],
+    "question_text": "In the hub-and-spoke diagram, select the component responsible for centralized routing and stateful traffic inspection between spokes.",
+    "question_description": "Click on the appropriate architectural component in the diagram.",
+    "answer_options": [
+      { "id": "area_firewall", "label": "Azure Firewall in Hub VNet" },
+      { "id": "area_vpn_gw", "label": "Virtual Network Gateway" },
+      { "id": "area_spoke_a", "label": "Spoke A Subnet" },
+      { "id": "area_bastion", "label": "Azure Bastion Host" }
+    ],
+    "correct_answer": "area_firewall",
+    "answer_explanation": "Azure Firewall deployed in the central Hub VNet provides centralized East-West and North-South traffic inspection and filtering."
+  },
+  {
+    "question_type": "case_study",
+    "topic": "Enterprise Architecture",
+    "difficulty": "hard",
+    "points": 2,
+    "partial_credit": false,
+    "section_module": "Section 3 - Case Study: Litware Inc",
+    "tags": ["Case Study", "Enterprise", "Scenario"],
+    "question_text": "Which governance solution should you recommend to ensure that developers cannot deploy virtual machine sizes with more than 4 vCPUs in the non-production subscription?",
+    "question_description": "Litware Inc. Background:\nLitware Inc. has 3 subscriptions: Production, Non-Production, and Sandbox.\nThe Finance team has reported significant budget overruns due to developers deploying large M-series and G-series VMs in the Non-Production environment.\n\nTechnical Requirements:\n- Must enforce maximum VM sizing across all Resource Groups in Non-Production.\n- Must not affect the Production subscription.\n- Existing compliant resources must be audited, and non-compliant deployments must be blocked automatically.",
+    "answer_options": [
+      { "id": "opt_policy", "text": "Assign an Azure Policy with the 'Allowed virtual machine size SKUs' definition scoped to the Non-Production subscription with a 'Deny' effect." },
+      { "id": "opt_rbac", "text": "Assign the Reader role to all developers on the Non-Production subscription." },
+      { "id": "opt_lock", "text": "Apply a ReadOnly resource lock to the subscription root." },
+      { "id": "opt_budget", "text": "Configure an Azure Cost Management budget alert with automated runbook action." }
+    ],
+    "correct_answer": "opt_policy",
+    "answer_explanation": "Azure Policy with an 'Allowed virtual machine size SKUs' definition and a 'Deny' effect actively prevents deployments of unapproved VM sizes at the subscription scope. Resource locks prevent deletions or modifications of all resources, and RBAC Reader prevents any deployments at all."
+  }
+]
