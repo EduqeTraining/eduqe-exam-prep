@@ -11,6 +11,7 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
   let currentSections = ['Section 1', 'Section 2', 'Section 3'];
   let currentItems = [];
   let activeTargetSection = 'Section 1';
+  let loadedCourses = [];
 
   container.innerHTML = `
     <div class="card">
@@ -188,16 +189,106 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
     </dialog>
 
     <!-- Modal: Select From Bank -->
-    <dialog id="modal-bank-picker" style="max-width:820px;">
-      <div class="modal-header">
-        <h3 style="font-size:1.125rem; font-weight:700;" id="bank-picker-title">Select Questions from Bank</h3>
+    <dialog id="modal-bank-picker" style="max-width:960px; width:95vw;">
+      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding:1rem 1.25rem;">
+        <div>
+          <h3 style="font-size:1.15rem; font-weight:800; margin:0;" id="bank-picker-title">Select Questions from Question Bank</h3>
+          <p class="form-hint" style="margin:0.25rem 0 0 0;">Filter by course or search terms, then add questions into your target sub-assessment section.</p>
+        </div>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-close-bank-picker">&times;</button>
       </div>
-      <div class="modal-body">
-        <div style="max-height:55vh; overflow-y:auto;" id="bank-picker-list"></div>
+
+      <div class="modal-body" style="padding:1.25rem;">
+        <!-- Filter Controls Bar -->
+        <div class="card" style="padding:1rem; margin-bottom:1rem; background:var(--surface-subtle); border:1px solid var(--border); border-radius:var(--radius-md);">
+          <div style="display:grid; grid-template-columns: minmax(170px, 1.2fr) minmax(180px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr); gap:0.75rem; margin-bottom:0.75rem;">
+            <!-- Target Section selector inside modal -->
+            <div>
+              <label class="form-label" for="picker-target-section" style="font-size:0.8rem; font-weight:700; margin-bottom:0.25rem; color:var(--primary);">Add to Section:</label>
+              <select id="picker-target-section" class="form-control" style="font-weight:700; border-color:var(--primary);"></select>
+            </div>
+
+            <!-- Course Filter -->
+            <div>
+              <label class="form-label" for="picker-filter-course" style="font-size:0.8rem; font-weight:700; margin-bottom:0.25rem;">Filter by Course:</label>
+              <select id="picker-filter-course" class="form-control">
+                <option value="">All Courses</option>
+              </select>
+            </div>
+
+            <!-- Topic Filter -->
+            <div>
+              <label class="form-label" for="picker-filter-topic" style="font-size:0.8rem; font-weight:700; margin-bottom:0.25rem;">Filter by Topic:</label>
+              <select id="picker-filter-topic" class="form-control">
+                <option value="">All Topics</option>
+              </select>
+            </div>
+
+            <!-- Question Type Filter -->
+            <div>
+              <label class="form-label" for="picker-filter-type" style="font-size:0.8rem; font-weight:700; margin-bottom:0.25rem;">Question Type:</label>
+              <select id="picker-filter-type" class="form-control">
+                <option value="">All Types</option>
+                <option value="single_choice">Single Choice</option>
+                <option value="multiple_response">Multiple Response</option>
+                <option value="matching">Matching (Drag &amp; Drop)</option>
+                <option value="ordering">Ordering</option>
+                <option value="categorisation">Categorisation</option>
+                <option value="dropdown">Dropdown</option>
+                <option value="fill_blank">Fill in Blank</option>
+                <option value="yes_no">Yes / No</option>
+                <option value="true_false">True / False</option>
+                <option value="hotspot">Hotspot</option>
+                <option value="hot_area">Hot Area</option>
+                <option value="case_study">Case Study / Scenario</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Live Search Input + Reset Button -->
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <div style="flex:1;">
+              <input type="text" id="picker-filter-search" class="form-control" placeholder="Search questions by text, keyword, topic, or tags (e.g. AB900, storage, RBAC)...">
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-picker-reset-filters" style="white-space:nowrap; padding:0.5rem 0.85rem;">
+              Reset Filters
+            </button>
+          </div>
+        </div>
+
+        <!-- Action & Selection Toolbar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.65rem 0.85rem; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+          <div style="display:flex; align-items:center; gap:0.85rem;">
+            <label style="display:flex; align-items:center; gap:0.4rem; font-weight:700; font-size:0.875rem; cursor:pointer;">
+              <input type="checkbox" id="picker-select-all-cb" style="width:1.15rem; height:1.15rem; accent-color:var(--brand-lime, #62b017); cursor:pointer;">
+              Select All Visible
+            </label>
+            <span style="font-size:0.85rem; color:var(--text-muted); border-left:1px solid var(--border); padding-left:0.75rem;">
+              <strong id="picker-visible-count" style="color:var(--text-main);">0</strong> question(s) found (<strong id="picker-selected-count" style="color:var(--primary);">0</strong> selected)
+            </span>
+          </div>
+
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-add-selected-in-picker" style="font-weight:700; display:flex; align-items:center; gap:0.35rem;" disabled>
+              + Add Selected (<span id="btn-add-selected-count">0</span>) to <span class="picker-current-sec-label">Section 1</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-add-all-filtered-in-picker" style="font-weight:600;">
+              + Add All Filtered to <span class="picker-current-sec-label">Section 1</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Question List Container -->
+        <div style="max-height:50vh; overflow-y:auto; display:flex; flex-direction:column; gap:0.5rem; padding-right:0.25rem;" id="bank-picker-list">
+          <p class="form-hint" style="padding:2rem; text-align:center;">Loading questions...</p>
+        </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="btn-dismiss-bank-picker">Close</button>
+
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding:0.85rem 1.25rem;">
+        <span style="font-size:0.8125rem; color:var(--text-muted);">
+          Questions added here are instantly placed into the chosen section.
+        </span>
+        <button type="button" class="btn btn-secondary" id="btn-dismiss-bank-picker">Done</button>
       </div>
     </dialog>
 
@@ -248,8 +339,9 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
 
   // Populate courses
   api.get('/courses').then(courses => {
+    loadedCourses = courses || [];
     courseSelect.innerHTML = '<option value="">-- Select Course --</option>' +
-      courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
+      loadedCourses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
 
     if (isEditing && assessmentData) {
       courseSelect.value = assessmentData.course_id;
@@ -666,79 +758,371 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
 
   // Option 2: Select from Question Bank
   const bankPickerModal = container.querySelector('#modal-bank-picker');
+  let allBankQuestions = [];
+  const selectedPickerIds = new Set();
+
+  function syncPickerTargetSection() {
+    const pickerSecSelect = container.querySelector('#picker-target-section');
+    if (!pickerSecSelect) return;
+    if (!currentSections.includes(activeTargetSection)) {
+      activeTargetSection = currentSections[0] || 'Section 1';
+    }
+    pickerSecSelect.innerHTML = currentSections.map(sec => `
+      <option value="${escapeHtml(sec)}" ${sec === activeTargetSection ? 'selected' : ''}>${escapeHtml(sec)}</option>
+    `).join('');
+    container.querySelectorAll('.picker-current-sec-label').forEach(el => {
+      el.textContent = activeTargetSection;
+    });
+  }
+
+  function updatePickerBulkControls() {
+    const selCount = selectedPickerIds.size;
+    const addSelBtn = container.querySelector('#btn-add-selected-in-picker');
+    const selCountEl = container.querySelector('#picker-selected-count');
+    const btnCountEl = container.querySelector('#btn-add-selected-count');
+    const selectAllCb = container.querySelector('#picker-select-all-cb');
+
+    if (selCountEl) selCountEl.textContent = selCount;
+    if (btnCountEl) btnCountEl.textContent = selCount;
+    if (addSelBtn) addSelBtn.disabled = selCount === 0;
+
+    const visibleCbs = container.querySelectorAll('.picker-q-cb:not(:disabled)');
+    if (selectAllCb && visibleCbs.length > 0) {
+      const allChecked = Array.from(visibleCbs).every(cb => cb.checked);
+      const someChecked = Array.from(visibleCbs).some(cb => cb.checked);
+      selectAllCb.checked = allChecked;
+      selectAllCb.indeterminate = someChecked && !allChecked;
+    } else if (selectAllCb) {
+      selectAllCb.checked = false;
+      selectAllCb.indeterminate = false;
+    }
+  }
+
+  function populatePickerTopics(questions) {
+    const topicSelect = container.querySelector('#picker-filter-topic');
+    if (!topicSelect) return;
+    const currentVal = topicSelect.value;
+    const uniqueTopics = [...new Set(questions.map(q => q.topic).filter(Boolean))].sort();
+    topicSelect.innerHTML = '<option value="">All Topics</option>' +
+      uniqueTopics.map(t => `<option value="${escapeHtml(t)}" ${t === currentVal ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
+  }
+
+  function getFilteredPickerQuestions() {
+    const search = container.querySelector('#picker-filter-search')?.value.trim().toLowerCase() || '';
+    const courseId = container.querySelector('#picker-filter-course')?.value || '';
+    const topic = container.querySelector('#picker-filter-topic')?.value || '';
+    const type = container.querySelector('#picker-filter-type')?.value || '';
+
+    return allBankQuestions.filter(q => {
+      if (courseId) {
+        if (courseId === 'unassigned') {
+          if (q.course_id) return false;
+        } else if (q.course_id !== courseId) {
+          return false;
+        }
+      }
+      if (topic && q.topic !== topic) return false;
+      if (type && q.question_type !== type) return false;
+      if (search) {
+        const qText = (q.question_text || '').toLowerCase();
+        const qDesc = (q.question_description || '').toLowerCase();
+        const qTop = (q.topic || '').toLowerCase();
+        const qCode = (q.course_code || '').toLowerCase();
+        const qName = (q.course_name || '').toLowerCase();
+        let qTags = '';
+        try {
+          qTags = Array.isArray(q.tags) ? q.tags.join(' ') : (q.tags || '');
+        } catch (_) {}
+        qTags = qTags.toLowerCase();
+        if (!qText.includes(search) && !qDesc.includes(search) && !qTop.includes(search) && !qCode.includes(search) && !qName.includes(search) && !qTags.includes(search)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function renderPickerQuestionsList() {
+    const list = container.querySelector('#bank-picker-list');
+    if (!list) return;
+
+    const visCountEl = container.querySelector('#picker-visible-count');
+    const filtered = getFilteredPickerQuestions();
+
+    // Map existing question IDs to their section name
+    const existingMap = new Map();
+    currentItems.forEach(item => {
+      if (!item.is_pool) {
+        const qId = item.question_id || item.question?.id;
+        if (qId) existingMap.set(qId, item.section_name);
+      }
+    });
+
+    if (visCountEl) visCountEl.textContent = filtered.length;
+
+    if (filtered.length === 0) {
+      list.innerHTML = `
+        <div style="padding:2.5rem 1rem; text-align:center; color:var(--text-muted);">
+          <div style="font-size:1.5rem; margin-bottom:0.5rem;">🔍</div>
+          <div style="font-weight:700; color:var(--text-main);">No questions match your filter criteria.</div>
+          <div style="font-size:0.85rem; margin-top:0.25rem;">Try switching "Filter by Course" or clearing your search keywords.</div>
+        </div>
+      `;
+      updatePickerBulkControls();
+      return;
+    }
+
+    list.innerHTML = filtered.map(q => {
+      const inSection = existingMap.get(q.id);
+      const isAlreadyAdded = Boolean(inSection);
+      const isChecked = selectedPickerIds.has(q.id);
+      const typeLabel = (q.question_type || '').replace(/_/g, ' ').toUpperCase();
+      const diffBadge = q.difficulty === 'hard' ? 'badge-danger' : (q.difficulty === 'medium' ? 'badge-warning' : 'badge-neutral');
+
+      return `
+        <div class="card" data-qid="${q.id}" style="margin:0; padding:0.85rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:0.85rem; border-color:${isAlreadyAdded ? 'var(--success, #16a34a)' : (isChecked ? 'var(--primary)' : 'var(--border)')}; background:${isAlreadyAdded ? 'rgba(22,163,74,0.04)' : (isChecked ? 'rgba(98,176,23,0.04)' : 'var(--surface)')};">
+          <div style="display:flex; align-items:flex-start; gap:0.75rem; min-width:0; flex:1;">
+            <input type="checkbox" class="picker-q-cb" value="${q.id}" ${isChecked ? 'checked' : ''} ${isAlreadyAdded ? 'disabled' : ''} style="width:1.2rem; height:1.2rem; margin-top:0.2rem; cursor:${isAlreadyAdded ? 'default' : 'pointer'}; accent-color:var(--brand-lime, #62b017);">
+            <div style="min-width:0; flex:1;">
+              <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; margin-bottom:0.35rem;">
+                <span class="badge badge-secondary" style="font-size:0.7rem; font-weight:800; letter-spacing:0.3px;">${escapeHtml(q.course_code || 'Global')}</span>
+                <span class="badge badge-primary" style="font-size:0.7rem; font-weight:700;">${escapeHtml(typeLabel)}</span>
+                <span class="badge badge-neutral" style="font-size:0.7rem;">${escapeHtml(q.topic || 'General')}</span>
+                <span class="badge ${diffBadge}" style="font-size:0.7rem;">${escapeHtml((q.difficulty || 'medium').toUpperCase())}</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">${q.points || 1} pt${q.points === 1 ? '' : 's'}</span>
+              </div>
+              <div style="font-weight:700; font-size:0.925rem; color:var(--text-main); line-height:1.4;">
+                ${escapeHtml(q.question_text)}
+              </div>
+              ${q.question_description ? `
+                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                  <span style="font-weight:600;">Context:</span> ${escapeHtml(q.question_description)}
+                </div>
+              ` : ''}
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-shrink:0;">
+            ${isAlreadyAdded ? `
+              <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.25rem;">
+                <span class="badge badge-success" style="font-size:0.75rem; font-weight:700; padding:0.35rem 0.65rem;">
+                  ✓ In ${escapeHtml(inSection)}
+                </span>
+                ${inSection !== activeTargetSection ? `
+                  <button type="button" class="btn btn-secondary btn-sm btn-move-q" data-id="${q.id}" style="font-size:0.75rem; padding:0.2rem 0.45rem;">
+                    Move to ${escapeHtml(activeTargetSection)}
+                  </button>
+                ` : ''}
+              </div>
+            ` : `
+              <button type="button" class="btn btn-primary btn-sm btn-pick-q" data-id="${q.id}" style="font-weight:700; white-space:nowrap;">
+                + Add to ${escapeHtml(activeTargetSection)}
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Row selection checkboxes
+    list.querySelectorAll('.picker-q-cb').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) selectedPickerIds.add(cb.value);
+        else selectedPickerIds.delete(cb.value);
+        updatePickerBulkControls();
+        const card = cb.closest('.card');
+        if (card) {
+          card.style.borderColor = cb.checked ? 'var(--primary)' : 'var(--border)';
+          card.style.background = cb.checked ? 'rgba(98,176,23,0.04)' : 'var(--surface)';
+        }
+      };
+    });
+
+    // Single Add button
+    list.querySelectorAll('.btn-pick-q').forEach(btn => {
+      btn.onclick = async () => {
+        const qId = btn.dataset.id;
+        const q = allBankQuestions.find(item => item.id === qId);
+        if (q) {
+          btn.disabled = true;
+          btn.textContent = 'Adding...';
+          await addQuestionItem(q, activeTargetSection);
+          selectedPickerIds.delete(qId);
+          renderBuilderItems();
+          renderPickerQuestionsList();
+        }
+      };
+    });
+
+    // Move question between sections
+    list.querySelectorAll('.btn-move-q').forEach(btn => {
+      btn.onclick = async () => {
+        const qId = btn.dataset.id;
+        const q = allBankQuestions.find(item => item.id === qId);
+        if (q) {
+          btn.disabled = true;
+          btn.textContent = 'Moving...';
+          await addQuestionItem(q, activeTargetSection);
+          renderBuilderItems();
+          renderPickerQuestionsList();
+        }
+      };
+    });
+
+    updatePickerBulkControls();
+  }
+
+  // Filter input listeners
+  const pickerCourseFilter = container.querySelector('#picker-filter-course');
+  const pickerTopicFilter = container.querySelector('#picker-filter-topic');
+  const pickerTypeFilter = container.querySelector('#picker-filter-type');
+  const pickerSearchFilter = container.querySelector('#picker-filter-search');
+  const pickerTargetSec = container.querySelector('#picker-target-section');
+  const pickerSelectAllCb = container.querySelector('#picker-select-all-cb');
+  const btnAddSelected = container.querySelector('#btn-add-selected-in-picker');
+  const btnAddAllFiltered = container.querySelector('#btn-add-all-filtered-in-picker');
+  const btnResetFilters = container.querySelector('#btn-picker-reset-filters');
+
+  if (pickerTargetSec) {
+    pickerTargetSec.onchange = () => {
+      activeTargetSection = pickerTargetSec.value;
+      syncModalSectionSelect();
+      syncPickerTargetSection();
+      renderPickerQuestionsList();
+    };
+  }
+
+  if (pickerCourseFilter) {
+    pickerCourseFilter.onchange = () => {
+      const selectedCourseId = pickerCourseFilter.value;
+      const subset = selectedCourseId ? allBankQuestions.filter(q => q.course_id === selectedCourseId) : allBankQuestions;
+      populatePickerTopics(subset);
+      renderPickerQuestionsList();
+    };
+  }
+
+  if (pickerTopicFilter) {
+    pickerTopicFilter.onchange = renderPickerQuestionsList;
+  }
+
+  if (pickerTypeFilter) {
+    pickerTypeFilter.onchange = renderPickerQuestionsList;
+  }
+
+  if (pickerSearchFilter) {
+    pickerSearchFilter.oninput = renderPickerQuestionsList;
+  }
+
+  if (btnResetFilters) {
+    btnResetFilters.onclick = () => {
+      if (pickerSearchFilter) pickerSearchFilter.value = '';
+      if (pickerCourseFilter) pickerCourseFilter.value = courseSelect?.value || '';
+      if (pickerTopicFilter) pickerTopicFilter.value = '';
+      if (pickerTypeFilter) pickerTypeFilter.value = '';
+      populatePickerTopics(allBankQuestions);
+      renderPickerQuestionsList();
+    };
+  }
+
+  if (pickerSelectAllCb) {
+    pickerSelectAllCb.onchange = () => {
+      const cbs = container.querySelectorAll('.picker-q-cb:not(:disabled)');
+      cbs.forEach(cb => {
+        cb.checked = pickerSelectAllCb.checked;
+        if (pickerSelectAllCb.checked) selectedPickerIds.add(cb.value);
+        else selectedPickerIds.delete(cb.value);
+        const card = cb.closest('.card');
+        if (card) {
+          card.style.borderColor = cb.checked ? 'var(--primary)' : 'var(--border)';
+          card.style.background = cb.checked ? 'rgba(98,176,23,0.04)' : 'var(--surface)';
+        }
+      });
+      updatePickerBulkControls();
+    };
+  }
+
+  if (btnAddSelected) {
+    btnAddSelected.onclick = async () => {
+      const ids = Array.from(selectedPickerIds);
+      if (ids.length === 0) return;
+      btnAddSelected.disabled = true;
+      btnAddSelected.textContent = `Adding ${ids.length} questions...`;
+      for (const id of ids) {
+        const q = allBankQuestions.find(item => item.id === id);
+        if (q) {
+          await addQuestionItem(q, activeTargetSection);
+        }
+      }
+      selectedPickerIds.clear();
+      renderBuilderItems();
+      renderPickerQuestionsList();
+    };
+  }
+
+  if (btnAddAllFiltered) {
+    btnAddAllFiltered.onclick = async () => {
+      const existingMap = new Map();
+      currentItems.forEach(item => {
+        if (!item.is_pool) {
+          const qId = item.question_id || item.question?.id;
+          if (qId) existingMap.set(qId, item.section_name);
+        }
+      });
+
+      const filtered = getFilteredPickerQuestions();
+      const toAdd = filtered.filter(q => !existingMap.has(q.id));
+
+      if (toAdd.length === 0) {
+        alert('All filtered questions are already in this assessment.');
+        return;
+      }
+
+      btnAddAllFiltered.disabled = true;
+      btnAddAllFiltered.textContent = `Adding ${toAdd.length} questions...`;
+      for (const q of toAdd) {
+        await addQuestionItem(q, activeTargetSection);
+      }
+      selectedPickerIds.clear();
+      renderBuilderItems();
+      renderPickerQuestionsList();
+    };
+  }
+
   container.querySelector('#opt-select-bank').onclick = async () => {
     const chosenSection = modalTargetSectionSelect?.value || activeTargetSection || currentSections[0] || 'Section 1';
     activeTargetSection = chosenSection;
     addModal.close();
 
     const bankTitle = container.querySelector('#bank-picker-title');
-    if (bankTitle) bankTitle.textContent = `Select Questions for ${chosenSection}`;
+    if (bankTitle) bankTitle.textContent = `Select Questions for ${activeTargetSection}`;
 
-    const courseId = courseSelect.value || null;
-    const questions = await api.get(`/questions${courseId ? `?course_id=${courseId}` : ''}`);
+    syncPickerTargetSection();
+
+    // Populate course filter dropdown
+    if (pickerCourseFilter) {
+      const selectedCourseId = courseSelect?.value || '';
+      pickerCourseFilter.innerHTML = '<option value="">All Courses</option>' +
+        loadedCourses.map(c => `<option value="${c.id}" ${c.id === selectedCourseId ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('') +
+        '<option value="unassigned">Global / No Course</option>';
+    }
+
     const list = container.querySelector('#bank-picker-list');
-
-    if (questions.length === 0) {
-      list.innerHTML = `<p class="form-hint" style="padding:1rem; text-align:center;">No questions found in the Question Bank${courseId ? ' for this course' : ''}.</p>`;
-      bankPickerModal.showModal();
-      return;
-    }
-
-    const existingIds = new Set(currentItems.filter(i => !i.is_pool).map(i => i.question_id || i.question?.id));
-
-    list.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border);">
-        <span style="font-size:0.85rem; color:var(--text-muted);">Adding to: <strong style="color:var(--text-main);">${escapeHtml(chosenSection)}</strong> (${questions.length} question(s) available)</span>
-        <button type="button" class="btn btn-primary btn-sm" id="btn-add-all-in-picker">+ Add All to ${escapeHtml(chosenSection)}</button>
-      </div>
-      ${questions.map(q => {
-        const isAlreadyAdded = existingIds.has(q.id);
-        return `
-          <div class="card" style="margin-bottom:0.5rem; padding:0.75rem; display:flex; align-items:center; justify-content:space-between;">
-            <div style="min-width:0; flex:1; margin-right:0.75rem;">
-              <span class="badge badge-primary" style="font-size:0.7rem;">${escapeHtml(q.question_type.toUpperCase())}</span>
-              <span style="font-weight:600; margin-left:0.5rem;">${escapeHtml(q.question_text)}</span>
-            </div>
-            <button type="button" class="btn btn-secondary btn-sm btn-pick-q" data-id="${q.id}" ${isAlreadyAdded ? 'disabled' : ''}>
-              ${isAlreadyAdded ? 'Added' : `+ Add to ${escapeHtml(chosenSection)}`}
-            </button>
-          </div>
-        `;
-      }).join('')}
-    `;
-
-    const addAllPickerBtn = list.querySelector('#btn-add-all-in-picker');
-    if (addAllPickerBtn) {
-      addAllPickerBtn.onclick = async () => {
-        addAllPickerBtn.disabled = true;
-        addAllPickerBtn.textContent = 'Adding...';
-        for (const q of questions) {
-          await addQuestionItem(q, chosenSection);
-        }
-        list.querySelectorAll('.btn-pick-q').forEach(btn => {
-          btn.disabled = true;
-          btn.textContent = 'Added';
-        });
-        addAllPickerBtn.textContent = 'All Added';
-        renderBuilderItems();
-      };
-    }
-
-    list.querySelectorAll('.btn-pick-q').forEach(btn => {
-      btn.onclick = async () => {
-        const qId = btn.dataset.id;
-        const q = questions.find(item => item.id === qId);
-        btn.disabled = true;
-        btn.textContent = 'Added';
-        await addQuestionItem(q, chosenSection);
-        renderBuilderItems();
-      };
-    });
-
+    list.innerHTML = '<p class="form-hint" style="padding:2.5rem; text-align:center;">Loading questions from Question Bank...</p>';
     bankPickerModal.showModal();
+
+    allBankQuestions = await api.get('/questions');
+    populatePickerTopics(allBankQuestions);
+    renderPickerQuestionsList();
   };
-  container.querySelector('#btn-close-bank-picker').onclick = () => bankPickerModal.close();
-  container.querySelector('#btn-dismiss-bank-picker').onclick = () => bankPickerModal.close();
+
+  container.querySelector('#btn-close-bank-picker').onclick = () => {
+    bankPickerModal.close();
+    renderBuilderItems();
+  };
+  container.querySelector('#btn-dismiss-bank-picker').onclick = () => {
+    bankPickerModal.close();
+    renderBuilderItems();
+  };
 
   // Option 3: Add Pool
   const poolPickerModal = container.querySelector('#modal-pool-picker');
