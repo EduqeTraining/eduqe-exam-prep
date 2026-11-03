@@ -113,6 +113,10 @@ function initDatabase(dbPath) {
     db.exec(`UPDATE student_attempts SET completed_sections = '[]' WHERE completed_sections IS NULL;`);
   } catch (err) {}
   try {
+    // Default all draft questions to published so they are active and exam-ready
+    db.exec(`UPDATE questions SET status = 'published' WHERE status = 'draft';`);
+  } catch (err) {}
+  try {
     db.exec('CREATE TABLE IF NOT EXISTS revoked_tokens (token TEXT PRIMARY KEY, revoked_at TEXT DEFAULT (datetime(\'now\')));');
   } catch (err) {
     // Table already exists

@@ -474,6 +474,29 @@ async function syncQuestionToSupabase(questionOrId) {
   return await upsertRecord('questions', question);
 }
 
+async function syncQuestionsToSupabase(questionIdsOrObjects) {
+  if (!questionIdsOrObjects || questionIdsOrObjects.length === 0) return;
+  const config = getSupabaseConfig();
+  if (!config.isEnabled) return;
+  const db = getDatabase();
+  let questionsToSync = [];
+  if (typeof questionIdsOrObjects[0] === 'string') {
+    const validIds = questionIdsOrObjects.filter(Boolean);
+    if (validIds.length === 0) return;
+    const placeholders = validIds.map(() => '?').join(',');
+    questionsToSync = db.all(`SELECT * FROM questions WHERE id IN (${placeholders})`, validIds);
+  } else {
+    questionsToSync = questionIdsOrObjects;
+  }
+  if (!questionsToSync || questionsToSync.length === 0) return;
+
+  const batchSize = 100;
+  for (let i = 0; i < questionsToSync.length; i += batchSize) {
+    const batch = questionsToSync.slice(i, i + batchSize);
+    await upsertRecords('questions', batch, 'id');
+  }
+}
+
 async function deleteQuestionFromSupabase(questionId) {
   if (!questionId) return;
   return await deleteRecord('questions', questionId);
@@ -716,6 +739,21 @@ async function syncOnStartup() {
       console.log('[Supabase Startup] Hydrating local database from Supabase...');
       await pullFromSupabase();
     }
+
+    // Ensure all draft questions are published and synchronized
+    const db = getDatabase();
+    db.run("UPDATE questions SET status = 'published' WHERE status = 'draft';");
+
+    try {
+      const allLocalQuestions = db.all("SELECT * FROM questions");
+      if (allLocalQuestions && allLocalQuestions.length > 0) {
+        await upsertRecords('questions', allLocalQuestions, 'id');
+      }
+      await supabaseRequest('questions?status=eq.draft', {
+        method: 'PATCH',
+        body: { status: 'published' }
+      });
+    } catch (_) {}
   } catch (err) {
     console.warn('[Supabase Startup Warning]:', err.message);
   }
@@ -766,6 +804,7 @@ module.exports = {
   syncAssessmentToSupabase,
   deleteAssessmentFromSupabase,
   syncQuestionToSupabase,
+  syncQuestionsToSupabase,
   deleteQuestionFromSupabase,
   syncPoolToSupabase,
   deletePoolFromSupabase,

@@ -1443,6 +1443,9 @@ async function handleRequest(req, res) {
       // 7. QUESTION BANK & QUESTIONS
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/questions') {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions', 'question_versions', 'courses']);
         const questions = questionService.listQuestions({
           course_id: query.course_id || '',
           assessment_id: query.assessment_id || '',
@@ -1458,7 +1461,12 @@ async function handleRequest(req, res) {
 
       const questionIdMatch = pathname.match(/^\/api\/questions\/([^\/]+)$/);
       if (req.method === 'GET' && questionIdMatch) {
-        const q = questionService.getQuestion(questionIdMatch[1]);
+        await supabaseService.ensureTablesFresh(['questions', 'question_versions', 'courses']);
+        let q = questionService.getQuestion(questionIdMatch[1]);
+        if (!q && supabaseService.getSupabaseConfig().isEnabled) {
+          await supabaseService.pullTable('questions');
+          q = questionService.getQuestion(questionIdMatch[1]);
+        }
         if (!q) return sendJson(res, 404, { error: 'Question not found' });
         return sendJson(res, 200, q);
       }
@@ -1544,6 +1552,23 @@ async function handleRequest(req, res) {
         }
       }
 
+      // Bulk Publish Questions (Instantly publish draft questions)
+      if (req.method === 'POST' && pathname === '/api/questions/bulk-publish') {
+        const user = requireAuth(req, res, 'administrator');
+        if (!user) return;
+        const body = await parseBody(req);
+        const ids = body.question_ids || body.ids || (body.all_drafts ? 'all' : []);
+        try {
+          const result = questionService.bulkPublishQuestions(ids, user.id, user.username);
+          if (supabaseService.getSupabaseConfig().isEnabled && result.published_ids?.length > 0) {
+            await supabaseService.syncQuestionsToSupabase(result.published_ids);
+          }
+          return sendJson(res, 200, result);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
       if (req.method === 'POST' && pathname === '/api/questions/import') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
@@ -1562,7 +1587,15 @@ async function handleRequest(req, res) {
             for (const q of result.imported) {
               assessmentService.addQuestionToAssessment(assess.id, q.id, {}, user.id, user.username);
             }
+            if (supabaseService.getSupabaseConfig().isEnabled) {
+              await supabaseService.syncAssessmentToSupabase(assess.id);
+            }
           }
+        }
+
+        // CRITICAL: Synchronize all imported questions to Supabase immediately in batch
+        if (supabaseService.getSupabaseConfig().isEnabled && result.imported?.length > 0) {
+          await supabaseService.syncQuestionsToSupabase(result.imported.map(q => q.id));
         }
 
         return sendJson(res, 200, result);

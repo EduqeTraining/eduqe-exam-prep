@@ -22,6 +22,10 @@ export function renderQuestionBank(container) {
           Create Question
         </button>
         <button type="button" class="btn btn-secondary" id="btn-import-questions">Import Questions</button>
+        <button type="button" class="btn btn-secondary" id="btn-publish-all-drafts" style="display:flex; align-items:center; gap:0.4rem; color:var(--success, #16a34a); border-color:rgba(22,163,74,0.4); font-weight:700;">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          Publish All Drafts
+        </button>
         <button type="button" class="btn btn-secondary" id="btn-view-pools">Question Pools</button>
       </div>
     </div>
@@ -77,6 +81,10 @@ export function renderQuestionBank(container) {
         <button type="button" class="btn btn-secondary btn-sm" id="btn-qb-deselect-all">Deselect All</button>
       </div>
       <div style="display:flex; gap:0.5rem; align-items:center;">
+        <button type="button" class="btn btn-primary" id="btn-qb-bulk-publish" style="background:var(--success, #16a34a); border-color:var(--success, #16a34a); font-weight:700; display:flex; align-items:center; gap:0.4rem;">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          Publish Selected (<span id="qb-publish-count-num">0</span>)
+        </button>
         <button type="button" class="btn btn-danger" id="btn-qb-bulk-delete" style="font-weight:700; display:flex; align-items:center; gap:0.4rem;">
           <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           Delete Selected (<span id="qb-delete-count-num">0</span>)
@@ -130,7 +138,7 @@ export function renderQuestionBank(container) {
       </div>
       <div class="modal-body">
         <p class="form-hint" style="margin-bottom:1rem;">
-          Paste JSON formatted questions array or CSV data. All imported questions will begin in <strong>Draft</strong> status.
+          Paste JSON formatted questions array or CSV data. All imported questions will begin in <strong>Published</strong> status by default and be exam-ready.
         </p>
         <div class="form-group">
           <label class="form-label" for="import-course-id">Target Course</label>
@@ -165,6 +173,7 @@ export function renderQuestionBank(container) {
     const bulkBar = container.querySelector('#qb-bulk-bar');
     const countEl = container.querySelector('#qb-selected-count');
     const deleteNumEl = container.querySelector('#qb-delete-count-num');
+    const publishNumEl = container.querySelector('#qb-publish-count-num');
     const selectAllCb = container.querySelector('#qb-select-all');
 
     if (bulkBar) {
@@ -172,6 +181,7 @@ export function renderQuestionBank(container) {
     }
     if (countEl) countEl.textContent = count;
     if (deleteNumEl) deleteNumEl.textContent = count;
+    if (publishNumEl) publishNumEl.textContent = count;
 
     const allRowCbs = container.querySelectorAll('.qb-row-cb');
     if (selectAllCb && allRowCbs.length > 0) {
@@ -365,6 +375,54 @@ export function renderQuestionBank(container) {
     };
   }
 
+  // Publish All Drafts Button
+  const publishAllBtn = container.querySelector('#btn-publish-all-drafts');
+  if (publishAllBtn) {
+    publishAllBtn.onclick = async () => {
+      if (confirm('Publish all draft questions in the question bank so they are live and exam-ready?')) {
+        publishAllBtn.disabled = true;
+        publishAllBtn.textContent = 'Publishing questions...';
+        try {
+          const res = await api.post('/questions/bulk-publish', { all_drafts: true });
+          alert(`Successfully published ${res.count || 0} question(s)!`);
+          loadQuestions();
+        } catch (err) {
+          alert('Failed to publish questions: ' + err.message);
+        } finally {
+          publishAllBtn.disabled = false;
+          publishAllBtn.innerHTML = `
+            <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            Publish All Drafts
+          `;
+        }
+      }
+    };
+  }
+
+  // Bulk Publish Selected Button
+  const bulkPublishBtn = container.querySelector('#btn-qb-bulk-publish');
+  if (bulkPublishBtn) {
+    bulkPublishBtn.onclick = async () => {
+      const ids = Array.from(selectedQuestionIds);
+      if (ids.length === 0) return;
+      if (confirm(`Publish ${ids.length} selected question(s)? They will become active and exam-ready.`)) {
+        bulkPublishBtn.disabled = true;
+        bulkPublishBtn.textContent = 'Publishing...';
+        try {
+          const res = await api.post('/questions/bulk-publish', { question_ids: ids });
+          alert(`Successfully published ${res.count || ids.length} question(s)!`);
+          selectedQuestionIds.clear();
+          loadQuestions();
+        } catch (err) {
+          alert('Failed to publish selected questions: ' + err.message);
+        } finally {
+          bulkPublishBtn.disabled = false;
+          updateBulkBar();
+        }
+      }
+    };
+  }
+
   // Bulk Delete Button
   const bulkDeleteBtn = container.querySelector('#btn-qb-bulk-delete');
   if (bulkDeleteBtn) {
@@ -480,7 +538,7 @@ export function renderQuestionBank(container) {
         questions: items
       });
 
-      statusDiv.innerHTML = `<span style="color:var(--success); font-weight:600;">Successfully imported ${res.imported.length} question(s) as Draft!</span>`;
+      statusDiv.innerHTML = `<span style="color:var(--success); font-weight:600;">Successfully imported ${res.imported.length} question(s) as Published!</span>`;
       setTimeout(() => {
         importModal.close();
         loadQuestions();

@@ -843,11 +843,14 @@ export function renderQuestionEditor(container, { questionId = null, defaultCour
       container.querySelector('#q-explanation').value = q.answer_explanation || '';
       container.querySelector('#q-explanation-vis').value = q.explanation_visibility || 'after_submission';
       container.querySelector('#q-points').value = q.points || 1;
-      container.querySelector('#q-status').value = q.status || 'draft';
+      container.querySelector('#q-status').value = q.status || 'published';
       container.querySelector('#q-partial').checked = Boolean(q.partial_credit);
       container.querySelector('#q-manual').checked = Boolean(q.requires_manual_review);
 
       renderAnswerEditor(q.question_type, q.answer_options, q.correct_answer);
+    }).catch(err => {
+      alert('Unable to load question details: ' + (err.message || 'Question not found.'));
+      if (onSaved) onSaved(null);
     });
   } else {
     renderAnswerEditor('single_choice');

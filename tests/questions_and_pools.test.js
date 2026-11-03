@@ -153,7 +153,7 @@ describe('Question Bank, 10-Step Workflow & Question Pools Tests', () => {
     assert.strictEqual(randomSelection.length, 2, 'Should select configured number of questions');
   });
 
-  test('Import questions template creates questions in Draft status', () => {
+  test('Import questions template creates questions in Published status by default', () => {
     const importData = [
       {
         question_type: 'single_choice',
@@ -168,7 +168,7 @@ describe('Question Bank, 10-Step Workflow & Question Pools Tests', () => {
     assert.strictEqual(res.imported.length, 1);
 
     const importedQ = questionService.getQuestion(res.imported[0].id);
-    assert.strictEqual(importedQ.status, 'draft', 'Imported questions must start as Draft');
+    assert.strictEqual(importedQ.status, 'published', 'Imported questions must start as Published by default');
   });
 
   test('Bulk delete multiple questions permanently removes records and cleans up references', () => {

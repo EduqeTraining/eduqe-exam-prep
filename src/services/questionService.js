@@ -112,7 +112,7 @@ function createQuestion(data) {
     negative_marking = false,
     randomize_options = true,
     requires_manual_review = false,
-    status = 'draft',
+    status = 'published',
     version_notes = 'Initial version',
     required_selection_count,
     adminUserId = null,
@@ -437,7 +437,7 @@ function updateQuestion(questionId, data, {
   return getQuestion(questionId);
 }
 
-function duplicateQuestion(questionId, adminUserId = null, adminUsername = 'admin') {
+function duplicateQuestion(questionId, adminUserId = null, adminUsername = 'admin', { status = 'draft' } = {}) {
   const source = getQuestion(questionId);
   if (!source) throw new Error('Source question not found.');
 
@@ -460,7 +460,7 @@ function duplicateQuestion(questionId, adminUserId = null, adminUsername = 'admi
     negative_marking: source.negative_marking,
     randomize_options: source.randomize_options,
     requires_manual_review: source.requires_manual_review,
-    status: 'draft',
+    status,
     version_notes: `Duplicated from question ${questionId}`,
     adminUserId,
     adminUsername
@@ -533,6 +533,43 @@ function deleteQuestion(questionId, adminUserId = null, adminUsername = 'admin',
   return deleteQuestions([questionId], adminUserId, adminUsername, { force });
 }
 
+function bulkPublishQuestions(ids = 'all', adminUserId = null, adminUsername = 'admin') {
+  const db = getDatabase();
+  return db.transaction(() => {
+    let targetQuestions = [];
+    if (ids === 'all' || !Array.isArray(ids) || ids.length === 0) {
+      targetQuestions = db.all("SELECT id FROM questions WHERE status != 'published'");
+    } else {
+      const validIds = ids.filter(id => Boolean(id && String(id).trim()));
+      if (validIds.length === 0) return { success: true, count: 0, published_ids: [] };
+      const placeholders = validIds.map(() => '?').join(',');
+      targetQuestions = db.all(`SELECT id FROM questions WHERE id IN (${placeholders})`, validIds);
+    }
+
+    if (targetQuestions.length === 0) {
+      return { success: true, count: 0, published_ids: [] };
+    }
+
+    const targetIds = targetQuestions.map(q => q.id);
+    const placeholders = targetIds.map(() => '?').join(',');
+    db.run(
+      `UPDATE questions SET status = 'published', updated_at = datetime('now') WHERE id IN (${placeholders})`,
+      targetIds
+    );
+
+    logAction({
+      userId: adminUserId,
+      username: adminUsername,
+      action: 'BULK_PUBLISH_QUESTIONS',
+      entityType: 'questions',
+      entityId: targetIds.join(','),
+      details: { count: targetIds.length, question_ids: targetIds }
+    });
+
+    return { success: true, count: targetIds.length, published_ids: targetIds };
+  });
+}
+
 function importQuestions(items, { courseId = null, adminUserId = null, adminUsername = 'admin' } = {}) {
   const results = {
     total: items.length,
@@ -577,7 +614,7 @@ function importQuestions(items, { courseId = null, adminUserId = null, adminUser
         randomize_options: item.randomize_options !== false,
         requires_manual_review: item.requires_manual_review === true,
         required_selection_count: item.required_selection_count,
-        status: 'draft', // Non-negotiable Rule: imported questions start as Draft
+        status: item.status || 'published', // Published by default for exam readiness
         version_notes: 'Imported from template',
         adminUserId,
         adminUsername
@@ -610,6 +647,7 @@ module.exports = {
   archiveQuestion,
   deleteQuestion,
   deleteQuestions,
+  bulkPublishQuestions,
   importQuestions,
   VALID_TYPES
 };
