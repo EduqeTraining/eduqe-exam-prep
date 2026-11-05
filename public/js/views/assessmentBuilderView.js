@@ -870,7 +870,7 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
       return;
     }
 
-    list.innerHTML = filtered.map(q => {
+    list.innerHTML = filtered.map((q, idx) => {
       const inSection = existingMap.get(q.id);
       const isAlreadyAdded = Boolean(inSection);
       const isChecked = selectedPickerIds.has(q.id);
@@ -890,7 +890,7 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
                 <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">${q.points || 1} pt${q.points === 1 ? '' : 's'}</span>
               </div>
               <div style="font-weight:700; font-size:0.925rem; color:var(--text-main); line-height:1.4;">
-                ${escapeHtml(q.question_text)}
+                <span class="badge badge-neutral" style="font-size:0.7rem; font-weight:800; margin-right:0.35rem; padding:0.12rem 0.4rem;">Q${idx + 1}</span>${escapeHtml(q.question_text)}
               </div>
               ${q.question_description ? `
                 <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">

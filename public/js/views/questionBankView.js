@@ -222,7 +222,7 @@ export function renderQuestionBank(container) {
       return;
     }
 
-    tbody.innerHTML = questions.map(q => {
+    tbody.innerHTML = questions.map((q, idx) => {
       const typeLabel = q.question_type.replace(/_/g, ' ').toUpperCase();
       const statusBadge = q.status === 'published' ? 'badge-success' : (q.status === 'draft' ? 'badge-neutral' : 'badge-warning');
       const diffBadge = q.difficulty === 'hard' ? 'badge-danger' : (q.difficulty === 'medium' ? 'badge-warning' : 'badge-neutral');
@@ -239,7 +239,7 @@ export function renderQuestionBank(container) {
           </td>
           <td class="qb-col-question">
             <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); line-height:1.45; margin-bottom:0.25rem;">
-              ${escapeHtml(q.question_text)}
+              <span class="badge badge-neutral" style="font-size:0.75rem; font-weight:800; margin-right:0.45rem; padding:0.15rem 0.45rem;">#${idx + 1}</span>${escapeHtml(q.question_text)}
             </div>
             ${q.question_description ? `
               <div class="qb-scenario-preview" title="${escapeHtml(q.question_description)}">

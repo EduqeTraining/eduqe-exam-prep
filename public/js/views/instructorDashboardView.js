@@ -1117,6 +1117,7 @@ export function renderInstructorDashboard(container, router) {
       questionsContainer.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:0.85rem;">
           ${filtered.map((q, idx) => {
+            const qNum = q.question_number || (idx + 1);
             const isWeak = q.needs_review;
             const isAttempted = q.is_attempted;
             const pct = isAttempted && q.success_percentage !== null ? q.success_percentage : null;
@@ -1129,6 +1130,9 @@ export function renderInstructorDashboard(container, router) {
                 <div class="q-card-header" data-qid="${escapeHtml(q.id)}" style="padding:0.9rem 1.15rem; cursor:pointer; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; user-select:none;">
                   <div style="flex:1;">
                     <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.35rem; flex-wrap:wrap;">
+                      <span class="badge" style="font-size:0.75rem; font-weight:800; background:var(--brand-lime, #62b017); color:#000;">
+                        Question ${qNum}
+                      </span>
                       ${isWeak ? `
                         <span class="badge badge-danger" style="font-size:0.7rem; font-weight:800;">
                           ⚠️ WEAK SPOT (${pct}%)
@@ -1148,7 +1152,7 @@ export function renderInstructorDashboard(container, router) {
                       <span class="badge badge-neutral" style="font-size:0.7rem;">${q.points || 1} pt(s)</span>
                     </div>
                     <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); line-height:1.45;">
-                      ${escapeHtml(q.question_text)}
+                      <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
                     </div>
                   </div>
 
@@ -1186,10 +1190,10 @@ export function renderInstructorDashboard(container, router) {
                   <!-- Question Text Full Prompt -->
                   <div style="margin-bottom:1rem;">
                     <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
-                      Question Prompt:
+                      Question ${qNum} Prompt:
                     </span>
                     <div style="font-size:1.05rem; font-weight:800; color:var(--text-main); margin-top:0.25rem; line-height:1.45;">
-                      ${escapeHtml(q.question_text)}
+                      <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
                     </div>
                   </div>
 

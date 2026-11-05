@@ -1069,7 +1069,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const dq of directQuestions) {
       if (!questionsMap.has(dq.id)) {
-        questionsMap.set(dq.id, dq);
+        questionsMap.set(dq.id, { ...dq, question_number: questionsMap.size + 1 });
       }
     }
 
@@ -1087,7 +1087,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const pq of poolQuestions) {
       if (!questionsMap.has(pq.id)) {
-        questionsMap.set(pq.id, pq);
+        questionsMap.set(pq.id, { ...pq, question_number: questionsMap.size + 1 });
       }
     }
   }
@@ -1106,7 +1106,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const cq of courseQuestions) {
       if (!questionsMap.has(cq.id)) {
-        questionsMap.set(cq.id, cq);
+        questionsMap.set(cq.id, { ...cq, question_number: questionsMap.size + 1 });
       }
     }
   }
@@ -1193,6 +1193,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
 
     return {
       id: q.id,
+      question_number: q.question_number || (idx + 1),
       question_text: q.question_text || '',
       question_description: q.question_description || '',
       question_type: q.question_type || 'single_choice',
