@@ -621,9 +621,12 @@ function submitSection({ attemptId, userId, sectionName }) {
         assessment_sections: JSON.stringify(['Section 1'])
       };
     } else if (userId) {
-      // Fallback: check if the student has an active in-progress attempt
+      // Fallback: check if the student has an active in-progress attempt, or most recent attempt
       const userActive = db.get(
         "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+        [userId]
+      ) || db.get(
+        "SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
         [userId]
       );
       if (userActive) {
@@ -660,12 +663,38 @@ function submitSection({ attemptId, userId, sectionName }) {
   if (attempt.user_id !== userId) {
     throw new Error('Unauthorized attempt access.');
   }
-  if (attempt.status !== 'in_progress') {
-    throw new Error('Cannot submit section for an assessment that is not in progress.');
-  }
 
   const secName = (sectionName || '').trim();
   if (!secName) throw new Error('Section name is required.');
+
+  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
+
+  // Idempotency: If attempt is already submitted/marked or section was already submitted,
+  // gracefully return the attempt state instead of throwing an error
+  if (attempt.status !== 'in_progress') {
+    const finalState = getAttemptState(attempt.id, userId);
+    return {
+      success: true,
+      already_submitted: true,
+      section_name: secName,
+      is_all_completed: true,
+      completed_sections: completedSections,
+      status: finalState?.status || attempt.status,
+      attempt_state: finalState
+    };
+  }
+
+  if (completedSections.includes(secName)) {
+    const curState = getAttemptState(attempt.id, userId);
+    return {
+      success: true,
+      already_submitted: true,
+      section_name: secName,
+      completed_sections: completedSections,
+      status: curState?.status || attempt.status,
+      attempt_state: curState
+    };
+  }
 
   // Resolve targetClassId if missing
   let targetClassId = attempt.class_id;
@@ -693,15 +722,27 @@ function submitSection({ attemptId, userId, sectionName }) {
   }
 
   // Fetch all answers in this section
-  const answers = db.all(
+  let answers = db.all(
     `SELECT aa.*, q.question_type, q.question_text, q.question_description,
             q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
             q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
      FROM attempt_answers aa
      LEFT JOIN questions q ON q.id = aa.question_id
-     WHERE aa.attempt_id = ? AND aa.section_name = ?`,
+     WHERE aa.attempt_id = ? AND TRIM(aa.section_name) = ?`,
     [attemptId, secName]
   );
+
+  if (answers.length === 0) {
+    answers = db.all(
+      `SELECT aa.*, q.question_type, q.question_text, q.question_description,
+              q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
+              q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
+       FROM attempt_answers aa
+       LEFT JOIN questions q ON q.id = aa.question_id
+       WHERE aa.attempt_id = ? AND LOWER(TRIM(aa.section_name)) = LOWER(?)`,
+      [attemptId, secName]
+    );
+  }
 
   if (answers.length === 0) {
     throw new Error(`No questions found for section '${secName}'.`);
@@ -749,7 +790,6 @@ function submitSection({ attemptId, userId, sectionName }) {
   const passMark = attempt.pass_mark_percentage || 70;
   const isSectionPassed = sectionPercentage >= passMark;
 
-  const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
   if (!completedSections.includes(secName)) {
     completedSections.push(secName);
   }

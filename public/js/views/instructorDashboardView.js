@@ -180,13 +180,39 @@ export function renderInstructorDashboard(container, router) {
           <div>
             <div style="display:flex; align-items:center; gap:0.5rem;">
               <span style="font-size:1.25rem;">&#x1F4A1;</span>
-              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Class Question & Topic Weak-Spot Analysis</h2>
+              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Class Questions &amp; Topics Weak-Spot Analysis</h2>
             </div>
             <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
-              Identifies specific questions and concepts where students struggled most during practice exams.
+              All questions configured for this course/assessment with student accuracy breakdown, answer keys, and pedagogical explanations. Click on any question to view its options and correct answer.
             </p>
           </div>
-          <span class="badge badge-warning" id="badge-weak-count" style="display:none;">0 Questions Need Review</span>
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <span class="badge badge-warning" id="badge-weak-count" style="display:none;">0 Questions Need Review</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all-questions" style="font-size:0.75rem; font-weight:700;">
+              Expand All Details
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter bar for questions -->
+        <div style="display:flex; gap:0.65rem; margin-bottom:1rem; align-items:center; flex-wrap:wrap; padding:0.65rem 0.85rem; background:var(--surface-subtle); border-radius:var(--radius-md); border:1px solid var(--border);">
+          <input 
+            type="text" 
+            id="q-search-filter" 
+            class="form-control" 
+            placeholder="Search questions or topics..." 
+            style="max-width:240px; padding:0.4rem 0.65rem; font-size:0.85rem;"
+          />
+          <select id="q-section-filter" class="form-control" style="max-width:200px; padding:0.4rem 0.65rem; font-size:0.85rem;">
+            <option value="">All Sections</option>
+          </select>
+          <select id="q-status-filter" class="form-control" style="max-width:185px; padding:0.4rem 0.65rem; font-size:0.85rem;">
+            <option value="">All Statuses</option>
+            <option value="weak">⚠️ Review Recommended (&lt; 60%)</option>
+            <option value="mastery">✔ Good Mastery (≥ 60%)</option>
+            <option value="unattempted">⏳ Not Yet Attempted</option>
+          </select>
+          <span id="q-count-badge" style="font-size:0.75rem; color:var(--text-muted); margin-left:auto; font-weight:600;"></span>
         </div>
 
         <div id="questions-analysis-container">
@@ -860,67 +886,400 @@ export function renderInstructorDashboard(container, router) {
     }).join('');
   }
 
+  function resolveOptionText(idOrVal, opts) {
+    if (idOrVal === null || idOrVal === undefined) return '';
+    const key = String(idOrVal);
+    if (!opts) return key;
+
+    let parsed = opts;
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed); } catch (_) {}
+    }
+
+    if (Array.isArray(parsed)) {
+      const found = parsed.find(o => (typeof o === 'object' && o !== null ? (String(o.id) === key || String(o.value) === key) : String(o) === key));
+      if (found && typeof found === 'object') return found.text || found.label || key;
+    } else if (typeof parsed === 'object' && parsed !== null) {
+      const sources = Array.isArray(parsed.sources) ? parsed.sources : [];
+      const targets = Array.isArray(parsed.targets) ? parsed.targets : [];
+      for (const item of [...sources, ...targets]) {
+        if (item && (String(item.id) === key || String(item.value) === key)) {
+          return item.text || item.label || key;
+        }
+      }
+    }
+    return key;
+  }
+
+  function formatAnswerText(val, opts) {
+    if (val === null || val === undefined || val === '') return 'None';
+    if (typeof val === 'object') {
+      if (Array.isArray(val)) {
+        return val.map(item => {
+          if (typeof item === 'object' && item !== null) {
+            const left = item.left || item.target || item.source;
+            const right = item.right || item.source || item.target;
+            return `${resolveOptionText(left, opts)} → ${resolveOptionText(right, opts)}`;
+          }
+          return resolveOptionText(item, opts);
+        }).join(', ');
+      }
+      return Object.entries(val).map(([k, v]) => `${resolveOptionText(k, opts)} → ${resolveOptionText(v, opts)}`).join(' | ');
+    }
+    return resolveOptionText(val, opts);
+  }
+
+  function renderQuestionChoices(q) {
+    const type = q.question_type || 'single_choice';
+    let opts = q.answer_options;
+    if (typeof opts === 'string') {
+      try { opts = JSON.parse(opts); } catch (_) {}
+    }
+    let correct = q.correct_answer;
+    if (typeof correct === 'string') {
+      try { correct = JSON.parse(correct); } catch (_) {}
+    }
+
+    function isOptCorrect(optVal) {
+      if (correct === null || correct === undefined) return false;
+      const strOpt = String(optVal).trim().toLowerCase();
+      if (Array.isArray(correct)) {
+        return correct.some(c => String(c).trim().toLowerCase() === strOpt);
+      }
+      if (typeof correct === 'object' && correct !== null) {
+        return Object.values(correct).some(c => String(c).trim().toLowerCase() === strOpt);
+      }
+      return String(correct).trim().toLowerCase() === strOpt;
+    }
+
+    if (type === 'yes_no' || type === 'true_false') {
+      const list = type === 'yes_no' ? ['Yes', 'No'] : ['True', 'False'];
+      return `
+        <div style="display:flex; gap:0.65rem; flex-wrap:wrap; margin-top:0.5rem;">
+          ${list.map(val => {
+            const isCorrect = isOptCorrect(val);
+            return `
+              <div style="padding:0.6rem 1rem; border-radius:var(--radius-md); border:2px solid ${isCorrect ? 'var(--brand-lime)' : 'var(--border)'}; background:${isCorrect ? 'rgba(34,197,94,0.12)' : 'var(--surface)'}; display:flex; align-items:center; gap:0.5rem;">
+                <strong style="color:var(--text-main); font-size:0.95rem;">${escapeHtml(val)}</strong>
+                ${isCorrect ? '<span class="badge badge-success" style="font-size:0.7rem; font-weight:800;">✔ CORRECT</span>' : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    if (type === 'single_choice' || type === 'multiple_choice' || type === 'scenario' || type === 'case_study') {
+      const list = Array.isArray(opts) ? opts : [];
+      return `
+        <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
+          ${list.map((opt, i) => {
+            const optId = typeof opt === 'object' && opt !== null ? (opt.id || opt.value || `opt_${i}`) : opt;
+            const optText = typeof opt === 'object' && opt !== null ? (opt.text || opt.label || opt.id || '') : opt;
+            const isCorrect = isOptCorrect(optId) || isOptCorrect(optText);
+            const letter = String.fromCharCode(65 + i);
+            return `
+              <div style="padding:0.65rem 0.85rem; border-radius:var(--radius-md); border:2px solid ${isCorrect ? 'var(--brand-lime)' : 'var(--border)'}; background:${isCorrect ? 'rgba(34,197,94,0.12)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:center; gap:0.75rem;">
+                <div style="display:flex; align-items:flex-start; gap:0.6rem;">
+                  <span style="display:inline-flex; width:24px; height:24px; border-radius:50%; background:${isCorrect ? 'var(--brand-lime)' : 'var(--surface-subtle)'}; color:${isCorrect ? '#000' : 'var(--text-main)'}; font-weight:800; font-size:0.75rem; align-items:center; justify-content:center; flex-shrink:0;">
+                    ${letter}
+                  </span>
+                  <span style="font-size:0.9rem; color:var(--text-main); line-height:1.4;">${escapeHtml(String(optText))}</span>
+                </div>
+                ${isCorrect ? '<span class="badge badge-success" style="font-size:0.72rem; font-weight:800; flex-shrink:0;">✔ CORRECT ANSWER</span>' : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    if (type === 'fill_blank') {
+      return `
+        <div style="margin-top:0.5rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
+          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Expected Fill-In-The-Blank Answer:</span>
+          <div style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--text-main); margin-top:0.25rem;">
+            ${escapeHtml(formatAnswerText(correct, opts))}
+          </div>
+        </div>
+      `;
+    }
+
+    if (type === 'ordering_sequence') {
+      const list = Array.isArray(correct) ? correct : (Array.isArray(opts) ? opts : []);
+      return `
+        <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.4rem;">
+          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Correct Sequential Order:</span>
+          ${list.map((item, idx) => {
+            let text = typeof item === 'object' && item !== null ? (item.text || item.label || item.id) : item;
+            if (Array.isArray(opts)) {
+              const matchOpt = opts.find(o => (typeof o === 'object' ? (o.id === item || o.value === item) : o === item));
+              if (matchOpt && typeof matchOpt === 'object') text = matchOpt.text || matchOpt.label || text;
+            }
+            return `
+              <div style="padding:0.5rem 0.75rem; border-radius:var(--radius-sm); border:1px solid var(--brand-lime); background:rgba(34,197,94,0.08); display:flex; align-items:center; gap:0.6rem;">
+                <span class="badge badge-primary" style="font-size:0.72rem; font-weight:800;">Step ${idx + 1}</span>
+                <span style="font-size:0.875rem; color:var(--text-main);">${escapeHtml(String(text))}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    // Matching pairs / drag drop / hotspot / dropdown
+    return `
+      <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.4rem;">
+        <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Answer Key &amp; Matches:</span>
+        <div style="font-family:monospace; font-size:0.875rem; padding:0.6rem 0.85rem; border-radius:var(--radius-sm); background:rgba(34,197,94,0.08); border:1px solid var(--brand-lime); color:var(--text-main); white-space:pre-wrap;">
+          ${escapeHtml(formatAnswerText(correct, opts))}
+        </div>
+      </div>
+    `;
+  }
+
   function renderQuestionAnalytics() {
     if (!currentData || !currentData.questions_analysis) return;
     const questions = currentData.questions_analysis;
     const weakCountBadge = container.querySelector('#badge-weak-count');
+    const qSearchFilter = container.querySelector('#q-search-filter');
+    const qSectionFilter = container.querySelector('#q-section-filter');
+    const qStatusFilter = container.querySelector('#q-status-filter');
+    const qCountBadge = container.querySelector('#q-count-badge');
+    const toggleAllBtn = container.querySelector('#btn-toggle-all-questions');
 
     if (questions.length === 0) {
       questionsContainer.innerHTML = `
         <div style="text-align:center; padding:2rem; color:var(--text-muted);">
-          No question attempts recorded for this class yet. As students take practice assessments, question drop-off and accuracy stats will appear here.
+          No questions found for the assigned assessment or class.
         </div>
       `;
-      weakCountBadge.style.display = 'none';
+      if (weakCountBadge) weakCountBadge.style.display = 'none';
+      if (qCountBadge) qCountBadge.textContent = '0 Questions';
       return;
     }
 
     const weakQuestions = questions.filter(q => q.needs_review);
-    if (weakQuestions.length > 0) {
-      weakCountBadge.textContent = `${weakQuestions.length} Questions Need In-Class Review`;
-      weakCountBadge.style.display = 'inline-block';
-    } else {
-      weakCountBadge.style.display = 'none';
+    if (weakCountBadge) {
+      if (weakQuestions.length > 0) {
+        weakCountBadge.textContent = `${weakQuestions.length} Questions Need In-Class Review`;
+        weakCountBadge.style.display = 'inline-block';
+      } else {
+        weakCountBadge.style.display = 'none';
+      }
     }
 
-    questionsContainer.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:0.75rem;">
-        ${questions.map((q, idx) => {
-          const isWeak = q.needs_review;
-          const pct = q.success_percentage || 0;
-          return `
-            <div style="border:1px solid ${isWeak ? 'rgba(220,38,38,0.4)' : 'var(--border)'}; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; border-left:4px solid ${isWeak ? 'var(--danger)' : 'var(--brand-lime)'}; padding:0.9rem 1.15rem; border-radius:var(--radius-md);">
-              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; margin-bottom:0.4rem;">
-                <div style="flex:1;">
-                  <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem; flex-wrap:wrap;">
-                    <span class="badge ${isWeak ? 'badge-danger' : 'badge-primary'}" style="font-size:0.7rem;">
-                      ${isWeak ? '⚠️ REVIEW RECOMMENDED' : '&#x2714;&#xFE0F; GOOD MASTERY'}
+    // Populate section filter options if not already done
+    if (qSectionFilter && qSectionFilter.options.length <= 1) {
+      const distinctSections = [...new Set(questions.map(q => q.section_name).filter(Boolean))];
+      qSectionFilter.innerHTML = '<option value="">All Sections</option>' +
+        distinctSections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+    }
+
+    function updateQuestionList() {
+      const searchVal = (qSearchFilter?.value || '').trim().toLowerCase();
+      const secVal = qSectionFilter?.value || '';
+      const statusVal = qStatusFilter?.value || '';
+
+      const filtered = questions.filter(q => {
+        const textMatch = !searchVal ||
+          (q.question_text || '').toLowerCase().includes(searchVal) ||
+          (q.topic || '').toLowerCase().includes(searchVal) ||
+          (q.section_name || '').toLowerCase().includes(searchVal);
+
+        const secMatch = !secVal || q.section_name === secVal;
+
+        let statusMatch = true;
+        if (statusVal === 'weak') {
+          statusMatch = Boolean(q.needs_review);
+        } else if (statusVal === 'mastery') {
+          statusMatch = Boolean(q.is_attempted && !q.needs_review);
+        } else if (statusVal === 'unattempted') {
+          statusMatch = !q.is_attempted;
+        }
+
+        return textMatch && secMatch && statusMatch;
+      });
+
+      if (qCountBadge) {
+        qCountBadge.textContent = `Showing ${filtered.length} of ${questions.length} Questions`;
+      }
+
+      if (filtered.length === 0) {
+        questionsContainer.innerHTML = `
+          <div style="text-align:center; padding:2rem; color:var(--text-muted);">
+            No questions match the current filter.
+          </div>
+        `;
+        return;
+      }
+
+      questionsContainer.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:0.85rem;">
+          ${filtered.map((q, idx) => {
+            const isWeak = q.needs_review;
+            const isAttempted = q.is_attempted;
+            const pct = isAttempted && q.success_percentage !== null ? q.success_percentage : null;
+            const cardBorder = isWeak ? 'rgba(220,38,38,0.45)' : (isAttempted ? 'var(--border)' : 'var(--border)');
+            const accentBorder = isWeak ? 'var(--danger)' : (isAttempted ? 'var(--brand-lime)' : 'var(--border)');
+
+            return `
+              <div class="card q-card-item" data-qid="${escapeHtml(q.id)}" style="border:1px solid ${cardBorder}; border-left:5px solid ${accentBorder}; padding:0; overflow:hidden; transition:border-color 0.15s ease;">
+                <!-- Clickable Question Card Header -->
+                <div class="q-card-header" data-qid="${escapeHtml(q.id)}" style="padding:0.9rem 1.15rem; cursor:pointer; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; user-select:none;">
+                  <div style="flex:1;">
+                    <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.35rem; flex-wrap:wrap;">
+                      ${isWeak ? `
+                        <span class="badge badge-danger" style="font-size:0.7rem; font-weight:800;">
+                          ⚠️ WEAK SPOT (${pct}%)
+                        </span>
+                      ` : (isAttempted ? `
+                        <span class="badge badge-success" style="font-size:0.7rem; font-weight:800;">
+                          ✔ GOOD MASTERY (${pct}%)
+                        </span>
+                      ` : `
+                        <span class="badge badge-neutral" style="font-size:0.7rem;">
+                          ⏳ NOT YET ATTEMPTED
+                        </span>
+                      `)}
+                      <span class="badge badge-secondary" style="font-size:0.7rem;">📁 ${escapeHtml(q.section_name || 'Section 1')}</span>
+                      <span class="badge badge-neutral" style="font-size:0.7rem;">🏷️ ${escapeHtml(q.topic || 'General')}</span>
+                      <span class="badge badge-neutral" style="font-size:0.7rem; text-transform:capitalize;">${escapeHtml(q.difficulty || 'medium')}</span>
+                      <span class="badge badge-neutral" style="font-size:0.7rem;">${q.points || 1} pt(s)</span>
+                    </div>
+                    <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); line-height:1.45;">
+                      ${escapeHtml(q.question_text)}
+                    </div>
+                  </div>
+
+                  <div style="text-align:right; min-width:130px; display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
+                    <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!isAttempted ? 'var(--text-muted)' : (isWeak ? 'var(--danger)' : 'var(--brand-lime)')};">
+                      ${pct !== null ? `${pct}%` : '-'}
+                    </div>
+                    <div style="font-size:0.72rem; color:var(--text-muted);">
+                      ${isAttempted ? `${q.correct_answers} / ${q.total_answers} correct` : '0 attempts recorded'}
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm btn-toggle-q-details" data-qid="${escapeHtml(q.id)}" style="font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; margin-top:0.25rem;">
+                      👁 View Answers ▼
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Accuracy Progress Bar -->
+                <div style="height:4px; background:var(--surface-subtle); width:100%;">
+                  <div style="height:100%; width:${pct !== null ? pct : 0}%; background:${isWeak ? 'var(--danger)' : 'var(--brand-lime)'};"></div>
+                </div>
+
+                <!-- Expandable Question Details Drawer -->
+                <div id="q-details-${escapeHtml(q.id)}" class="q-details-drawer" style="display:none; padding:1.15rem; background:var(--surface-subtle); border-top:1px dashed var(--border);">
+                  
+                  <!-- Scenario / Reference Material if Present -->
+                  ${q.question_description ? `
+                    <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--primary);">
+                      <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.3rem;">
+                        📋 Scenario &amp; Reference Material
+                      </div>
+                      <div style="font-size:0.875rem; color:var(--text-main); white-space:pre-wrap; line-height:1.45;">${escapeHtml(q.question_description)}</div>
+                    </div>
+                  ` : ''}
+
+                  <!-- Question Text Full Prompt -->
+                  <div style="margin-bottom:1rem;">
+                    <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
+                      Question Prompt:
                     </span>
-                    <span class="badge badge-secondary" style="font-size:0.7rem;">&#x1F4C2; ${escapeHtml(q.section_name || 'Section 1')}</span>
-                    <span class="badge badge-neutral" style="font-size:0.7rem;">${escapeHtml(q.topic || 'General')}</span>
-                    <span class="badge badge-neutral" style="font-size:0.7rem; text-transform:capitalize;">${escapeHtml(q.difficulty || 'medium')}</span>
+                    <div style="font-size:1.05rem; font-weight:800; color:var(--text-main); margin-top:0.25rem; line-height:1.45;">
+                      ${escapeHtml(q.question_text)}
+                    </div>
                   </div>
-                  <div style="font-weight:600; font-size:0.9rem; color:var(--text-main);">
-                    ${escapeHtml(q.question_text.length > 140 ? q.question_text.slice(0, 140) + '...' : q.question_text)}
+
+                  <!-- Choices & Options Delegates Could Choose -->
+                  <div style="margin-bottom:1.15rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+                      <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
+                        Answer Options &amp; Correct Answer Key:
+                      </span>
+                      <span class="badge badge-neutral" style="font-size:0.7rem;">${escapeHtml(q.question_type.toUpperCase().replace(/_/g, ' '))}</span>
+                    </div>
+                    ${renderQuestionChoices(q)}
                   </div>
-                </div>
-                <div style="text-align:right; min-width:110px;">
-                  <div style="font-size:1.25rem; font-weight:800; font-family:var(--font-heading); color:${isWeak ? 'var(--danger)' : 'var(--text-main)'};">
-                    ${pct}%
+
+                  <!-- Official Correct Answer Summary Box -->
+                  <div style="margin-bottom:1rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
+                    <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.25rem;">
+                      <span style="color:var(--brand-lime); font-size:1rem;">✔</span>
+                      <strong style="font-size:0.85rem; color:var(--text-main);">Official Correct Answer:</strong>
+                    </div>
+                    <div style="font-family:monospace; font-size:0.9rem; font-weight:700; color:var(--text-main);">
+                      ${escapeHtml(formatAnswerText(q.correct_answer, q.answer_options))}
+                    </div>
                   </div>
-                  <div style="font-size:0.725rem; color:var(--text-muted);">
-                    ${q.correct_answers} / ${q.total_answers} correct
+
+                  <!-- Explanation & Discussion Notes -->
+                  ${q.answer_explanation ? `
+                    <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--brand-lime);">
+                      <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.35rem;">
+                        💡 Pedagogical Explanation &amp; Discussion Notes for Class
+                      </div>
+                      <div style="font-size:0.875rem; color:var(--text-main); line-height:1.5; white-space:pre-wrap;">${escapeHtml(q.answer_explanation)}</div>
+                    </div>
+                  ` : ''}
+
+                  <!-- Cohort Performance Stats Bar -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-top:0.75rem; border-top:1px dashed var(--border); font-size:0.78rem; color:var(--text-muted);">
+                    <div>
+                      Cohort Accuracy: <strong style="color:var(--text-main);">${pct !== null ? `${pct}%` : 'No attempts'}</strong>
+                      ${isAttempted ? ` (${q.correct_answers} correct, ${q.incorrect_answers} incorrect out of ${q.total_answers} answers)` : ''}
+                    </div>
+                    <div>
+                      Section: <strong style="color:var(--text-main);">${escapeHtml(q.section_name)}</strong>
+                    </div>
                   </div>
+
                 </div>
               </div>
-              <div style="height:6px; background:var(--surface-subtle); border-radius:var(--radius-full); overflow:hidden;">
-                <div style="height:100%; width:${pct}%; background:${isWeak ? 'var(--danger)' : 'var(--brand-lime)'};"></div>
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      // Attach click handlers to headers and toggle buttons
+      questionsContainer.querySelectorAll('.q-card-header, .btn-toggle-q-details').forEach(el => {
+        el.onclick = (e) => {
+          e.stopPropagation();
+          const qid = el.dataset.qid;
+          if (!qid) return;
+          const drawer = questionsContainer.querySelector(`#q-details-${CSS.escape(qid)}`);
+          const btn = questionsContainer.querySelector(`.btn-toggle-q-details[data-qid="${CSS.escape(qid)}"]`);
+          if (!drawer) return;
+          const isCurrentlyHidden = drawer.style.display === 'none' || !drawer.style.display;
+          drawer.style.display = isCurrentlyHidden ? 'block' : 'none';
+          if (btn) {
+            btn.textContent = isCurrentlyHidden ? '▲ Close Details' : '👁 View Answers ▼';
+          }
+        };
+      });
+    }
+
+    if (qSearchFilter) qSearchFilter.oninput = updateQuestionList;
+    if (qSectionFilter) qSectionFilter.onchange = updateQuestionList;
+    if (qStatusFilter) qStatusFilter.onchange = updateQuestionList;
+
+    if (toggleAllBtn) {
+      toggleAllBtn.onclick = () => {
+        const allDrawers = questionsContainer.querySelectorAll('.q-details-drawer');
+        const anyHidden = Array.from(allDrawers).some(d => d.style.display === 'none' || !d.style.display);
+        allDrawers.forEach(d => {
+          d.style.display = anyHidden ? 'block' : 'none';
+        });
+        questionsContainer.querySelectorAll('.btn-toggle-q-details').forEach(btn => {
+          btn.textContent = anyHidden ? '▲ Close Details' : '👁 View Answers ▼';
+        });
+        toggleAllBtn.textContent = anyHidden ? 'Collapse All Details' : 'Expand All Details';
+      };
+    }
+
+    updateQuestionList();
   }
 
   // Event Handlers

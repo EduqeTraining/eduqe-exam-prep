@@ -457,8 +457,11 @@ function addQuestionToAssessment(assessmentId, questionId, { sectionName = null,
   if (!cleanSection || cleanSection === 'General') {
     cleanSection = configured[0] || 'Section 1';
   } else if (!configured.includes(cleanSection)) {
-    // If not in configured sections, assign to first configured section
-    cleanSection = configured[0] || 'Section 1';
+    // If a specific section name is specified by the caller/builder, preserve it and append to assessment sections
+    configured.push(cleanSection);
+    try {
+      db.run("UPDATE assessments SET sections = ?, updated_at = datetime('now') WHERE id = ?", [JSON.stringify(configured), assessmentId]);
+    } catch (_) {}
   }
 
   const existing = db.get(

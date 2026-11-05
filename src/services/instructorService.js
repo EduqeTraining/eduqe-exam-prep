@@ -1050,56 +1050,177 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const completionRate = totalEnrolled > 0 ? Math.round((attemptedStudents.length / totalEnrolled) * 100) : 0;
   const passRate = attemptedStudents.length > 0 ? Math.round((passedStudents.length / attemptedStudents.length) * 100) : 0;
 
-  // 5. Question-Level Accuracy Analysis (Pedagogical Weak-Spots)
-  let questionAnalytics = [];
+  // 5. Question-Level Accuracy Analysis (Pedagogical Weak-Spots & Full Bank Reflection)
+  const assessmentIds = classAssessments.map(a => a.id).filter(Boolean);
+  const questionsMap = new Map();
+
+  if (assessmentIds.length > 0) {
+    const assPlaceholders = assessmentIds.map(() => '?').join(',');
+    // Direct assessment questions
+    const directQuestions = db.all(
+      `SELECT aq.assessment_id, aq.question_id, aq.section_name, aq.order_index,
+              q.id, q.question_text, q.question_description, q.question_type, q.topic, q.difficulty,
+              q.answer_options, q.correct_answer, q.answer_explanation, q.points
+       FROM assessment_questions aq
+       JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id IN (${assPlaceholders})
+       ORDER BY aq.order_index ASC, aq.id ASC`,
+      assessmentIds
+    );
+    for (const dq of directQuestions) {
+      if (!questionsMap.has(dq.id)) {
+        questionsMap.set(dq.id, dq);
+      }
+    }
+
+    // Question pool items
+    const poolQuestions = db.all(
+      `SELECT aq.assessment_id, qpi.question_id, aq.section_name, aq.order_index,
+              q.id, q.question_text, q.question_description, q.question_type, q.topic, q.difficulty,
+              q.answer_options, q.correct_answer, q.answer_explanation, q.points
+       FROM assessment_questions aq
+       JOIN question_pool_items qpi ON qpi.pool_id = aq.pool_id
+       JOIN questions q ON q.id = qpi.question_id
+       WHERE aq.assessment_id IN (${assPlaceholders})
+       ORDER BY aq.order_index ASC, qpi.id ASC`,
+      assessmentIds
+    );
+    for (const pq of poolQuestions) {
+      if (!questionsMap.has(pq.id)) {
+        questionsMap.set(pq.id, pq);
+      }
+    }
+  }
+
+  // If questionsMap is still empty, fallback to course questions
+  if (questionsMap.size === 0 && targetCourseIds.length > 0) {
+    const coursePlaceholders = targetCourseIds.map(() => '?').join(',');
+    const courseQuestions = db.all(
+      `SELECT q.id, q.question_text, q.question_description, q.question_type, q.topic, q.difficulty,
+              q.answer_options, q.correct_answer, q.answer_explanation, q.points,
+              COALESCE(q.section_module, 'Section 1') as section_name, 0 as order_index
+       FROM questions q
+       WHERE q.course_id IN (${coursePlaceholders}) AND q.status = 'published'
+       ORDER BY q.created_at ASC`,
+      targetCourseIds
+    );
+    for (const cq of courseQuestions) {
+      if (!questionsMap.has(cq.id)) {
+        questionsMap.set(cq.id, cq);
+      }
+    }
+  }
+
+  let attemptStats = [];
   if (isAllCohorts) {
     const classPlaceholders = targetClassIds.map(() => '?').join(',');
-    questionAnalytics = db.all(
-      `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty,
+    attemptStats = db.all(
+      `SELECT aa.question_id,
               MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
               COUNT(aa.id) as total_answers,
-              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
-              ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
+              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers
        FROM attempt_answers aa
        JOIN student_attempts sa ON sa.id = aa.attempt_id
-       LEFT JOIN assessments a ON a.id = sa.assessment_id
-       JOIN questions q ON q.id = aa.question_id
        WHERE (
          sa.class_id IN (${classPlaceholders})
          OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
        )
-         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
-       GROUP BY q.id
-       ORDER BY success_percentage ASC`,
+         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
+       GROUP BY aa.question_id`,
       [...targetClassIds, ...targetClassIds]
     );
   } else {
-    questionAnalytics = db.all(
-      `SELECT q.id, q.question_text, q.question_type, q.topic, q.difficulty,
+    attemptStats = db.all(
+      `SELECT aa.question_id,
               MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
               COUNT(aa.id) as total_answers,
-              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
-              ROUND((CAST(SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(aa.id)) * 100, 1) as success_percentage
+              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers
        FROM attempt_answers aa
        JOIN student_attempts sa ON sa.id = aa.attempt_id
-       LEFT JOIN assessments a ON a.id = sa.assessment_id
-       JOIN questions q ON q.id = aa.question_id
        WHERE (
          sa.class_id = ? 
          OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
          OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        )
-         AND sa.status IN ('submitted', 'marked', 'awaiting_review')
-       GROUP BY q.id
-       ORDER BY success_percentage ASC`,
+         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
+       GROUP BY aa.question_id`,
       [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
     );
   }
 
-  questionAnalytics.forEach(q => {
-    const mappedSec = questionSectionMap.get(q.id) || q.attempt_section_name;
-    q.section_name = (!mappedSec || mappedSec === 'General') ? (orderedSectionNames[0] || 'Section 1') : mappedSec;
-    q.needs_review = (q.success_percentage !== null && q.success_percentage < 60);
+  const statsMap = new Map();
+  for (const row of attemptStats) {
+    statsMap.set(row.question_id, row);
+    if (!questionsMap.has(row.question_id)) {
+      const qRow = db.get(
+        `SELECT q.id, q.question_text, q.question_description, q.question_type, q.topic, q.difficulty,
+                q.answer_options, q.correct_answer, q.answer_explanation, q.points
+         FROM questions q WHERE q.id = ?`,
+        [row.question_id]
+      );
+      if (qRow) {
+        questionsMap.set(qRow.id, {
+          ...qRow,
+          section_name: row.attempt_section_name || 'Section 1',
+          order_index: 999
+        });
+      }
+    }
+  }
+
+  const questionAnalytics = Array.from(questionsMap.values()).map(q => {
+    const stats = statsMap.get(q.id);
+    const totalAnswers = stats ? Number(stats.total_answers) : 0;
+    const correctAnswers = stats ? Number(stats.correct_answers) : 0;
+    const incorrectAnswers = Math.max(0, totalAnswers - correctAnswers);
+    const successPercentage = totalAnswers > 0 ? Math.round((correctAnswers / totalAnswers) * 100) : null;
+    const mappedSec = (stats && stats.attempt_section_name) || questionSectionMap.get(q.id) || q.section_name;
+    const secName = (!mappedSec || mappedSec === 'General') ? (orderedSectionNames[0] || 'Section 1') : mappedSec;
+
+    let parsedOpts = [];
+    try {
+      parsedOpts = typeof q.answer_options === 'string' ? JSON.parse(q.answer_options) : (q.answer_options || []);
+    } catch (_) {
+      parsedOpts = q.answer_options || [];
+    }
+
+    let parsedCorrect = null;
+    try {
+      parsedCorrect = typeof q.correct_answer === 'string' ? JSON.parse(q.correct_answer) : q.correct_answer;
+    } catch (_) {
+      parsedCorrect = q.correct_answer;
+    }
+
+    return {
+      id: q.id,
+      question_text: q.question_text || '',
+      question_description: q.question_description || '',
+      question_type: q.question_type || 'single_choice',
+      topic: q.topic || 'General',
+      difficulty: q.difficulty || 'medium',
+      answer_options: parsedOpts,
+      correct_answer: parsedCorrect,
+      answer_explanation: q.answer_explanation || '',
+      points: q.points || 1,
+      section_name: secName,
+      total_answers: totalAnswers,
+      correct_answers: correctAnswers,
+      incorrect_answers: incorrectAnswers,
+      success_percentage: successPercentage,
+      is_attempted: totalAnswers > 0,
+      needs_review: Boolean(totalAnswers > 0 && successPercentage < 60)
+    };
+  });
+
+  questionAnalytics.sort((a, b) => {
+    if (a.needs_review && !b.needs_review) return -1;
+    if (!a.needs_review && b.needs_review) return 1;
+    if (a.is_attempted && !b.is_attempted) return -1;
+    if (!a.is_attempted && b.is_attempted) return 1;
+    if (a.is_attempted && b.is_attempted) {
+      return (a.success_percentage ?? 0) - (b.success_percentage ?? 0);
+    }
+    return (a.section_name || '').localeCompare(b.section_name || '') || (a.question_text || '').localeCompare(b.question_text || '');
   });
 
   // 6. Recent Attempt Activity Stream

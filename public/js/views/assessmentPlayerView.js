@@ -1838,12 +1838,30 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         try {
           updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
         } catch (initialErr) {
-          if (initialErr.message && (initialErr.message.includes('Attempt not found') || initialErr.message.includes('HTTP error 400') || initialErr.message.includes('HTTP error 404'))) {
-            // Give serverless instance a brief moment to sync and retry once
-            await new Promise(r => setTimeout(r, 1000));
-            updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
-          } else {
-            throw initialErr;
+          // Check if server already marked or completed this section despite network hiccup
+          try {
+            const check = await api.get(`/student/attempts/${currentAttempt.id}`);
+            if (check && (check.status !== 'in_progress' || (check.completed_sections || []).includes(targetSec.name))) {
+              updatedRes = { attempt_state: check, ...check };
+            }
+          } catch (_) {}
+
+          if (!updatedRes) {
+            await new Promise(r => setTimeout(r, 1200));
+            try {
+              updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+            } catch (retryErr) {
+              try {
+                const finalCheck = await api.get(`/student/attempts/${currentAttempt.id}`);
+                if (finalCheck && (finalCheck.status !== 'in_progress' || (finalCheck.completed_sections || []).includes(targetSec.name))) {
+                  updatedRes = { attempt_state: finalCheck, ...finalCheck };
+                } else {
+                  throw retryErr;
+                }
+              } catch (_) {
+                throw retryErr;
+              }
+            }
           }
         }
         secSubmitModal.close();

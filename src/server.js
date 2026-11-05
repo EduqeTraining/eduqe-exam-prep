@@ -560,17 +560,18 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
         try {
           const result = attemptService.autosaveAnswer({
-            attemptId,
+            attemptId: targetAttemptId,
             userId: user.id,
             questionId: body.question_id,
             savedAnswer: body.saved_answer,
             isFlagged: body.is_flagged
           });
-          await supabaseService.syncAttemptAnswersToSupabase(attemptId);
+          await supabaseService.syncAttemptAnswersToSupabase(targetAttemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -582,14 +583,15 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         try {
           const result = attemptService.submitAttempt({
-            attemptId,
+            attemptId: targetAttemptId,
             userId: user.id,
             isAuto: false
           });
-          await supabaseService.syncAttemptToSupabase(attemptId);
+          await supabaseService.syncAttemptToSupabase(targetAttemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -601,10 +603,12 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = restartMatch[1];
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
         try {
           const result = attemptService.restartAttempt({
-            attemptId,
+            attemptId: targetAttemptId,
             userId: user.id,
             assessmentId: body.assessment_id || null,
             classId: body.class_id || null,
@@ -625,16 +629,17 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
         try {
           const result = attemptService.submitSection({
-            attemptId,
+            attemptId: targetAttemptId,
             userId: user.id,
             sectionName: body.section_name
           });
-          await supabaseService.syncAttemptToSupabase(attemptId);
-          await supabaseService.syncAttemptAnswersToSupabase(attemptId);
+          await supabaseService.syncAttemptToSupabase(targetAttemptId);
+          await supabaseService.syncAttemptAnswersToSupabase(targetAttemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -646,15 +651,16 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = resumeTimerMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
         try {
           const result = attemptService.resumeAttemptTimer({
-            attemptId,
+            attemptId: targetAttemptId,
             userId: user.id,
             sectionName: body.section_name || null
           });
-          await supabaseService.syncAttemptToSupabase(attemptId);
+          await supabaseService.syncAttemptToSupabase(targetAttemptId);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -666,11 +672,12 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         try {
-          const state = attemptService.getAttemptState(attemptId, user.id);
+          const state = attemptService.getAttemptState(targetAttemptId, user.id);
           return sendJson(res, 200, {
-            attempt_id: attemptId,
+            attempt_id: targetAttemptId,
             unlocked_sections: state?.unlocked_sections || ['Section 1'],
             completed_sections: state?.completed_sections || [],
             active_section_name: state?.active_section_name || 'Section 1',
@@ -1602,8 +1609,8 @@ async function handleRequest(req, res) {
           adminUsername: user.username
         });
 
-        // If imported for a specific course, also link imported questions to existing course assessments
-        if (body.course_id && body.auto_add_to_assessment !== false && result.imported?.length > 0) {
+        // If imported for a specific course, only link imported questions to existing course assessments if explicitly requested
+        if (body.course_id && body.auto_add_to_assessment === true && result.imported?.length > 0) {
           const courseAssessments = getDatabase().all('SELECT id FROM assessments WHERE course_id = ?', [body.course_id]);
           for (const assess of courseAssessments) {
             for (const q of result.imported) {

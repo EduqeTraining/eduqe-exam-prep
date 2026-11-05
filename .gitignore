@@ -18,3 +18,4 @@ Thumbs.db
 # SQLite WAL and lock files
 data/*.db-shm
 data/*.db-wal
+data/test_*.db*

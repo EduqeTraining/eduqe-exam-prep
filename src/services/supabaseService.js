@@ -566,24 +566,28 @@ async function syncAttemptToSupabase(attemptId) {
   const attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
   if (!attempt) return;
 
-  // Guarantee referenced parent entities (assessment, class, user) exist in Supabase first
-  if (attempt.assessment_id) {
-    try {
-      await syncAssessmentToSupabase(attempt.assessment_id);
-    } catch (e) {}
-  }
-  if (attempt.class_id) {
-    try {
-      await syncClassToSupabase(attempt.class_id);
-    } catch (e) {}
-  }
-  if (attempt.user_id) {
-    try {
-      await syncUserToSupabase(attempt.user_id);
-    } catch (e) {}
-  }
+  // Upsert attempt record directly to Supabase first for fast persistence
+  let syncSuccess = await upsertRecord('student_attempts', attempt);
 
-  await upsertRecord('student_attempts', attempt);
+  // If initial sync failed due to foreign key missing in Supabase, ensure shallow parent records exist and retry
+  if (!syncSuccess) {
+    if (attempt.user_id) {
+      try { await syncUserToSupabase(attempt.user_id); } catch (e) {}
+    }
+    if (attempt.class_id) {
+      try {
+        const cls = db.get('SELECT * FROM classes WHERE id = ?', [attempt.class_id]);
+        if (cls) await upsertRecord('classes', cls);
+      } catch (e) {}
+    }
+    if (attempt.assessment_id) {
+      try {
+        const ass = db.get('SELECT * FROM assessments WHERE id = ?', [attempt.assessment_id]);
+        if (ass) await upsertRecord('assessments', ass);
+      } catch (e) {}
+    }
+    syncSuccess = await upsertRecord('student_attempts', attempt);
+  }
 
   try {
     const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
@@ -639,7 +643,11 @@ async function pullAttemptAnswersForAttempt(attemptId) {
  */
 async function ensureAttemptFullyHydrated(attemptId, userId = null) {
   const config = getSupabaseConfig();
-  if (!config.isEnabled || (!attemptId && !userId)) return;
+  if (!config.isEnabled || (!attemptId && !userId)) {
+    const db = getDatabase();
+    const local = attemptId ? db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]) : null;
+    return { attempt: local, attemptId: local?.id || attemptId };
+  }
 
   const db = getDatabase();
 
@@ -648,6 +656,9 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null) {
   if (!attempt && userId) {
     attempt = db.get(
       "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+      [userId]
+    ) || db.get(
+      "SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
       [userId]
     );
     if (attempt) attemptId = attempt.id;
@@ -661,6 +672,12 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null) {
           `student_attempts?user_id=eq.${encodeURIComponent(userId)}&status=eq.in_progress&order=started_at.desc&limit=1&select=*`,
           { method: 'GET' }
         );
+        if (!Array.isArray(rows) || rows.length === 0) {
+          rows = await supabaseRequest(
+            `student_attempts?user_id=eq.${encodeURIComponent(userId)}&order=started_at.desc&limit=1&select=*`,
+            { method: 'GET' }
+          );
+        }
       }
       if (Array.isArray(rows) && rows.length > 0) {
         upsertLocalRows('student_attempts', rows);
@@ -774,6 +791,8 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null) {
       upsertLocalRows('eduque_settings', sRows);
     }
   } catch (err) {}
+
+  return { attempt, attemptId };
 }
 
 /**

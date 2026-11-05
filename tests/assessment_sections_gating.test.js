@@ -389,6 +389,34 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     assert.ok(!loaded.section_names.includes('Phantom Section 99'), 'Phantom section must not be created');
   });
 
+  await t.test('12. submitSection idempotency: re-submitting an already completed section or marked attempt succeeds gracefully without throwing Attempt not found', async () => {
+    // Student already submitted Section 1 in test 10 above
+    const dupSubmitRes = submitSection({
+      attemptId: 'non-existent-attempt-id-1234',
+      userId: student.id,
+      sectionName: 'Section 1'
+    });
+    assert.ok(dupSubmitRes, 'Idempotent re-submission must return valid response');
+    assert.equal(dupSubmitRes.success, true);
+    assert.equal(dupSubmitRes.already_submitted, true);
+
+    // Now finalize attempt to 'marked'
+    const studentAttempts = db.all("SELECT id FROM student_attempts WHERE user_id = ? AND status = 'in_progress'", [student.id]);
+    for (const a of studentAttempts) {
+      db.run("UPDATE student_attempts SET status = 'marked' WHERE id = ?", [a.id]);
+    }
+
+    // Attempting to submit a section on a marked attempt must also be idempotent and return attempt state without throwing 'Attempt not found'
+    const markedSubmitRes = submitSection({
+      attemptId: studentAttempts[0]?.id || 'fallback-id',
+      userId: student.id,
+      sectionName: 'Section 1'
+    });
+    assert.ok(markedSubmitRes);
+    assert.equal(markedSubmitRes.success, true);
+    assert.equal(markedSubmitRes.already_submitted, true);
+  });
+
   // Cleanup test database
   t.after(() => {
     if (fs.existsSync(testDbPath)) {
