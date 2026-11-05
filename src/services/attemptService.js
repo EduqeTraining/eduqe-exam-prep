@@ -47,6 +47,60 @@ function shuffleArray(arr) {
   return copy;
 }
 
+function applyClassSectionRules(resolvedQuestions, classConfig) {
+  if (!classConfig || !classConfig.sections || Object.keys(classConfig.sections).length === 0) {
+    return resolvedQuestions;
+  }
+  // Group questions by section name, preserving original appearance order
+  const sectionMap = new Map();
+  for (const q of resolvedQuestions) {
+    const sName = (q.section_name && q.section_name !== 'General') ? q.section_name : 'Section 1';
+    if (!sectionMap.has(sName)) sectionMap.set(sName, []);
+    sectionMap.get(sName).push(q);
+  }
+
+  const result = [];
+  for (const [secName, qList] of sectionMap.entries()) {
+    // Match rule by exact name or trimmed name
+    const rule = classConfig.sections[secName] || classConfig.sections[secName.trim()];
+    let currentQuestions = [...qList];
+
+    if (rule) {
+      // 1. Limit questions if specified
+      if (rule.limit && Number(rule.limit) > 0 && Number(rule.limit) < currentQuestions.length) {
+        currentQuestions = currentQuestions.slice(0, Number(rule.limit));
+      }
+
+      // 2. Break down into chunks / parts if specified
+      const chunkSize = Number(rule.chunk_size);
+      if (chunkSize && chunkSize > 0 && chunkSize < currentQuestions.length) {
+        const numChunks = Math.ceil(currentQuestions.length / chunkSize);
+        for (let i = 0; i < numChunks; i++) {
+          const chunkName = `${secName} (Part ${i + 1})`;
+          const chunkSlice = currentQuestions.slice(i * chunkSize, (i + 1) * chunkSize);
+          for (const q of chunkSlice) {
+            result.push({
+              ...q,
+              section_name: chunkName
+            });
+          }
+        }
+        continue;
+      }
+    }
+
+    // Default: keep section name
+    for (const q of currentQuestions) {
+      result.push({
+        ...q,
+        section_name: secName
+      });
+    }
+  }
+
+  return result;
+}
+
 function startAttempt({ userId, assessmentId, classId, forceNew = false, submitExisting = false }) {
   const db = getDatabase();
 
@@ -241,6 +295,15 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     }
   }
 
+  // Apply class-specific assessment configuration (question limits, section breakdown/chunking)
+  if (targetClassId) {
+    const { getClassAssessmentConfig } = require('./classService');
+    const classConfig = getClassAssessmentConfig(targetClassId, assessmentId);
+    if (classConfig) {
+      resolvedQuestions = applyClassSectionRules(resolvedQuestions, classConfig);
+    }
+  }
+
   // Insert attempt record
   db.run(
     `INSERT INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, completed_sections)
@@ -314,7 +377,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   const assRow = db.get('SELECT sections FROM assessments WHERE id = ?', [attempt.assessment_id]);
   const configuredSections = parseStoredSections(assRow?.sections);
 
-  let secName = (answerRow.aq_section_name || answerRow.section_name || '').trim();
+  let secName = (answerRow.section_name || answerRow.aq_section_name || '').trim();
   if (!secName || (secName === 'General' && !configuredSections.includes('General'))) {
     secName = configuredSections[0] || 'Section 1';
   }
@@ -435,6 +498,15 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
     }
   }
   attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
+  if (attempt.class_id) {
+    try {
+      const { getClassAssessmentConfig } = require('./classService');
+      const classConfig = getClassAssessmentConfig(attempt.class_id, attempt.assessment_id);
+      if (classConfig && classConfig.pass_mark_percentage) {
+        attempt.pass_mark_percentage = classConfig.pass_mark_percentage;
+      }
+    } catch (_) {}
+  }
   attempt.result_visibility = attempt.result_visibility ?? 'immediate';
   attempt.explanation_visibility = attempt.explanation_visibility ?? 'immediate';
 
@@ -572,6 +644,15 @@ function submitSection({ attemptId, userId, sectionName }) {
     }
   }
   attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
+  if (attempt.class_id) {
+    try {
+      const { getClassAssessmentConfig } = require('./classService');
+      const classConfig = getClassAssessmentConfig(attempt.class_id, attempt.assessment_id);
+      if (classConfig && classConfig.pass_mark_percentage) {
+        attempt.pass_mark_percentage = classConfig.pass_mark_percentage;
+      }
+    } catch (_) {}
+  }
   attempt.result_visibility = attempt.result_visibility ?? 'immediate';
   attempt.explanation_visibility = attempt.explanation_visibility ?? 'immediate';
   attempt.assessment_sections = attempt.assessment_sections ?? JSON.stringify(['Section 1']);
@@ -958,6 +1039,16 @@ function getAttemptState(attemptId, userId) {
     }
   }
 
+  if (classId) {
+    try {
+      const { getClassAssessmentConfig } = require('./classService');
+      const classConfig = getClassAssessmentConfig(classId, attempt.assessment_id);
+      if (classConfig && classConfig.pass_mark_percentage) {
+        attempt.pass_mark_percentage = classConfig.pass_mark_percentage;
+      }
+    } catch (_) {}
+  }
+
   const { getUnlockedSectionsForClass } = require('./classService');
   const unlockedSections = getUnlockedSectionsForClass(classId);
   const completedSections = parseCompletedSections(attempt.completed_sections, attempt.id);
@@ -968,7 +1059,7 @@ function getAttemptState(attemptId, userId) {
     try { savedAnswer = row.saved_answer ? JSON.parse(row.saved_answer) : null; } catch (e) { savedAnswer = row.saved_answer; }
     try { answerOptions = row.answer_options ? JSON.parse(row.answer_options) : []; } catch (e) { answerOptions = row.answer_options; }
 
-    let secName = (row.aq_section_name || row.section_name || '').trim();
+    let secName = (row.section_name || row.aq_section_name || '').trim();
     if (!secName || (secName === 'General' && !configuredSections.includes('General'))) {
       secName = configuredSections[0] || 'Section 1';
     }

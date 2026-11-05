@@ -165,5 +165,7 @@ export const api = {
   getAttemptUnlockStatus: (attemptId) => apiRequest(`/student/attempts/${attemptId}/unlock-status`),
   getActiveAttempt: (assessmentId) => apiRequest(`/student/assessments/${assessmentId}/active-attempt`),
   setUnlockedSections: (classId, unlockedSections) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`, { method: 'PUT', body: { unlocked_sections: unlockedSections } }),
-  getUnlockedSections: (classId) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`)
+  getUnlockedSections: (classId) => apiRequest(`/instructor/classes/${classId}/unlocked-sections`),
+  getClassAssessmentConfig: (classId) => apiRequest(`/instructor/classes/${classId}/assessment-settings`),
+  updateClassAssessmentConfig: (classId, data) => apiRequest(`/instructor/classes/${classId}/assessment-settings`, { method: 'POST', body: data })
 };

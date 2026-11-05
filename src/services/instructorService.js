@@ -399,16 +399,24 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     }
   }
 
-  const defaultPassMark = (classAssessments[0] && classAssessments[0].pass_mark_percentage) || 70;
-  const orderedSectionNames = [];
+  let classAssessmentConfig = null;
+  if (!isAllCohorts && targetClass && targetClass.id) {
+    try {
+      const { getClassAssessmentConfig } = require('./classService');
+      classAssessmentConfig = getClassAssessmentConfig(targetClass.id);
+    } catch (_) {}
+  }
+
+  const defaultPassMark = (classAssessmentConfig && classAssessmentConfig.pass_mark_percentage) || (classAssessments[0] && classAssessments[0].pass_mark_percentage) || 70;
+  const baseSectionQuestionCounts = new Map();
+  const baseOrderedSectionNames = [];
   const questionSectionMap = new Map();
-  const sectionQuestionCounts = new Map();
 
   for (const a of classAssessments) {
     const secs = parseStoredSections(a.sections);
     for (const sec of secs) {
-      if (!orderedSectionNames.includes(sec)) {
-        orderedSectionNames.push(sec);
+      if (!baseOrderedSectionNames.includes(sec)) {
+        baseOrderedSectionNames.push(sec);
       }
     }
     const aqRows = db.all(
@@ -421,17 +429,52 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const aq of aqRows) {
       let sName = (aq.section_name || '').trim();
-      if (!sName || (sName === 'General' && !orderedSectionNames.includes('General'))) {
-        sName = orderedSectionNames[0] || 'Section 1';
+      if (!sName || (sName === 'General' && !baseOrderedSectionNames.includes('General'))) {
+        sName = baseOrderedSectionNames[0] || 'Section 1';
       }
-      if (!orderedSectionNames.includes(sName)) {
-        orderedSectionNames.push(sName);
+      if (!baseOrderedSectionNames.includes(sName)) {
+        baseOrderedSectionNames.push(sName);
       }
       if (aq.question_id) {
         questionSectionMap.set(aq.question_id, sName);
       }
       const qIncrement = aq.pool_id ? (Number(aq.random_count) || 5) : 1;
-      sectionQuestionCounts.set(sName, (sectionQuestionCounts.get(sName) || 0) + qIncrement);
+      baseSectionQuestionCounts.set(sName, (baseSectionQuestionCounts.get(sName) || 0) + qIncrement);
+    }
+  }
+
+  if (baseOrderedSectionNames.length === 0) {
+    baseOrderedSectionNames.push(...DEFAULT_SECTIONS);
+  }
+
+  const baseSectionsList = baseOrderedSectionNames.map(name => ({
+    name,
+    question_count: baseSectionQuestionCounts.get(name) || 0
+  }));
+
+  // Build active / effective orderedSectionNames and sectionQuestionCounts applying any rules
+  const orderedSectionNames = [];
+  const sectionQuestionCounts = new Map();
+
+  for (const baseSec of baseOrderedSectionNames) {
+    const totalCount = baseSectionQuestionCounts.get(baseSec) || 0;
+    const rule = classAssessmentConfig?.sections?.[baseSec] || classAssessmentConfig?.sections?.[baseSec.trim()];
+    let effCount = totalCount;
+    if (rule?.limit && Number(rule.limit) > 0 && Number(rule.limit) < effCount) {
+      effCount = Number(rule.limit);
+    }
+    const chunkSize = Number(rule?.chunk_size);
+    if (chunkSize && chunkSize > 0 && chunkSize < effCount) {
+      const numChunks = Math.ceil(effCount / chunkSize);
+      for (let c = 0; c < numChunks; c++) {
+        const chunkName = `${baseSec} (Part ${c + 1})`;
+        if (!orderedSectionNames.includes(chunkName)) orderedSectionNames.push(chunkName);
+        const thisChunkCount = (c === numChunks - 1) ? (effCount - (c * chunkSize)) : chunkSize;
+        sectionQuestionCounts.set(chunkName, thisChunkCount);
+      }
+    } else {
+      if (!orderedSectionNames.includes(baseSec)) orderedSectionNames.push(baseSec);
+      sectionQuestionCounts.set(baseSec, effCount);
     }
   }
 
@@ -1115,7 +1158,9 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     students,
     sections_analysis: sectionsAnalysis,
     questions_analysis: questionAnalytics,
-    recent_attempts: recentAttempts
+    recent_attempts: recentAttempts,
+    class_assessment_config: classAssessmentConfig || { pass_mark_percentage: defaultPassMark, sections: {} },
+    base_sections: baseSectionsList
   };
 }
 

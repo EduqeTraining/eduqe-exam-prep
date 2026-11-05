@@ -96,6 +96,15 @@ export function renderInstructorDashboard(container, router) {
     <!-- Main Content Tabs / Grid -->
     <div style="display:grid; grid-template-columns:1fr; gap:1.5rem;">
 
+      <!-- Assessment Pass Rate & Section Question Breakdown Controls -->
+      <div class="card" id="assessment-config-card" style="padding:1.25rem;">
+        <div id="assessment-config-container">
+          <div style="text-align:center; padding:1rem; color:var(--text-muted);">
+            Loading assessment settings...
+          </div>
+        </div>
+      </div>
+
       <!-- Sub-Assessment Section Divisions & Help Tracker -->
       <div class="card" style="padding:1.25rem;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
@@ -294,12 +303,215 @@ export function renderInstructorDashboard(container, router) {
           sectionsList.map(sec => `<option value="${escapeHtml(sec.name)}" ${sec.name === prevSecVal ? 'selected' : ''}>Needs Help: ${escapeHtml(sec.name)}</option>`).join('');
       }
 
+      renderAssessmentConfig();
       renderSectionAnalytics();
       renderStudentRoster();
       renderQuestionAnalytics();
 
     } catch (err) {
       studentsTbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger); text-align:center; padding:2rem;">Failed to load instructor dashboard: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderAssessmentConfig() {
+    const configContainer = container.querySelector('#assessment-config-container');
+    if (!configContainer) return;
+
+    if (!currentData || !currentData.selected_class || currentData.selected_class.id === 'all') {
+      configContainer.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem;">
+          <div>
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <span style="font-size:1.25rem;">⚙️</span>
+              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Assessment Pass Rate &amp; Section Question Breakdown</h2>
+            </div>
+            <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
+              Customize the passing threshold and divide assessment sections into smaller sequential parts.
+            </p>
+          </div>
+          <div style="font-size:0.825rem; color:var(--text-muted); font-style:italic; background:var(--surface-subtle); padding:0.35rem 0.65rem; border-radius:var(--radius-sm); border:1px solid var(--border);">
+            👉 Please select a specific cohort above to customize pass rates and question breakdowns.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const cls = currentData.selected_class;
+    const cfg = currentData.class_assessment_config || {};
+    const passMark = cfg.pass_mark_percentage || 70;
+    const cfgSections = cfg.sections || {};
+    const baseSections = currentData.base_sections || [];
+
+    configContainer.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.1rem; flex-wrap:wrap; gap:0.75rem;">
+        <div>
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span style="font-size:1.25rem;">⚙️</span>
+            <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">
+              Assessment Pass Rate &amp; Section Question Breakdown: <span style="color:var(--brand-lime);">${escapeHtml(cls.name)}</span>
+            </h2>
+          </div>
+          <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
+            Set the required pass percentage for this cohort and customize how many questions delegates answer or break sections into smaller sequential parts.
+          </p>
+        </div>
+      </div>
+
+      <!-- Pass Rate Control -->
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.25rem; padding:0.85rem 1.15rem; background:var(--surface-subtle); border-radius:var(--radius-md); border:1px solid var(--border); flex-wrap:wrap;">
+        <div>
+          <label for="cfg-pass-rate" style="font-weight:700; font-size:0.92rem; display:block; margin-bottom:0.15rem; color:var(--text-main);">
+            🎯 Required Pass Rate Percentage (%)
+          </label>
+          <span style="font-size:0.78rem; color:var(--text-muted);">
+            Minimum score percentage required to pass this assessment for this cohort.
+          </span>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.4rem;">
+          <input 
+            type="number" 
+            id="cfg-pass-rate" 
+            min="1" 
+            max="100" 
+            class="form-control" 
+            value="${passMark}" 
+            style="width:95px; font-weight:800; font-size:1.15rem; text-align:center; padding:0.35rem 0.5rem;" 
+          />
+          <span style="font-weight:800; font-size:1.15rem; color:var(--text-main);">%</span>
+        </div>
+      </div>
+
+      <!-- Section Question Limiting & Part Breakdown -->
+      <div style="margin-bottom:1.25rem;">
+        <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.25rem; color:var(--text-main);">
+          ✂️ Section Question Limits &amp; Sub-Section Chunking
+        </div>
+        <p class="form-hint" style="margin-bottom:0.85rem;">
+          Limit questions (e.g. only do the first 20 of 50 questions) or split a section into smaller parts (e.g. 50 questions &rarr; Part 1 with 25 questions and Part 2 with 25 questions) so delegates do them in stages and you unlock each part sequentially.
+        </p>
+
+        ${baseSections.length === 0 ? `
+          <div style="padding:1rem; text-align:center; color:var(--text-muted); font-size:0.85rem; background:var(--surface-subtle); border-radius:var(--radius-sm);">
+            No assessment sections detected for this class.
+          </div>
+        ` : `
+          <div style="display:flex; flex-direction:column; gap:0.75rem;">
+            ${baseSections.map((sec, idx) => {
+              const rule = cfgSections[sec.name] || cfgSections[sec.name.trim()] || {};
+              const limitVal = rule.limit !== null && rule.limit !== undefined ? rule.limit : '';
+              const chunkVal = rule.chunk_size !== null && rule.chunk_size !== undefined ? rule.chunk_size : '';
+              return `
+                <div style="padding:0.9rem 1.15rem; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);">
+                  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.65rem;">
+                    <div>
+                      <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">Assessment Section ${idx + 1}</span>
+                      <div style="font-weight:800; font-size:0.95rem; color:var(--text-main); margin-top:0.1rem;">
+                        ${escapeHtml(sec.name)}
+                      </div>
+                    </div>
+                    <span class="badge badge-neutral" style="font-weight:700; font-size:0.75rem;">
+                      ${sec.question_count} Questions in Bank
+                    </span>
+                  </div>
+
+                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1rem; padding-top:0.65rem; border-top:1px dashed var(--border);">
+                    <div>
+                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                        Limit Questions (e.g. 20 of ${sec.question_count}):
+                      </label>
+                      <input 
+                        type="number" 
+                        class="form-control input-sec-limit" 
+                        data-sec="${escapeHtml(sec.name)}" 
+                        min="1" 
+                        max="${sec.question_count}" 
+                        value="${limitVal}" 
+                        placeholder="All ${sec.question_count} questions" 
+                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                      />
+                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                        Delegates will only see and answer the first N questions. Leave blank for all.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                        Break Down Into Parts (e.g. 25 questions per part):
+                      </label>
+                      <input 
+                        type="number" 
+                        class="form-control input-sec-chunk" 
+                        data-sec="${escapeHtml(sec.name)}" 
+                        min="1" 
+                        max="${sec.question_count}" 
+                        value="${chunkVal}" 
+                        placeholder="Do not split (keep as 1 section)" 
+                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                      />
+                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                        Creates Part 1, Part 2, etc. that can be locked and unlocked sequentially.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `}
+      </div>
+
+      <!-- Action & Save Button -->
+      <div style="display:flex; align-items:center; gap:0.85rem; flex-wrap:wrap; padding-top:0.5rem; border-top:1px solid var(--border);">
+        <button type="button" class="btn btn-primary" id="btn-save-class-assessment-config" style="font-weight:700; font-size:0.875rem; padding:0.45rem 1.15rem;">
+          💾 Save Assessment &amp; Section Configuration
+        </button>
+        <span id="cfg-status-message" style="display:none; font-size:0.85rem; font-weight:700;"></span>
+      </div>
+    `;
+
+    const saveBtn = configContainer.querySelector('#btn-save-class-assessment-config');
+    const statusMsg = configContainer.querySelector('#cfg-status-message');
+    if (saveBtn) {
+      saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving configuration...';
+        if (statusMsg) statusMsg.style.display = 'none';
+
+        try {
+          const passRateInput = configContainer.querySelector('#cfg-pass-rate');
+          const passMarkPercentage = passRateInput ? parseInt(passRateInput.value, 10) : 70;
+
+          const sectionsPayload = {};
+          configContainer.querySelectorAll('.input-sec-limit').forEach(limitInput => {
+            const sName = limitInput.dataset.sec;
+            const chunkInput = configContainer.querySelector(`.input-sec-chunk[data-sec="${CSS.escape(sName)}"]`);
+            const lim = limitInput.value ? parseInt(limitInput.value, 10) : null;
+            const chk = chunkInput && chunkInput.value ? parseInt(chunkInput.value, 10) : null;
+            sectionsPayload[sName] = { limit: lim, chunk_size: chk };
+          });
+
+          await api.updateClassAssessmentConfig(activeClassId, {
+            pass_mark_percentage: passMarkPercentage,
+            sections: sectionsPayload
+          });
+
+          if (statusMsg) {
+            statusMsg.textContent = '✔ Configuration saved successfully!';
+            statusMsg.style.color = 'var(--brand-lime)';
+            statusMsg.style.display = 'inline-block';
+          }
+          await loadDashboardData();
+        } catch (err) {
+          if (statusMsg) {
+            statusMsg.textContent = 'Failed to save: ' + (err.message || 'Unknown error');
+            statusMsg.style.color = 'var(--danger)';
+            statusMsg.style.display = 'inline-block';
+          }
+          saveBtn.disabled = false;
+          saveBtn.textContent = '💾 Save Assessment & Section Configuration';
+        }
+      };
     }
   }
 

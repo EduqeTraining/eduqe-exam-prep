@@ -521,6 +521,52 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     }
   }
 
+  function isQuestionAnswered(q) {
+    if (!q) return false;
+    const ans = q.saved_answer;
+    if (ans === null || ans === undefined) return false;
+    if (typeof ans === 'string') return ans.trim().length > 0;
+    if (typeof ans === 'number') return true;
+    if (typeof ans === 'boolean') return true;
+    if (Array.isArray(ans)) return ans.length > 0;
+    if (typeof ans === 'object') {
+      const keys = Object.keys(ans);
+      if (keys.length === 0) return false;
+      return keys.some(k => {
+        const val = ans[k];
+        return val !== null && val !== undefined && String(val).trim() !== '';
+      });
+    }
+    return true;
+  }
+
+  function showRequiredQuestionWarning(msg) {
+    const banner = viewContainer.querySelector('#required-question-warning-banner');
+    const textEl = viewContainer.querySelector('#required-warning-text');
+    if (banner && textEl) {
+      textEl.textContent = msg || 'Please answer this question before continuing to the next question. All questions are required.';
+      banner.style.display = 'flex';
+      banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    const ansArea = viewContainer.querySelector('#interactive-answer-area');
+    if (ansArea) {
+      ansArea.style.border = '2px solid var(--danger)';
+      ansArea.style.borderRadius = 'var(--radius-md)';
+      ansArea.style.padding = '0.5rem';
+      setTimeout(() => {
+        if (ansArea) {
+          ansArea.style.border = '';
+          ansArea.style.padding = '';
+        }
+      }, 2500);
+    }
+  }
+
+  function hideRequiredQuestionWarning() {
+    const banner = viewContainer.querySelector('#required-question-warning-banner');
+    if (banner) banner.style.display = 'none';
+  }
+
   function getDistinctSections() {
     const map = new Map();
     const unlockedList = currentAttempt.unlocked_sections || ['Section 1'];
@@ -533,12 +579,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       map.get(secName).indices.push(idx);
     });
     return Array.from(map.values()).map((sec, sIdx) => {
-      const answered = sec.indices.filter(i => {
-        const ans = currentAttempt.questions[i]?.saved_answer;
-        if (ans === null || ans === undefined || ans === '') return false;
-        if (typeof ans === 'object') return Object.keys(ans).length > 0;
-        return true;
-      }).length;
+      const answered = sec.indices.filter(i => isQuestionAnswered(currentAttempt.questions[i])).length;
       const isSubmitted = completedList.includes(sec.name);
       const isUnlocked = unlockedList.includes(sec.name);
       const secMeta = (currentAttempt.sections || []).find(s => s.name === sec.name) || {};
@@ -755,7 +796,19 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
     // If current section has not been submitted yet
     if (!currSec.is_submitted) {
+      // ENFORCE REQUIRED: Current question must be answered before advancing
+      if (!isQuestionAnswered(q)) {
+        showRequiredQuestionWarning('Please answer this question before continuing to the next question. All questions are required.');
+        return;
+      }
+
       if (isLastInSection || isLastOverall) {
+        // ENFORCE REQUIRED: All questions in this section must be answered before submitting
+        const hasUnanswered = currSec.indices.some(idx => !isQuestionAnswered(currentAttempt.questions[idx]));
+        if (hasUnanswered) {
+          showRequiredQuestionWarning(`Please answer all questions in ${secName} before submitting.`);
+          return;
+        }
         openSectionSubmitModal(secName);
         return;
       }
@@ -924,6 +977,19 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         if (targetSec !== activeSecName) {
           await attemptTransitionToQuestion(targetIdx, activeSecName, targetSec);
         } else {
+          // ENFORCE REQUIRED: If jumping forward in active unsubmitted section, ensure no preceding question is unanswered
+          if (!targetSecObj.is_submitted && targetIdx > activeQuestionIndex) {
+            const firstUnanswered = targetSecObj.indices.find(i => !isQuestionAnswered(currentAttempt.questions[i]));
+            if (firstUnanswered !== undefined && firstUnanswered < targetIdx) {
+              showRequiredQuestionWarning(`Question ${firstUnanswered + 1} is required. Please answer all questions in order.`);
+              if (activeQuestionIndex !== firstUnanswered) {
+                activeQuestionIndex = firstUnanswered;
+                renderQuestion(activeQuestionIndex);
+                renderPalette();
+              }
+              return;
+            }
+          }
           activeQuestionIndex = targetIdx;
           renderQuestion(activeQuestionIndex);
           renderPalette();
@@ -1070,11 +1136,20 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
           <span class="badge badge-neutral">${q.question_type.toUpperCase().replace(/_/g, ' ')} &bull; ${q.max_points || 1} pt(s)</span>
           ${!isSecSubmitted ? `
+            <span class="badge badge-warning" style="font-weight:800; font-size:0.75rem;">
+              <span style="color:var(--danger); font-size:1rem; line-height:0.8; vertical-align:middle;">*</span> Required
+            </span>
             <button type="button" class="btn btn-primary btn-sm" id="btn-submit-active-sec" style="font-weight:700;">
               &#x2714; Submit ${escapeHtml(q.section_name || 'Section')} for Review
             </button>
           ` : ''}
         </div>
+      </div>
+
+      <!-- Required Question Warning Banner -->
+      <div id="required-question-warning-banner" style="display:none; margin-bottom:1rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(220,38,38,0.1); border:1px solid var(--danger); color:var(--danger); font-weight:700; font-size:0.875rem; align-items:center; gap:0.5rem;">
+        <span style="font-size:1.15rem;">⚠️</span>
+        <span id="required-warning-text">Please answer this question before continuing to the next question. All questions are required.</span>
       </div>
 
       <!-- Question Description Box (Scenario / Case Study) -->
@@ -1640,6 +1715,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   }
 
   function triggerAutosave(questionId, savedAnswer, isFlagged) {
+    hideRequiredQuestionWarning();
     const q = currentAttempt.questions.find(item => item.id === questionId);
     if (!q) return;
     const secName = q.section_name || 'Section 1';
@@ -1685,10 +1761,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
     modalTitle.textContent = `Submit ${escapeHtml(targetSec.name)} for Review`;
 
+    const unansweredIndices = targetSec.indices.filter(idx => !isQuestionAnswered(currentAttempt.questions[idx]));
+    const unansweredCount = unansweredIndices.length;
+
     modalBody.innerHTML = `
       <div style="padding:0.25rem 0;">
         <div style="text-align:center; margin-bottom:1.25rem;">
-          <div style="font-size:2.25rem; font-weight:800; color:var(--primary); margin-bottom:0.25rem;">
+          <div style="font-size:2.25rem; font-weight:800; color:${unansweredCount > 0 ? 'var(--danger)' : 'var(--brand-lime)'}; margin-bottom:0.25rem;">
             ${targetSec.answered} / ${targetSec.total}
           </div>
           <div style="font-size:0.95rem; font-weight:700; color:var(--text-main);">
@@ -1696,9 +1775,14 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           </div>
         </div>
 
-        ${targetSec.unanswered > 0 ? `
-          <div class="card" style="background:var(--warning-bg); border-color:var(--warning-border); color:var(--warning); padding:0.75rem 1rem; margin-bottom:1rem; font-weight:700;">
-            &#x26A0; You have ${targetSec.unanswered} unanswered question(s) in this section! Unanswered questions will receive 0 points.
+        ${unansweredCount > 0 ? `
+          <div class="card" style="background:rgba(220,38,38,0.08); border:1px solid var(--danger); color:var(--danger); padding:0.85rem 1rem; margin-bottom:1rem; font-weight:700;">
+            ⚠️ You have ${unansweredCount} unanswered question(s) in this section! All questions are mandatory. You must complete every question before this section can be submitted.
+            <div style="margin-top:0.65rem;">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-jump-unanswered" style="font-weight:700;">
+                👉 Go to First Unanswered Question (${unansweredIndices[0] + 1})
+              </button>
+            </div>
           </div>
         ` : `
           <div class="card" style="background:var(--success-bg); border-color:var(--success-border); color:var(--success); padding:0.75rem 1rem; margin-bottom:1rem; font-weight:600;">
@@ -1724,8 +1808,27 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     container.querySelector('#btn-close-sec-submit').onclick = () => secSubmitModal.close();
     container.querySelector('#btn-cancel-sec-submit').onclick = () => secSubmitModal.close();
 
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = `✔ Confirm & Submit ${targetSec.name} for Review`;
+    if (unansweredCount > 0) {
+      confirmBtn.disabled = true;
+      confirmBtn.style.opacity = '0.5';
+      confirmBtn.style.cursor = 'not-allowed';
+      confirmBtn.textContent = `⚠️ Answer All Questions to Submit (${targetSec.answered}/${targetSec.total})`;
+      const jumpBtn = modalBody.querySelector('#btn-jump-unanswered');
+      if (jumpBtn) {
+        jumpBtn.onclick = () => {
+          secSubmitModal.close();
+          activeQuestionIndex = unansweredIndices[0];
+          renderQuestion(activeQuestionIndex);
+          renderPalette();
+          showRequiredQuestionWarning(`Please answer Question ${unansweredIndices[0] + 1} before proceeding.`);
+        };
+      }
+    } else {
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+      confirmBtn.style.cursor = 'pointer';
+      confirmBtn.textContent = `✔ Confirm & Submit ${targetSec.name} for Review`;
+    }
 
     confirmBtn.onclick = async () => {
       confirmBtn.disabled = true;

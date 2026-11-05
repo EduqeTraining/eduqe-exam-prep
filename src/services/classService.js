@@ -620,26 +620,69 @@ function getUnlockedSectionsForClass(classId) {
   const db = getDatabase();
   if (!classId) return ['Section 1'];
 
+  let result = ['Section 1'];
+
   // Check eduque_settings first (cloud persistent store)
   try {
     const settingKey = `cohort_unlocked_sections_${classId}`;
     const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [settingKey]);
     if (setting && setting.value) {
       const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
-      if (Array.isArray(parsed) && parsed.length > 0) return [...new Set(parsed)];
+      if (Array.isArray(parsed) && parsed.length > 0) result = [...new Set(parsed)];
     }
   } catch (e) {}
 
   // Fallback to classes.unlocked_sections
-  try {
-    const cls = db.get('SELECT unlocked_sections FROM classes WHERE id = ?', [classId]);
-    if (cls && cls.unlocked_sections) {
-      const parsed = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
-      if (Array.isArray(parsed) && parsed.length > 0) return [...new Set(parsed)];
-    }
-  } catch (e) {}
+  if (result.length === 1 && result[0] === 'Section 1') {
+    try {
+      const cls = db.get('SELECT unlocked_sections FROM classes WHERE id = ?', [classId]);
+      if (cls && cls.unlocked_sections) {
+        const parsed = typeof cls.unlocked_sections === 'string' ? JSON.parse(cls.unlocked_sections) : cls.unlocked_sections;
+        if (Array.isArray(parsed) && parsed.length > 0) result = [...new Set(parsed)];
+      }
+    } catch (e) {}
+  }
 
-  return ['Section 1'];
+  // If result is only ['Section 1'], resolve the effective first section of the class's assessment
+  if (result.length === 1 && result[0] === 'Section 1') {
+    try {
+      const assRow = db.get(
+        `SELECT a.sections FROM assessments a
+         JOIN assessment_classes ac ON ac.assessment_id = a.id
+         WHERE ac.class_id = ?
+         LIMIT 1`,
+        [classId]
+      ) || db.get(
+        `SELECT a.sections FROM assessments a
+         JOIN classes c ON c.course_id = a.course_id
+         WHERE c.id = ?
+         LIMIT 1`,
+        [classId]
+      );
+      if (assRow && assRow.sections) {
+        const parsedSecs = typeof assRow.sections === 'string' ? JSON.parse(assRow.sections) : assRow.sections;
+        if (Array.isArray(parsedSecs) && parsedSecs.length > 0) {
+          const firstSecName = parsedSecs[0];
+          let effectiveFirstSec = firstSecName;
+          const cfgSetting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`class_assessment_config_${classId}`]);
+          if (cfgSetting && cfgSetting.value) {
+            try {
+              const parsedCfg = typeof cfgSetting.value === 'string' ? JSON.parse(cfgSetting.value) : cfgSetting.value;
+              const secRule = parsedCfg?.sections?.[firstSecName];
+              if (secRule && secRule.chunk_size && Number(secRule.chunk_size) > 0) {
+                effectiveFirstSec = `${firstSecName} (Part 1)`;
+              }
+            } catch (_) {}
+          }
+          if (effectiveFirstSec && !result.includes(effectiveFirstSec)) {
+            result.push(effectiveFirstSec);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  return result;
 }
 
 function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = null, adminUsername = 'instructor') {
@@ -686,6 +729,92 @@ function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = nu
   return uniqueSections;
 }
 
+function getClassAssessmentConfig(classId, assessmentId = null) {
+  const db = getDatabase();
+  if (!classId) return { pass_mark_percentage: 70, sections: {} };
+
+  try {
+    if (assessmentId) {
+      const specificSetting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`class_assessment_config_${classId}_${assessmentId}`]);
+      if (specificSetting && specificSetting.value) {
+        const parsed = typeof specificSetting.value === 'string' ? JSON.parse(specificSetting.value) : specificSetting.value;
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+    const settingKey = `class_assessment_config_${classId}`;
+    const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [settingKey]);
+    if (setting && setting.value) {
+      const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (e) {}
+
+  return { pass_mark_percentage: 70, sections: {} };
+}
+
+function saveClassAssessmentConfig(classId, config = {}, adminUserId = null, adminUsername = 'instructor') {
+  const db = getDatabase();
+  const cls = db.get('SELECT id, name FROM classes WHERE id = ?', [classId]);
+  if (!cls) throw new Error('Class not found.');
+
+  const passMark = (config.pass_mark_percentage !== undefined && config.pass_mark_percentage !== null && String(config.pass_mark_percentage).trim() !== '')
+    ? Math.max(1, Math.min(100, Number(config.pass_mark_percentage)))
+    : 70;
+
+  const sectionsConfig = {};
+  if (config.sections && typeof config.sections === 'object') {
+    for (const [secName, rule] of Object.entries(config.sections)) {
+      if (!rule) continue;
+      const cleanLimit = rule.limit !== null && rule.limit !== undefined && String(rule.limit).trim() !== ''
+        ? Math.max(1, Number(rule.limit))
+        : null;
+      const cleanChunk = rule.chunk_size !== null && rule.chunk_size !== undefined && String(rule.chunk_size).trim() !== ''
+        ? Math.max(1, Number(rule.chunk_size))
+        : null;
+
+      sectionsConfig[secName] = {
+        limit: cleanLimit,
+        chunk_size: cleanChunk
+      };
+    }
+  }
+
+  const cleanConfig = {
+    pass_mark_percentage: passMark,
+    sections: sectionsConfig,
+    updated_at: new Date().toISOString()
+  };
+
+  const jsonStr = JSON.stringify(cleanConfig);
+  const settingKey = `class_assessment_config_${classId}`;
+  const settingId = `setting-class-cfg-${classId}`;
+
+  try {
+    db.run(
+      `INSERT INTO eduque_settings (id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [settingId, settingKey, jsonStr]
+    );
+  } catch (e) {}
+
+  try {
+    const supabaseService = require('./supabaseService');
+    supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
+  } catch (e) {}
+
+  logAction({
+    userId: adminUserId,
+    username: adminUsername,
+    action: 'UPDATE_CLASS_ASSESSMENT_CONFIG',
+    entityType: 'classes',
+    entityId: classId,
+    details: { className: cls.name, config: cleanConfig }
+  });
+
+  return cleanConfig;
+}
+
 module.exports = {
   createClass,
   getClass,
@@ -693,6 +822,8 @@ module.exports = {
   listClassesForInstructor,
   getUnlockedSectionsForClass,
   setUnlockedSectionsForClass,
+  getClassAssessmentConfig,
+  saveClassAssessmentConfig,
   updateClass,
   duplicateClass,
   archiveClass,

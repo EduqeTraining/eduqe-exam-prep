@@ -1337,6 +1337,32 @@ async function handleRequest(req, res) {
         const unlocked = classService.getUnlockedSectionsForClass(classId);
         return sendJson(res, 200, { class_id: classId, unlocked_sections: unlocked });
       }
+
+      // Class Assessment Configuration (Pass rate, question limit, chunking)
+      const classAssConfigMatch = pathname.match(/^\/api\/(?:instructor\/)?classes\/([^\/]+)\/assessment-settings$/);
+      if ((req.method === 'PUT' || req.method === 'POST') && classAssConfigMatch) {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        if (user.role !== 'instructor' && user.role !== 'administrator') {
+          return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
+        }
+        const classId = classAssConfigMatch[1];
+        const body = await parseBody(req);
+        try {
+          const updated = classService.saveClassAssessmentConfig(classId, body, user.id, user.username);
+          return sendJson(res, 200, { success: true, class_id: classId, config: updated });
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+      }
+
+      if (req.method === 'GET' && classAssConfigMatch) {
+        const user = requireAuth(req, res);
+        if (!user) return;
+        const classId = classAssConfigMatch[1];
+        const config = classService.getClassAssessmentConfig(classId);
+        return sendJson(res, 200, { class_id: classId, config });
+      }
       // Instructor's own assigned classes
       if (req.method === 'GET' && pathname === '/api/instructor/classes') {
         const user = requireAuth(req, res);
