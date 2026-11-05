@@ -274,6 +274,70 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     assert.ok(typeof finalState.is_passed === 'boolean');
   });
 
+  await t.test('8. Serverless resilience: submitSection and getAttemptState work with LEFT JOIN even if assessment metadata is detached', () => {
+    // Create an in-progress attempt to test detached assessment resilience
+    const detachedAttempt = startAttempt({
+      userId: student.id,
+      assessmentId: assessment.id,
+      classId: testClass.id,
+      forceNew: true
+    });
+
+    // Disable foreign keys temporarily to isolate assessments row detachment without cascade deleting student_attempts
+    try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+    const savedAssessment = db.get('SELECT * FROM assessments WHERE id = ?', [assessment.id]);
+    db.run('DELETE FROM assessments WHERE id = ?', [assessment.id]);
+
+    try {
+      // getAttemptState must NOT return null or throw 'Attempt not found'
+      const state = getAttemptState(detachedAttempt.id, student.id);
+      assert.ok(state, 'getAttemptState must resolve using student_attempts fallback when assessment row is detached');
+      assert.equal(state.id, detachedAttempt.id);
+
+      // submitSection must also succeed without throwing 'Attempt not found'
+      const submitRes = submitSection({
+        attemptId: detachedAttempt.id,
+        userId: student.id,
+        sectionName: 'Section 1'
+      });
+      assert.ok(submitRes, 'submitSection must resolve successfully using fallback');
+      assert.ok(submitRes.completed_sections.includes('Section 1'));
+    } finally {
+      // Restore assessment record and re-enable foreign keys
+      if (savedAssessment) {
+        const cols = Object.keys(savedAssessment);
+        const placeholders = cols.map(() => '?').join(', ');
+        const vals = cols.map(c => savedAssessment[c]);
+        db.run(`INSERT OR REPLACE INTO assessments (${cols.join(', ')}) VALUES (${placeholders})`, vals);
+      }
+      try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+    }
+  });
+
+  await t.test('9. Targeted hydration functions: ensureAttemptFullyHydrated and upsertLocalRows handle local data correctly', async () => {
+    const supabaseService = require('../src/services/supabaseService');
+    assert.equal(typeof supabaseService.ensureAttemptFullyHydrated, 'function');
+    assert.equal(typeof supabaseService.ensureActiveAttemptForUserHydrated, 'function');
+    assert.equal(typeof supabaseService.upsertLocalRows, 'function');
+
+    // upsertLocalRows correctly upserts rows into SQLite
+    const count = supabaseService.upsertLocalRows('student_attempts', [
+      {
+        id: 'test-upsert-attempt',
+        user_id: student.id,
+        assessment_id: assessment.id,
+        class_id: testClass.id,
+        attempt_number: 99,
+        deadline_at: new Date().toISOString(),
+        status: 'in_progress'
+      }
+    ]);
+    assert.equal(count, 1);
+    const fetched = db.get("SELECT id FROM student_attempts WHERE id = 'test-upsert-attempt'");
+    assert.ok(fetched);
+    db.run("DELETE FROM student_attempts WHERE id = 'test-upsert-attempt'");
+  });
+
   // Cleanup test database
   t.after(() => {
     if (fs.existsSync(testDbPath)) {

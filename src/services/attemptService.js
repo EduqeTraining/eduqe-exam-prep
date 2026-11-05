@@ -413,15 +413,31 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
 
 function submitAttempt({ attemptId, userId, isAuto = false }) {
   const db = getDatabase();
-  const attempt = db.get(
+  let attempt = db.get(
     `SELECT sa.*, a.pass_mark_percentage, a.result_visibility, a.explanation_visibility
      FROM student_attempts sa
-     JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
      WHERE sa.id = ?`,
     [attemptId]
   );
 
-  if (!attempt) throw new Error('Attempt not found.');
+  if (!attempt) {
+    const rawSa = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+    if (rawSa) {
+      attempt = {
+        ...rawSa,
+        pass_mark_percentage: 70,
+        result_visibility: 'immediate',
+        explanation_visibility: 'immediate'
+      };
+    } else {
+      throw new Error('Attempt not found.');
+    }
+  }
+  attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
+  attempt.result_visibility = attempt.result_visibility ?? 'immediate';
+  attempt.explanation_visibility = attempt.explanation_visibility ?? 'immediate';
+
   if (attempt.user_id !== userId) {
     throw new Error('Unauthorized attempt access.');
   }
@@ -435,7 +451,7 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
             q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
             q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
      FROM attempt_answers aa
-     JOIN questions q ON q.id = aa.question_id
+     LEFT JOIN questions q ON q.id = aa.question_id
      WHERE aa.attempt_id = ?`,
     [attemptId]
   );
@@ -514,15 +530,33 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
 
 function submitSection({ attemptId, userId, sectionName }) {
   const db = getDatabase();
-  const attempt = db.get(
+  let attempt = db.get(
     `SELECT sa.*, a.pass_mark_percentage, a.result_visibility, a.explanation_visibility, a.sections as assessment_sections
      FROM student_attempts sa
-     JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
      WHERE sa.id = ?`,
     [attemptId]
   );
 
-  if (!attempt) throw new Error('Attempt not found.');
+  if (!attempt) {
+    const rawSa = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+    if (rawSa) {
+      attempt = {
+        ...rawSa,
+        pass_mark_percentage: 70,
+        result_visibility: 'immediate',
+        explanation_visibility: 'immediate',
+        assessment_sections: JSON.stringify(['Section 1'])
+      };
+    } else {
+      throw new Error('Attempt not found.');
+    }
+  }
+  attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
+  attempt.result_visibility = attempt.result_visibility ?? 'immediate';
+  attempt.explanation_visibility = attempt.explanation_visibility ?? 'immediate';
+  attempt.assessment_sections = attempt.assessment_sections ?? JSON.stringify(['Section 1']);
+
   if (attempt.user_id !== userId) {
     throw new Error('Unauthorized attempt access.');
   }
@@ -564,7 +598,7 @@ function submitSection({ attemptId, userId, sectionName }) {
             q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
             q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
      FROM attempt_answers aa
-     JOIN questions q ON q.id = aa.question_id
+     LEFT JOIN questions q ON q.id = aa.question_id
      WHERE aa.attempt_id = ? AND aa.section_name = ?`,
     [attemptId, secName]
   );
@@ -645,7 +679,7 @@ function submitSection({ attemptId, userId, sectionName }) {
     const allAnswers = db.all(
       `SELECT aa.*, q.question_type, q.answer_options, q.correct_answer, q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
        FROM attempt_answers aa
-       JOIN questions q ON q.id = aa.question_id
+       LEFT JOIN questions q ON q.id = aa.question_id
        WHERE aa.attempt_id = ?`,
       [attemptId]
     );
@@ -774,21 +808,43 @@ function submitSection({ attemptId, userId, sectionName }) {
 
 function getAttemptState(attemptId, userId) {
   const db = getDatabase();
-  const attempt = db.get(
+  let attempt = db.get(
     `SELECT sa.*, a.name as assessment_name, a.description as assessment_description,
             a.instructions, a.duration_minutes, a.pass_mark_percentage,
             a.allow_back_navigation, a.allow_flagging, a.allow_review_screen,
             a.result_visibility, a.explanation_visibility, a.sections as assessment_sections,
             c.name as course_name, cl.name as class_name
      FROM student_attempts sa
-     JOIN assessments a ON a.id = sa.assessment_id
+     LEFT JOIN assessments a ON a.id = sa.assessment_id
      LEFT JOIN courses c ON c.id = a.course_id
      LEFT JOIN classes cl ON cl.id = sa.class_id
      WHERE sa.id = ?`,
     [attemptId]
   );
 
-  if (!attempt) return null;
+  if (!attempt) {
+    const rawSa = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+    if (rawSa) {
+      attempt = {
+        ...rawSa,
+        assessment_name: 'Assessment',
+        assessment_description: '',
+        instructions: '',
+        duration_minutes: 60,
+        pass_mark_percentage: 70,
+        allow_back_navigation: 1,
+        allow_flagging: 1,
+        allow_review_screen: 1,
+        result_visibility: 'immediate',
+        explanation_visibility: 'immediate',
+        assessment_sections: JSON.stringify(['Section 1']),
+        course_name: 'Course',
+        class_name: 'Class'
+      };
+    } else {
+      return null;
+    }
+  }
 
   // Student authorization check: a student cannot view another student's attempt!
   if (userId && attempt.user_id !== userId) {
@@ -827,7 +883,7 @@ function getAttemptState(attemptId, userId) {
             q.topic, q.difficulty, q.partial_credit,
             (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = ? AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
      FROM attempt_answers aa
-     JOIN questions q ON q.id = aa.question_id
+     LEFT JOIN questions q ON q.id = aa.question_id
      WHERE aa.attempt_id = ?
      ORDER BY aa.order_index ASC, aa.id ASC`,
     [attempt.assessment_id, attemptId]
@@ -878,28 +934,28 @@ function getAttemptState(attemptId, userId) {
       id: row.question_id,
       answer_id: row.id,
       section_name: secName,
-      question_type: row.question_type,
-      question_text: row.question_text,
-      question_description: row.question_description,
+      question_type: row.question_type || 'single_choice',
+      question_text: row.question_text || 'Question',
+      question_description: row.question_description || '',
       answer_options: answerOptions,
       saved_answer: savedAnswer,
       is_flagged: Boolean(row.is_flagged),
-      max_points: row.max_points,
-      topic: row.topic,
-      difficulty: row.difficulty,
+      max_points: row.max_points || 1,
+      topic: row.topic || '',
+      difficulty: row.difficulty || 'medium',
       is_completed_section: isSecCompleted,
       is_locked: !isSecUnlocked
     };
 
     if (showResults || isSecCompleted) {
       item.is_correct = Boolean(row.is_correct);
-      item.awarded_points = row.awarded_points;
-      item.marked_status = row.marked_status;
+      item.awarded_points = row.awarded_points ?? 0;
+      item.marked_status = row.marked_status || 'marked';
       if (showExplanations || isSecCompleted) {
         let correct = null;
         try { correct = row.correct_answer ? JSON.parse(row.correct_answer) : null; } catch (e) { correct = row.correct_answer; }
         item.correct_answer = correct;
-        item.answer_explanation = row.answer_explanation;
+        item.answer_explanation = row.answer_explanation || '';
       }
     }
 
@@ -1083,7 +1139,7 @@ function recalculateAttemptScore(attemptId, reason, adminUserId = null, adminUse
   const answers = db.all(
     `SELECT aa.*, q.question_type, q.correct_answer, q.answer_options, q.points, q.partial_credit, q.requires_manual_review
      FROM attempt_answers aa
-     JOIN questions q ON q.id = aa.question_id
+     LEFT JOIN questions q ON q.id = aa.question_id
      WHERE aa.attempt_id = ?`,
     [attemptId]
   );

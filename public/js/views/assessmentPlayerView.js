@@ -1731,7 +1731,18 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Submitting section...';
       try {
-        const updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+        let updatedRes;
+        try {
+          updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+        } catch (initialErr) {
+          if (initialErr.message && (initialErr.message.includes('Attempt not found') || initialErr.message.includes('HTTP error 400') || initialErr.message.includes('HTTP error 404'))) {
+            // Give serverless instance a brief moment to sync and retry once
+            await new Promise(r => setTimeout(r, 1000));
+            updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+          } else {
+            throw initialErr;
+          }
+        }
         secSubmitModal.close();
         currentAttempt = updatedRes.attempt_state || updatedRes;
 

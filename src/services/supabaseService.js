@@ -57,6 +57,82 @@ function invalidateTableCache(tableName = null) {
   }
 }
 
+function upsertLocalRows(table, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const db = getDatabase();
+  const tableCols = db.all(`PRAGMA table_info("${table}")`);
+  if (!tableCols || tableCols.length === 0) return 0;
+
+  const hasId = tableCols.some(c => c.name === 'id');
+  const hasKey = tableCols.some(c => c.name === 'key');
+  const localColSet = new Set(tableCols.map(c => c.name));
+
+  const remoteCols = Object.keys(rows[0]);
+  const matchingCols = remoteCols.filter(c => localColSet.has(c));
+  if (matchingCols.length === 0) return 0;
+
+  const placeholders = matchingCols.map(() => '?').join(', ');
+  const colNames = matchingCols.map(c => `"${c}"`).join(', ');
+
+  try {
+    db.run('PRAGMA foreign_keys = OFF;');
+  } catch (e) {}
+
+  try {
+    db.transaction(() => {
+      for (const row of rows) {
+        const vals = matchingCols.map(c => {
+          const val = row[c];
+          if (val !== null && typeof val === 'object') {
+            return JSON.stringify(val);
+          }
+          return val;
+        });
+
+        if (hasId && row.id) {
+          const existing = db.get(`SELECT id FROM "${table}" WHERE id = ?`, [row.id]);
+          if (existing) {
+            const updateCols = matchingCols.filter(c => c !== 'id');
+            if (updateCols.length > 0) {
+              const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
+              const updateVals = updateCols.map(c => {
+                const val = row[c];
+                return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
+              });
+              db.run(`UPDATE "${table}" SET ${setClause} WHERE id = ?`, [...updateVals, row.id]);
+            }
+            continue;
+          }
+        } else if (hasKey && row.key) {
+          const existing = db.get(`SELECT key FROM "${table}" WHERE key = ?`, [row.key]);
+          if (existing) {
+            const updateCols = matchingCols.filter(c => c !== 'key');
+            if (updateCols.length > 0) {
+              const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
+              const updateVals = updateCols.map(c => {
+                const val = row[c];
+                return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
+              });
+              db.run(`UPDATE "${table}" SET ${setClause} WHERE key = ?`, [...updateVals, row.key]);
+            }
+            continue;
+          }
+        }
+
+        db.run(
+          `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
+          vals
+        );
+      }
+    });
+  } finally {
+    try {
+      db.run('PRAGMA foreign_keys = ON;');
+    } catch (e) {}
+  }
+  return rows.length;
+}
+
 async function pullTable(table) {
   const config = getSupabaseConfig();
   if (!config.isEnabled) return 0;
@@ -67,16 +143,9 @@ async function pullTable(table) {
   }
 
   const pullPromise = (async () => {
-    const db = getDatabase();
     try {
       const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
       if (!Array.isArray(rows)) return 0;
-
-      const tableCols = db.all(`PRAGMA table_info("${table}")`);
-      if (!tableCols || tableCols.length === 0) return 0;
-
-      const hasId = tableCols.some(c => c.name === 'id');
-      const localColSet = new Set(tableCols.map(c => c.name));
 
       if (rows.length === 0) {
         // If remote table has 0 rows, preserve existing local cache rows to prevent
@@ -85,61 +154,9 @@ async function pullTable(table) {
         return 0;
       }
 
-      const remoteCols = Object.keys(rows[0]);
-      const matchingCols = remoteCols.filter(c => localColSet.has(c));
-      if (matchingCols.length === 0) return 0;
-
-      const placeholders = matchingCols.map(() => '?').join(', ');
-      const colNames = matchingCols.map(c => `"${c}"`).join(', ');
-
-      // Temporarily turn OFF foreign key checks during hydration from Supabase
-      // to prevent rollback due to inter-table foreign key resolution order
-      try {
-        db.run('PRAGMA foreign_keys = OFF;');
-      } catch (e) {}
-
-      try {
-        db.transaction(() => {
-          // Upsert latest rows from Supabase into local cache without deleting local un-synced rows or columns
-          for (const row of rows) {
-            const vals = matchingCols.map(c => {
-              const val = row[c];
-              if (val !== null && typeof val === 'object') {
-                return JSON.stringify(val);
-              }
-              return val;
-            });
-
-            if (hasId && row.id) {
-              const existing = db.get(`SELECT id FROM "${table}" WHERE id = ?`, [row.id]);
-              if (existing) {
-                const updateCols = matchingCols.filter(c => c !== 'id');
-                if (updateCols.length > 0) {
-                  const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
-                  const updateVals = updateCols.map(c => {
-                    const val = row[c];
-                    return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
-                  });
-                  db.run(`UPDATE "${table}" SET ${setClause} WHERE id = ?`, [...updateVals, row.id]);
-                }
-                continue;
-              }
-            }
-
-            db.run(
-              `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
-              vals
-            );
-          }
-        });
-      } finally {
-        try {
-          db.run('PRAGMA foreign_keys = ON;');
-        } catch (e) {}
-      }
-
+      const count = upsertLocalRows(table, rows);
       tableLastSync.set(table, Date.now());
-      return rows.length;
+      return count;
     } catch (err) {
       console.warn(`[Supabase Pull Warning] Error pulling table ${table}:`, err.message);
       return 0;
@@ -586,48 +603,172 @@ async function pullAttemptAnswersForAttempt(attemptId) {
   if (!config.isEnabled || !attemptId) return 0;
 
   try {
-    const rows = await supabaseRequest(`attempt_answers?attempt_id=eq.${attemptId}&select=*`, { method: 'GET' });
+    const rows = await supabaseRequest(`attempt_answers?attempt_id=eq.${encodeURIComponent(attemptId)}&select=*`, { method: 'GET' });
     if (!Array.isArray(rows) || rows.length === 0) return 0;
-
-    const db = getDatabase();
-    const tableCols = db.all('PRAGMA table_info("attempt_answers")');
-    if (!tableCols || tableCols.length === 0) return 0;
-
-    const localColSet = new Set(tableCols.map(c => c.name));
-    const remoteCols = Object.keys(rows[0]);
-    const matchingCols = remoteCols.filter(c => localColSet.has(c));
-    if (matchingCols.length === 0) return 0;
-
-    const placeholders = matchingCols.map(() => '?').join(', ');
-    const colNames = matchingCols.map(c => `"${c}"`).join(', ');
-
-    try {
-      db.run('PRAGMA foreign_keys = OFF;');
-    } catch (_) {}
-
-    try {
-      db.transaction(() => {
-        for (const row of rows) {
-          const vals = matchingCols.map(c => {
-            const val = row[c];
-            return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
-          });
-          db.run(
-            `INSERT OR REPLACE INTO "attempt_answers" (${colNames}) VALUES (${placeholders})`,
-            vals
-          );
-        }
-      });
-    } finally {
-      try {
-        db.run('PRAGMA foreign_keys = ON;');
-      } catch (_) {}
-    }
-
-    return rows.length;
+    return upsertLocalRows('attempt_answers', rows);
   } catch (err) {
     console.warn(`[Supabase Pull Warning] Error pulling attempt_answers for attempt ${attemptId}:`, err.message);
     return 0;
+  }
+}
+
+/**
+ * Targeted Serverless Hydration for a specific student attempt.
+ * Ensures the attempt, its assessment, questions, classes, answers, and settings
+ * are fully synchronized into local SQLite regardless of microVM cache state.
+ */
+async function ensureAttemptFullyHydrated(attemptId) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !attemptId) return;
+
+  const db = getDatabase();
+
+  // 1. Fetch attempt locally or pull directly from Supabase
+  let attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+  if (!attempt) {
+    try {
+      const rows = await supabaseRequest(`student_attempts?id=eq.${encodeURIComponent(attemptId)}&select=*`, { method: 'GET' });
+      if (Array.isArray(rows) && rows.length > 0) {
+        upsertLocalRows('student_attempts', rows);
+        attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+      }
+    } catch (err) {
+      console.warn(`[ensureAttemptFullyHydrated] Error pulling student_attempt ${attemptId}:`, err.message);
+    }
+  }
+
+  // 2. Ensure referenced assessment exists in local SQLite
+  const assessmentId = attempt?.assessment_id;
+  if (assessmentId) {
+    const hasAss = db.get('SELECT id FROM assessments WHERE id = ?', [assessmentId]);
+    if (!hasAss) {
+      try {
+        const assRows = await supabaseRequest(`assessments?id=eq.${encodeURIComponent(assessmentId)}&select=*`, { method: 'GET' });
+        if (Array.isArray(assRows) && assRows.length > 0) {
+          upsertLocalRows('assessments', assRows);
+        }
+      } catch (err) {
+        console.warn(`[ensureAttemptFullyHydrated] Error pulling assessment ${assessmentId}:`, err.message);
+      }
+    }
+
+    // Ensure assessment_questions exist in local SQLite
+    const aqCount = db.get('SELECT COUNT(*) as c FROM assessment_questions WHERE assessment_id = ?', [assessmentId])?.c || 0;
+    if (aqCount === 0) {
+      try {
+        const aqRows = await supabaseRequest(`assessment_questions?assessment_id=eq.${encodeURIComponent(assessmentId)}&select=*`, { method: 'GET' });
+        if (Array.isArray(aqRows) && aqRows.length > 0) {
+          upsertLocalRows('assessment_questions', aqRows);
+        }
+      } catch (err) {}
+    }
+  }
+
+  // 3. Ensure referenced class exists in local SQLite
+  let classId = attempt?.class_id;
+  if (!classId && attempt && attempt.user_id && assessmentId) {
+    const localEnroll = db.get(
+      `SELECT ce.class_id FROM class_enrollments ce
+       JOIN classes cl ON cl.id = ce.class_id
+       JOIN assessments a ON a.course_id = cl.course_id
+       WHERE ce.user_id = ? AND a.id = ? AND ce.status = 'active'
+       ORDER BY ce.enrolled_at DESC LIMIT 1`,
+      [attempt.user_id, assessmentId]
+    );
+    if (localEnroll) {
+      classId = localEnroll.class_id;
+    } else {
+      try {
+        const enrollRows = await supabaseRequest(`class_enrollments?user_id=eq.${encodeURIComponent(attempt.user_id)}&select=*`, { method: 'GET' });
+        if (Array.isArray(enrollRows) && enrollRows.length > 0) {
+          upsertLocalRows('class_enrollments', enrollRows);
+        }
+      } catch (err) {}
+    }
+  }
+
+  if (classId) {
+    const hasClass = db.get('SELECT id FROM classes WHERE id = ?', [classId]);
+    if (!hasClass) {
+      try {
+        const cRows = await supabaseRequest(`classes?id=eq.${encodeURIComponent(classId)}&select=*`, { method: 'GET' });
+        if (Array.isArray(cRows) && cRows.length > 0) {
+          upsertLocalRows('classes', cRows);
+        }
+      } catch (err) {}
+    }
+  }
+
+  // 4. Pull all latest attempt answers from Supabase
+  await pullAttemptAnswersForAttempt(attemptId);
+
+  // 5. Ensure all questions referenced in attempt_answers exist in the questions table
+  try {
+    const missingQRows = db.all(
+      `SELECT DISTINCT aa.question_id
+       FROM attempt_answers aa
+       LEFT JOIN questions q ON q.id = aa.question_id
+       WHERE aa.attempt_id = ? AND q.id IS NULL`,
+      [attemptId]
+    );
+    if (missingQRows && missingQRows.length > 0) {
+      const missingIds = missingQRows.map(r => r.question_id).filter(Boolean);
+      for (let i = 0; i < missingIds.length; i += 50) {
+        const chunk = missingIds.slice(i, i + 50);
+        const inFilter = `in.(${chunk.map(id => `"${id}"`).join(',')})`;
+        const qRows = await supabaseRequest(`questions?id=${inFilter}&select=*`, { method: 'GET' });
+        if (Array.isArray(qRows) && qRows.length > 0) {
+          upsertLocalRows('questions', qRows);
+        }
+      }
+    }
+  } catch (err) {}
+
+  // 6. Ensure settings for unlocked sections and attempt timer are fresh
+  try {
+    const settingKeys = [
+      `attempt_timer_${attemptId}`,
+      `completed_sections_attempt_${attemptId}`
+    ];
+    if (classId) {
+      settingKeys.push(`cohort_unlocked_sections_${classId}`);
+    }
+    const inFilter = `in.(${settingKeys.map(k => `"${k}"`).join(',')})`;
+    const sRows = await supabaseRequest(`eduque_settings?key=${inFilter}&select=*`, { method: 'GET' });
+    if (Array.isArray(sRows) && sRows.length > 0) {
+      upsertLocalRows('eduque_settings', sRows);
+    }
+  } catch (err) {}
+}
+
+/**
+ * Hydrates an active in-progress attempt for a user & assessment from Supabase
+ */
+async function ensureActiveAttemptForUserHydrated(userId, assessmentId) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !userId || !assessmentId) return;
+
+  const db = getDatabase();
+  const local = db.get(
+    `SELECT id FROM student_attempts
+     WHERE user_id = ? AND assessment_id = ? AND status = 'in_progress'
+     ORDER BY attempt_number DESC, started_at DESC LIMIT 1`,
+    [userId, assessmentId]
+  );
+
+  if (local) {
+    await ensureAttemptFullyHydrated(local.id);
+  } else {
+    try {
+      const rows = await supabaseRequest(
+        `student_attempts?user_id=eq.${encodeURIComponent(userId)}&assessment_id=eq.${encodeURIComponent(assessmentId)}&status=eq.in_progress&order=attempt_number.desc&limit=1&select=*`,
+        { method: 'GET' }
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        upsertLocalRows('student_attempts', rows);
+        await ensureAttemptFullyHydrated(rows[0].id);
+      }
+    } catch (err) {}
   }
 }
 
@@ -819,5 +960,8 @@ module.exports = {
   ensureTableFresh,
   ensureTablesFresh,
   invalidateTableCache,
-  testSupabaseConnection
+  testSupabaseConnection,
+  upsertLocalRows,
+  ensureAttemptFullyHydrated,
+  ensureActiveAttemptForUserHydrated
 };

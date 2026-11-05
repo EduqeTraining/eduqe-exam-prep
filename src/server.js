@@ -528,7 +528,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const assessmentId = activeAttemptMatch[1];
-        await supabaseService.ensureTablesFresh(['student_attempts']);
+        await supabaseService.ensureActiveAttemptForUserHydrated(user.id, assessmentId);
         try {
           const active = attemptService.getActiveAttemptForUser(user.id, assessmentId);
           if (active) {
@@ -546,8 +546,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = attemptMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
-        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, state);
@@ -561,8 +560,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
-        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.autosaveAnswer({
@@ -584,7 +582,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitMatch[1];
-        await supabaseService.ensureTablesFresh(['student_attempts']);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         try {
           const result = attemptService.submitAttempt({
             attemptId,
@@ -627,8 +625,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
-        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.submitSection({
@@ -649,8 +646,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = resumeTimerMatch[1];
-        await supabaseService.ensureTablesFresh(['eduque_settings', 'classes', 'student_attempts']);
-        await supabaseService.pullAttemptAnswersForAttempt(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         const body = await parseBody(req);
         try {
           const result = attemptService.resumeAttemptTimer({
@@ -670,7 +666,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
-        await supabaseService.ensureTablesFresh(['classes', 'eduque_settings', 'student_attempts'], 0);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, {
