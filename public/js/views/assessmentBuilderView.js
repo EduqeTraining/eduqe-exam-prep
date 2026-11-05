@@ -375,14 +375,12 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
 
   function normalizeItemSections() {
     if (currentSections.length === 0) {
-      currentSections = ['Section 1', 'Section 2', 'Section 3'];
+      currentSections = ['Section 1', 'Section 2'];
     }
     for (const item of currentItems) {
       let sName = (item.section_name || '').trim();
-      if (!sName || (sName === 'General' && !currentSections.includes('General'))) {
+      if (!sName || !currentSections.includes(sName)) {
         item.section_name = currentSections[0];
-      } else if (!currentSections.includes(sName)) {
-        currentSections.push(sName);
       }
     }
   }

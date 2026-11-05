@@ -546,7 +546,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = attemptMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, state);
@@ -560,7 +560,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         const body = await parseBody(req);
         try {
           const result = attemptService.autosaveAnswer({
@@ -582,7 +582,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         try {
           const result = attemptService.submitAttempt({
             attemptId,
@@ -625,7 +625,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         const body = await parseBody(req);
         try {
           const result = attemptService.submitSection({
@@ -646,7 +646,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = resumeTimerMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         const body = await parseBody(req);
         try {
           const result = attemptService.resumeAttemptTimer({
@@ -666,7 +666,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
-        await supabaseService.ensureAttemptFullyHydrated(attemptId);
+        await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
         try {
           const state = attemptService.getAttemptState(attemptId, user.id);
           return sendJson(res, 200, {
@@ -1796,7 +1796,13 @@ async function handleRequest(req, res) {
       if (req.method === 'DELETE' && assessRemoveQMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        assessmentService.removeQuestionFromAssessment(assessRemoveQMatch[1], user.id, user.username);
+        const aqId = assessRemoveQMatch[1];
+        const aqRow = getDatabase().get('SELECT assessment_id FROM assessment_questions WHERE id = ?', [aqId]);
+        assessmentService.removeQuestionFromAssessment(aqId, user.id, user.username);
+        await supabaseService.deleteRecord('assessment_questions', aqId);
+        if (aqRow?.assessment_id) {
+          await supabaseService.syncAssessmentToSupabase(aqRow.assessment_id);
+        }
         return sendJson(res, 200, { success: true });
       }
 

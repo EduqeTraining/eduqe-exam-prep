@@ -154,6 +154,32 @@ async function pullTable(table) {
         return 0;
       }
 
+      if (table === 'assessment_questions') {
+        const db = getDatabase();
+        const remoteIds = new Set(rows.map(r => r.id).filter(Boolean));
+        const localRows = db.all('SELECT id FROM assessment_questions');
+        const toDelete = localRows.filter(r => !remoteIds.has(r.id)).map(r => r.id);
+        if (toDelete.length > 0) {
+          for (let i = 0; i < toDelete.length; i += 100) {
+            const chunk = toDelete.slice(i, i + 100);
+            const placeholders = chunk.map(() => '?').join(',');
+            db.run(`DELETE FROM assessment_questions WHERE id IN (${placeholders})`, chunk);
+          }
+        }
+      } else if (table === 'assessment_classes') {
+        const db = getDatabase();
+        const remoteIds = new Set(rows.map(r => `${r.assessment_id}_${r.class_id}`));
+        const localRows = db.all('SELECT id, assessment_id, class_id FROM assessment_classes');
+        const toDelete = localRows.filter(r => !remoteIds.has(`${r.assessment_id}_${r.class_id}`)).map(r => r.id);
+        if (toDelete.length > 0) {
+          for (let i = 0; i < toDelete.length; i += 100) {
+            const chunk = toDelete.slice(i, i + 100);
+            const placeholders = chunk.map(() => '?').join(',');
+            db.run(`DELETE FROM assessment_classes WHERE id IN (${placeholders})`, chunk);
+          }
+        }
+      }
+
       const count = upsertLocalRows(table, rows);
       tableLastSync.set(table, Date.now());
       return count;
@@ -214,60 +240,45 @@ async function upsertRecord(tableName, record, conflictColumns = null) {
     else if (tableName === 'eduque_settings') conflictParam = 'key';
   }
 
-  try {
-    let res;
+  const curRecord = { ...record };
+  for (let attempt = 0; attempt < 12; attempt++) {
     try {
-      res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
+      const res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
         method: 'POST',
         headers: {
           'Prefer': 'resolution=merge-duplicates,return=representation'
         },
-        body: record
+        body: curRecord
       });
-    } catch (firstErr) {
-      // If error is about a missing column in Supabase schema cache (e.g. unlocked_sections or completed_sections):
-      if (firstErr && firstErr.message && /column.*does not exist|Could not find the.*column/i.test(firstErr.message)) {
-        const colMatch = firstErr.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || firstErr.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
+      invalidateTableCache(tableName);
+      return res;
+    } catch (err) {
+      // If error is about a missing column in Supabase schema cache (e.g. is_paused, paused_remaining_seconds, completed_sections):
+      if (err && err.message && /column.*does not exist|Could not find the.*column/i.test(err.message)) {
+        const colMatch = err.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || err.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
         const colToOmit = colMatch ? colMatch[1] : null;
-        if (colToOmit && record[colToOmit] !== undefined) {
-          const stripped = { ...record };
-          delete stripped[colToOmit];
-          try {
-            res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
-              method: 'POST',
-              headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
-              body: stripped
-            });
-            invalidateTableCache(tableName);
-            return res;
-          } catch (retryErr) {}
+        if (colToOmit && curRecord[colToOmit] !== undefined) {
+          delete curRecord[colToOmit];
+          continue;
         }
       }
       if (conflictParam !== 'id') {
-        res = await supabaseRequest(`${tableName}?on_conflict=id`, {
-          method: 'POST',
-          headers: {
-            'Prefer': 'resolution=merge-duplicates,return=representation'
-          },
-          body: record
-        });
-      } else {
-        throw firstErr;
+        conflictParam = 'id';
+        continue;
       }
+      console.warn(`[Supabase Sync Warning] Could not sync to ${tableName}:`, err.message);
+      return null;
     }
-    invalidateTableCache(tableName);
-    return res;
-  } catch (err) {
-    console.warn(`[Supabase Sync Warning] Could not sync to ${tableName}:`, err.message);
-    return null;
   }
+  return null;
 }
 
 async function upsertRecords(tableName, records, conflictColumns = null) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || !records) return null;
-  const items = Array.isArray(records) ? records : [records];
-  if (items.length === 0) return [];
+  const rawList = Array.isArray(records) ? records : [records];
+  if (rawList.length === 0) return [];
+  const items = rawList.map(r => ({ ...r }));
 
   invalidateTableCache(tableName);
 
@@ -279,35 +290,35 @@ async function upsertRecords(tableName, records, conflictColumns = null) {
     else if (tableName === 'eduque_settings') conflictParam = 'key';
   }
 
-  try {
-    let res;
+  for (let attempt = 0; attempt < 12; attempt++) {
     try {
-      res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
+      const res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
         method: 'POST',
         headers: {
           'Prefer': 'resolution=merge-duplicates,return=representation'
         },
         body: items
       });
-    } catch (firstErr) {
-      if (conflictParam !== 'id') {
-        res = await supabaseRequest(`${tableName}?on_conflict=id`, {
-          method: 'POST',
-          headers: {
-            'Prefer': 'resolution=merge-duplicates,return=representation'
-          },
-          body: items
-        });
-      } else {
-        throw firstErr;
+      invalidateTableCache(tableName);
+      return res;
+    } catch (err) {
+      if (err && err.message && /column.*does not exist|Could not find the.*column/i.test(err.message)) {
+        const colMatch = err.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || err.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
+        const colToOmit = colMatch ? colMatch[1] : null;
+        if (colToOmit) {
+          items.forEach(it => { delete it[colToOmit]; });
+          continue;
+        }
       }
+      if (conflictParam !== 'id') {
+        conflictParam = 'id';
+        continue;
+      }
+      console.warn(`[Supabase Bulk Sync Warning] Could not sync batch to ${tableName}:`, err.message);
+      return null;
     }
-    invalidateTableCache(tableName);
-    return res;
-  } catch (err) {
-    console.warn(`[Supabase Bulk Sync Warning] Could not sync batch to ${tableName}:`, err.message);
-    return null;
   }
+  return null;
 }
 
 async function deleteRecord(tableName, id) {
@@ -465,16 +476,25 @@ async function syncAssessmentToSupabase(assessmentOrId) {
   await upsertRecord('assessments', assess);
 
   try {
-    const aqs = db.all('SELECT * FROM assessment_questions WHERE assessment_id = ?', [assess.id]);
-    if (aqs && aqs.length > 0) {
+    const aqs = db.all('SELECT * FROM assessment_questions WHERE assessment_id = ?', [assess.id]) || [];
+    // Delete stale remote assessment_questions for this assessment first so zombie questions cannot persist
+    await supabaseRequest(`assessment_questions?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
+      method: 'DELETE'
+    });
+    if (aqs.length > 0) {
       await upsertRecords('assessment_questions', aqs, 'id');
     }
-    const acs = db.all('SELECT * FROM assessment_classes WHERE assessment_id = ?', [assess.id]);
-    if (acs && acs.length > 0) {
+
+    const acs = db.all('SELECT * FROM assessment_classes WHERE assessment_id = ?', [assess.id]) || [];
+    // Delete stale remote assessment_classes for this assessment first
+    await supabaseRequest(`assessment_classes?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
+      method: 'DELETE'
+    });
+    if (acs.length > 0) {
       await upsertRecords('assessment_classes', acs, 'assessment_id,class_id');
     }
   } catch (e) {
-    // Ignore links error
+    console.warn(`[syncAssessmentToSupabase Warning] Failed to sync sub-items for assessment ${assess.id}:`, e.message);
   }
 }
 
@@ -617,20 +637,35 @@ async function pullAttemptAnswersForAttempt(attemptId) {
  * Ensures the attempt, its assessment, questions, classes, answers, and settings
  * are fully synchronized into local SQLite regardless of microVM cache state.
  */
-async function ensureAttemptFullyHydrated(attemptId) {
+async function ensureAttemptFullyHydrated(attemptId, userId = null) {
   const config = getSupabaseConfig();
-  if (!config.isEnabled || !attemptId) return;
+  if (!config.isEnabled || (!attemptId && !userId)) return;
 
   const db = getDatabase();
 
   // 1. Fetch attempt locally or pull directly from Supabase
-  let attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+  let attempt = attemptId ? db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]) : null;
+  if (!attempt && userId) {
+    attempt = db.get(
+      "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+      [userId]
+    );
+    if (attempt) attemptId = attempt.id;
+  }
+
   if (!attempt) {
     try {
-      const rows = await supabaseRequest(`student_attempts?id=eq.${encodeURIComponent(attemptId)}&select=*`, { method: 'GET' });
+      let rows = attemptId ? await supabaseRequest(`student_attempts?id=eq.${encodeURIComponent(attemptId)}&select=*`, { method: 'GET' }) : [];
+      if ((!Array.isArray(rows) || rows.length === 0) && userId) {
+        rows = await supabaseRequest(
+          `student_attempts?user_id=eq.${encodeURIComponent(userId)}&status=eq.in_progress&order=started_at.desc&limit=1&select=*`,
+          { method: 'GET' }
+        );
+      }
       if (Array.isArray(rows) && rows.length > 0) {
         upsertLocalRows('student_attempts', rows);
-        attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+        attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [rows[0].id]);
+        attemptId = rows[0].id;
       }
     } catch (err) {
       console.warn(`[ensureAttemptFullyHydrated] Error pulling student_attempt ${attemptId}:`, err.message);

@@ -226,6 +226,8 @@ CREATE TABLE IF NOT EXISTS "student_attempts" (
     "submitted_at" TEXT,
     "status" TEXT NOT NULL DEFAULT 'in_progress', -- 'in_progress', 'submitted', 'marked', 'awaiting_review', 'expired'
     "completed_sections" TEXT DEFAULT '[]',
+    "is_paused" INTEGER DEFAULT 0,
+    "paused_remaining_seconds" INTEGER,
     "score" REAL DEFAULT 0,
     "max_score" REAL DEFAULT 0,
     "percentage" REAL DEFAULT 0,
@@ -315,3 +317,17 @@ ALTER TABLE "sessions" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "revoked_tokens" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "login_attempts" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "eduque_settings" DISABLE ROW LEVEL SECURITY;
+
+-- Idempotent schema upgrades for existing installations:
+ALTER TABLE "classes" ADD COLUMN IF NOT EXISTS "instructor_id" TEXT REFERENCES "users"("id");
+ALTER TABLE "classes" ADD COLUMN IF NOT EXISTS "unlocked_sections" TEXT DEFAULT '["Section 1"]';
+ALTER TABLE "course_access_codes" ADD COLUMN IF NOT EXISTS "class_id" TEXT REFERENCES "classes"("id") ON DELETE CASCADE;
+ALTER TABLE "assessments" ADD COLUMN IF NOT EXISTS "sections" TEXT DEFAULT '["Section 1","Section 2","Section 3"]';
+ALTER TABLE "assessment_questions" ADD COLUMN IF NOT EXISTS "section_name" TEXT DEFAULT 'Section 1';
+ALTER TABLE "assessment_questions" ADD COLUMN IF NOT EXISTS "order_index" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "student_attempts" ADD COLUMN IF NOT EXISTS "completed_sections" TEXT DEFAULT '[]';
+ALTER TABLE "student_attempts" ADD COLUMN IF NOT EXISTS "is_paused" INTEGER DEFAULT 0;
+ALTER TABLE "student_attempts" ADD COLUMN IF NOT EXISTS "paused_remaining_seconds" INTEGER;
+ALTER TABLE "attempt_answers" ADD COLUMN IF NOT EXISTS "section_name" TEXT DEFAULT 'Section 1';
+ALTER TABLE "attempt_answers" ADD COLUMN IF NOT EXISTS "order_index" INTEGER DEFAULT 0;
+

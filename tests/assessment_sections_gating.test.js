@@ -338,6 +338,57 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     db.run("DELETE FROM student_attempts WHERE id = 'test-upsert-attempt'");
   });
 
+  await t.test('10. submitSection and getAttemptState fallback to active in-progress attempt if attemptId does not match directly', async () => {
+    const freshAttempt = startAttempt({
+      userId: student.id,
+      assessmentId: assessment.id,
+      classId: testClass.id,
+      forceNew: true
+    });
+    assert.ok(freshAttempt);
+
+    // Student now has active in-progress attempt
+    const state = getAttemptState('non-existent-attempt-id-1234', student.id);
+    assert.ok(state, 'Must resolve active in-progress attempt for student via fallback');
+    assert.equal(state.id, freshAttempt.id);
+
+    // Verify submitSection fallback
+    const res = submitSection({
+      attemptId: 'non-existent-attempt-id-1234',
+      userId: student.id,
+      sectionName: 'Section 1'
+    });
+    assert.ok(res);
+    assert.equal(res.success, true);
+    assert.ok(res.completed_sections.includes('Section 1'));
+  });
+
+  await t.test('11. getAssessment deduplicates duplicate items and strictly respects configured sections', async () => {
+    const assessmentService = require('../src/services/assessmentService');
+    // Insert a duplicate question and an unmapped section name
+    const q1 = db.get('SELECT id FROM questions LIMIT 1');
+    assert.ok(q1);
+
+    const dupId1 = 'test-dup-1';
+    const dupId2 = 'test-dup-2';
+    db.run(
+      'INSERT INTO assessment_questions (id, assessment_id, question_id, section_name, order_index) VALUES (?, ?, ?, ?, ?)',
+      [dupId1, assessment.id, q1.id, 'Phantom Section 99', 99]
+    );
+    db.run(
+      'INSERT INTO assessment_questions (id, assessment_id, question_id, section_name, order_index) VALUES (?, ?, ?, ?, ?)',
+      [dupId2, assessment.id, q1.id, 'Section 1', 100]
+    );
+
+    const loaded = assessmentService.getAssessment(assessment.id);
+    // Duplicate question must be cleaned up
+    const q1Occurrences = loaded.items.filter(i => (i.question_id || i.question?.id) === q1.id);
+    assert.equal(q1Occurrences.length, 1, 'Question must only appear once in assessment');
+
+    // Section names must strictly match configured sections on the assessment
+    assert.ok(!loaded.section_names.includes('Phantom Section 99'), 'Phantom section must not be created');
+  });
+
   // Cleanup test database
   t.after(() => {
     if (fs.existsSync(testDbPath)) {

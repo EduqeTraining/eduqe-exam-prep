@@ -142,22 +142,33 @@ function getAssessment(assessmentId) {
     [assessmentId]
   );
 
-  // Build final ordered section names list (configured sections + any custom item sections)
-  const sectionNames = [...configuredSections];
+  // Deduplicate items in SQLite if any duplicates exist for the same question or pool
+  const seenItemKeys = new Set();
+  const uniqueItems = [];
+  const duplicateIds = [];
   for (const item of items) {
-    const rawSec = (item.section_name || '').trim();
-    if (rawSec && rawSec !== 'General' && !sectionNames.includes(rawSec)) {
-      sectionNames.push(rawSec);
+    const key = item.pool_id ? `pool_${item.pool_id}` : `q_${item.question_id}`;
+    if (seenItemKeys.has(key)) {
+      duplicateIds.push(item.assessment_question_id);
+    } else {
+      seenItemKeys.add(key);
+      uniqueItems.push(item);
     }
   }
-  if (sectionNames.length === 0) {
-    sectionNames.push(...DEFAULT_SECTIONS);
+  if (duplicateIds.length > 0) {
+    const placeholders = duplicateIds.map(() => '?').join(',');
+    db.run(`DELETE FROM assessment_questions WHERE id IN (${placeholders})`, duplicateIds);
   }
 
-  const formattedItems = items.map(item => {
+  // Section names strictly follow configured sections on the assessment
+  const sectionNames = configuredSections.length > 0 ? [...configuredSections] : [...DEFAULT_SECTIONS];
+
+  const formattedItems = uniqueItems.map(item => {
     let secName = (item.section_name || '').trim();
-    if (!secName || (secName === 'General' && !sectionNames.includes('General'))) {
+    if (!secName || !sectionNames.includes(secName)) {
       secName = sectionNames[0] || 'Section 1';
+      db.run('UPDATE assessment_questions SET section_name = ? WHERE id = ?', [secName, item.assessment_question_id]);
+      item.section_name = secName;
     }
 
     if (item.pool_id) {
@@ -192,6 +203,7 @@ function getAssessment(assessmentId) {
     return {
       assessment_question_id: item.assessment_question_id,
       is_pool: false,
+      question_id: item.question_id,
       section_name: secName,
       order_index: item.order_index,
       points_override: item.points_override,
@@ -392,7 +404,18 @@ function updateAssessment(assessmentId, data, adminUserId = null, adminUsername 
 function syncAssessmentItems(assessmentId, items, adminUserId = null, adminUsername = 'admin') {
   const db = getDatabase();
   db.run('DELETE FROM assessment_questions WHERE assessment_id = ?', [assessmentId]);
-  items.forEach((item, idx) => {
+
+  const seenKeys = new Set();
+  const dedupedItems = [];
+  for (const item of (items || [])) {
+    const key = item.is_pool ? `pool_${item.pool_id}` : `q_${item.question_id || item.question?.id}`;
+    if (key && !seenKeys.has(key)) {
+      seenKeys.add(key);
+      dedupedItems.push(item);
+    }
+  }
+
+  dedupedItems.forEach((item, idx) => {
     const id = item.assessment_question_id || generateId();
     const sectionName = (item.section_name || '').trim() || 'Section 1';
     const pointsOverride = item.points_override !== undefined ? item.points_override : null;
@@ -421,15 +444,22 @@ function ensureSectionOnAssessment(db, assessmentId, sectionName) {
   const row = db.get('SELECT sections FROM assessments WHERE id = ?', [assessmentId]);
   if (!row) return;
   const current = parseStoredSections(row.sections);
-  if (!current.includes(sectionName)) {
-    current.push(sectionName);
-    db.run('UPDATE assessments SET sections = ? WHERE id = ?', [JSON.stringify(current), assessmentId]);
+  if (current.length === 0) {
+    db.run('UPDATE assessments SET sections = ? WHERE id = ?', [JSON.stringify([sectionName]), assessmentId]);
   }
 }
 
-function addQuestionToAssessment(assessmentId, questionId, { sectionName = 'Section 1', pointsOverride = null } = {}, adminUserId = null, adminUsername = 'admin') {
+function addQuestionToAssessment(assessmentId, questionId, { sectionName = null, pointsOverride = null } = {}, adminUserId = null, adminUsername = 'admin') {
   const db = getDatabase();
-  const cleanSection = (!sectionName || sectionName === 'General') ? 'Section 1' : sectionName.trim();
+  const assRow = db.get('SELECT sections FROM assessments WHERE id = ?', [assessmentId]);
+  const configured = parseStoredSections(assRow?.sections);
+  let cleanSection = (sectionName || '').trim();
+  if (!cleanSection || cleanSection === 'General') {
+    cleanSection = configured[0] || 'Section 1';
+  } else if (!configured.includes(cleanSection)) {
+    // If not in configured sections, assign to first configured section
+    cleanSection = configured[0] || 'Section 1';
+  }
 
   const existing = db.get(
     'SELECT id FROM assessment_questions WHERE assessment_id = ? AND question_id = ?',
@@ -437,14 +467,9 @@ function addQuestionToAssessment(assessmentId, questionId, { sectionName = 'Sect
   );
   if (existing) {
     // Update section if re-assigned
-    if (sectionName && sectionName !== 'General') {
-      db.run('UPDATE assessment_questions SET section_name = ? WHERE id = ?', [cleanSection, existing.id]);
-      ensureSectionOnAssessment(db, assessmentId, cleanSection);
-    }
+    db.run('UPDATE assessment_questions SET section_name = ? WHERE id = ?', [cleanSection, existing.id]);
     return { id: existing.id, added: false, already_exists: true, section_name: cleanSection };
   }
-
-  ensureSectionOnAssessment(db, assessmentId, cleanSection);
 
   const maxOrder = db.get('SELECT MAX(order_index) as max_order FROM assessment_questions WHERE assessment_id = ?', [assessmentId]);
   const nextOrder = (maxOrder?.max_order ?? -1) + 1;

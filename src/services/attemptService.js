@@ -548,6 +548,25 @@ function submitSection({ attemptId, userId, sectionName }) {
         explanation_visibility: 'immediate',
         assessment_sections: JSON.stringify(['Section 1'])
       };
+    } else if (userId) {
+      // Fallback: check if the student has an active in-progress attempt
+      const userActive = db.get(
+        "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+        [userId]
+      );
+      if (userActive) {
+        attemptId = userActive.id;
+        const assRow = db.get('SELECT pass_mark_percentage, result_visibility, explanation_visibility, sections FROM assessments WHERE id = ?', [userActive.assessment_id]);
+        attempt = {
+          ...userActive,
+          pass_mark_percentage: assRow?.pass_mark_percentage ?? 70,
+          result_visibility: assRow?.result_visibility ?? 'immediate',
+          explanation_visibility: assRow?.explanation_visibility ?? 'immediate',
+          assessment_sections: assRow?.sections ?? JSON.stringify(['Section 1'])
+        };
+      } else {
+        throw new Error('Attempt not found.');
+      }
     } else {
       throw new Error('Attempt not found.');
     }
@@ -841,6 +860,33 @@ function getAttemptState(attemptId, userId) {
         course_name: 'Course',
         class_name: 'Class'
       };
+    } else if (userId) {
+      const userActive = db.get(
+        "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+        [userId]
+      );
+      if (userActive) {
+        attemptId = userActive.id;
+        const assRow = db.get('SELECT name, description, instructions, duration_minutes, pass_mark_percentage, allow_back_navigation, allow_flagging, allow_review_screen, result_visibility, explanation_visibility, sections FROM assessments WHERE id = ?', [userActive.assessment_id]);
+        attempt = {
+          ...userActive,
+          assessment_name: assRow?.name || 'Assessment',
+          assessment_description: assRow?.description || '',
+          instructions: assRow?.instructions || '',
+          duration_minutes: assRow?.duration_minutes || 60,
+          pass_mark_percentage: assRow?.pass_mark_percentage ?? 70,
+          allow_back_navigation: assRow?.allow_back_navigation ?? 1,
+          allow_flagging: assRow?.allow_flagging ?? 1,
+          allow_review_screen: assRow?.allow_review_screen ?? 1,
+          result_visibility: assRow?.result_visibility ?? 'immediate',
+          explanation_visibility: assRow?.explanation_visibility ?? 'immediate',
+          assessment_sections: assRow?.sections ?? JSON.stringify(['Section 1']),
+          course_name: 'Course',
+          class_name: 'Class'
+        };
+      } else {
+        return null;
+      }
     } else {
       return null;
     }
