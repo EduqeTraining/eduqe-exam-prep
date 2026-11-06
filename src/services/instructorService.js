@@ -1162,13 +1162,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         questionsMap.set(qRow.id, {
           ...qRow,
           section_name: row.attempt_section_name || 'Section 1',
-          order_index: 999
+          order_index: 999,
+          question_number: questionsMap.size + 1
         });
       }
     }
   }
 
-  const questionAnalytics = Array.from(questionsMap.values()).map(q => {
+  const questionAnalytics = Array.from(questionsMap.values()).map((q, idx) => {
     const stats = statsMap.get(q.id);
     const totalAnswers = stats ? Number(stats.total_answers) : 0;
     const correctAnswers = stats ? Number(stats.correct_answers) : 0;

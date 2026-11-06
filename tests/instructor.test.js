@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
 const { EventEmitter } = require('node:events');
 
-const { initDatabase, setDatabaseInstance } = require('../src/db');
+const { initDatabase, setDatabaseInstance, getDatabase } = require('../src/db');
 const { seedDatabase } = require('../src/db/seed');
 const { createServer } = require('../src/server');
 
@@ -646,5 +646,43 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     assert.equal(betaProgress.data.summary.total_enrolled, 1, 'Cohort Beta must have exactly 1 enrolled student');
     assert.ok(betaProgress.data.students.some(s => s.id === betaUserId), 'BetaUser must be in Cohort Beta');
     assert.ok(!betaProgress.data.students.some(s => s.id === alphaUserId), 'AlphaUser must NOT be in Cohort Beta');
+  });
+
+  await t.test('12. Instructor progress question analytics handles attempt answers for orphan questions without idx is not defined error', async () => {
+    const db = getDatabase();
+    const allocatedClass = db.get(`SELECT id, instructor_id FROM classes WHERE instructor_id IS NOT NULL LIMIT 1`);
+    assert.ok(allocatedClass, 'Must find an allocated class');
+
+    // Insert an orphan question not tied to any assessment
+    const orphanQId = 'q_orphan_test_999';
+    db.run(
+      `INSERT OR REPLACE INTO questions (id, question_text, question_type, topic, difficulty, status, answer_options, correct_answer)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [orphanQId, 'What is orphan testing?', 'single_choice', 'Testing', 'easy', 'published', JSON.stringify(['A', 'B']), 'A']
+    );
+
+    // Create an attempt answer referencing this orphan question for this class
+    const dummyAttemptId = 'att_orphan_test_999';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, deadline_at, score, max_score, percentage)
+       VALUES (?, ?, (SELECT id FROM assessments LIMIT 1), ?, 1, 'completed', datetime('now', '+1 hour'), 1, 1, 100)`,
+      [dummyAttemptId, 'usr_admin_001', allocatedClass.id]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+       VALUES (?, ?, ?, ?, 1, 'Section 1')`,
+      ['aa_orphan_test_999', dummyAttemptId, orphanQId, 'A']
+    );
+
+    // Fetch instructor progress for this specific class - must succeed with 200 and return question analytics with question_number
+    const progressRes = await req(`/api/instructor/progress?class_id=${allocatedClass.id}`, {
+      token: adminToken
+    });
+    assert.equal(progressRes.status, 200, 'Must not throw 500/400 idx is not defined');
+    assert.ok(Array.isArray(progressRes.data.questions_analysis), 'Must return questions_analysis');
+    const orphanAnalysis = progressRes.data.questions_analysis.find(q => q.id === orphanQId);
+    assert.ok(orphanAnalysis, 'Orphan question must be present in analysis');
+    assert.ok(typeof orphanAnalysis.question_number === 'number', 'Orphan question must have a numeric question_number');
   });
 });
