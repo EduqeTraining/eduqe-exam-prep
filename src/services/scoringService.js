@@ -17,13 +17,13 @@ function evaluateQuestion(question, savedAnswer) {
   const allowPartial = Boolean(question.partial_credit);
   const correctKey = question.correct_answer;
 
-  if (savedAnswer === undefined || savedAnswer === null || savedAnswer === '') {
+  if (savedAnswer === undefined || savedAnswer === null || savedAnswer === '' || savedAnswer === '__SKIPPED__') {
     return {
       isCorrect: false,
       awardedPoints: 0,
       maxPoints,
       status: 'auto_marked',
-      feedback: 'Unanswered'
+      feedback: savedAnswer === '__SKIPPED__' ? 'Question skipped by delegate' : 'Unanswered'
     };
   }
 
@@ -287,14 +287,22 @@ function evaluateQuestion(question, savedAnswer) {
 
     case 'dropdown': {
       // Multiple blanks: savedAnswer: { [blankId]: selectedVal }
-      const studentChoices = typeof savedAnswer === 'object' && savedAnswer !== null ? savedAnswer : {};
-      const correctChoices = typeof correctKey === 'object' && correctKey !== null ? correctKey : {};
+      let studentChoices = typeof savedAnswer === 'object' && savedAnswer !== null ? savedAnswer : {};
+      if (typeof savedAnswer === 'string') {
+        try { studentChoices = JSON.parse(savedAnswer); } catch (_) { studentChoices = { blank1: savedAnswer }; }
+      }
+      let correctChoices = typeof correctKey === 'object' && correctKey !== null ? correctKey : {};
+      if (typeof correctKey === 'string') {
+        try { correctChoices = JSON.parse(correctKey); } catch (_) { correctChoices = { blank1: correctKey }; }
+      }
       const blanks = Object.keys(correctChoices);
       const totalBlanks = blanks.length || 1;
 
       let correctCount = 0;
       for (const blankId of blanks) {
-        if (studentChoices[blankId] === correctChoices[blankId]) {
+        const studentPick = String(studentChoices[blankId] || '').trim().toLowerCase();
+        const correctPick = String(correctChoices[blankId] || '').trim().toLowerCase();
+        if (studentPick === correctPick && correctPick !== '') {
           correctCount++;
         }
       }

@@ -126,6 +126,33 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         </button>
       </div>
     </dialog>
+
+    <!-- Skip Question Confirmation Modal -->
+    <dialog id="modal-skip-question" style="max-width:480px; width:95%;">
+      <div class="modal-header">
+        <h3 style="font-size:1.125rem; font-weight:800; color:var(--warning);" id="skip-modal-title">⏩ Skip Question</h3>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-skip-modal">&times;</button>
+      </div>
+      <div class="modal-body" id="skip-modal-body" style="padding:1rem 0;">
+        <div class="card" style="background:rgba(234,179,8,0.1); border:1.5px solid var(--warning); padding:1rem; margin-bottom:1rem;">
+          <p style="font-weight:700; color:var(--text-main); margin-bottom:0.5rem; font-size:0.95rem;">
+            ⚠️ Are you sure you want to skip this question?
+          </p>
+          <p style="font-size:0.875rem; color:var(--text-muted); line-height:1.45; margin:0;">
+            If you skip this question, you will <strong>NOT be able to return to it</strong>. It will be sealed and permanently marked as completed with <strong>0 points</strong> allocated to this question.
+          </p>
+        </div>
+        <p style="font-size:0.825rem; color:var(--text-muted); margin:0;">
+          This option allows you to continue through the assessment if you are stuck or experiencing an issue with this question.
+        </p>
+      </div>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-skip">Cancel (Stay on Question)</button>
+        <button type="button" class="btn btn-warning" id="btn-confirm-skip" style="font-weight:800; background:var(--warning); color:#000;">
+          Yes, Skip &amp; Proceed &rarr;
+        </button>
+      </div>
+    </dialog>
   `;
 
   const viewContainer = container.querySelector('#player-view-container');
@@ -135,8 +162,42 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   const secSubmitModal = container.querySelector('#modal-submit-section');
   const secResultsModal = container.querySelector('#modal-section-results');
   const secLockedModal = container.querySelector('#modal-section-locked');
+  const skipModal = container.querySelector('#modal-skip-question');
   let sectionUnlockPoller = null;
   let lockedModalPoller = null;
+
+  function saveAttemptLocally() {
+    if (!currentAttempt || !currentAttempt.id) return;
+    try {
+      const answersMap = {};
+      (currentAttempt.questions || []).forEach(q => {
+        if (q.saved_answer !== undefined && q.saved_answer !== null) {
+          answersMap[q.id] = q.saved_answer;
+        }
+      });
+      localStorage.setItem(`eduqe_attempt_${currentAttempt.id}`, JSON.stringify({
+        attempt_id: currentAttempt.id,
+        saved_at: Date.now(),
+        answers: answersMap
+      }));
+    } catch (_) {}
+  }
+
+  function restoreAttemptFromLocal() {
+    if (!currentAttempt || !currentAttempt.id) return;
+    try {
+      const raw = localStorage.getItem(`eduqe_attempt_${currentAttempt.id}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.answers && typeof parsed.answers === 'object') {
+        (currentAttempt.questions || []).forEach(q => {
+          if ((q.saved_answer === null || q.saved_answer === undefined || q.saved_answer === '') && parsed.answers[q.id] !== undefined) {
+            q.saved_answer = parsed.answers[q.id];
+          }
+        });
+      }
+    } catch (_) {}
+  }
 
   async function initPlayer() {
     try {
@@ -156,6 +217,9 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           const activeCheck = await api.getActiveAttempt(assessmentId);
           if (activeCheck && activeCheck.has_active && activeCheck.attempt_id) {
             currentAttempt = await api.get(`/student/attempts/${activeCheck.attempt_id}`);
+          } else if (activeCheck && activeCheck.has_completed && activeCheck.latest_attempt_id) {
+            // Already completed this assessment; show their results/review screen directly
+            currentAttempt = await api.get(`/student/attempts/${activeCheck.latest_attempt_id}`);
           }
         } catch (_) {}
 
@@ -174,6 +238,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       }
 
       if (currentAttempt.status === 'in_progress') {
+        restoreAttemptFromLocal();
         const distinctSecs = getDistinctSections();
         const activeSec = distinctSecs.find(s => !s.is_submitted);
         if (activeSec && !activeSec.is_unlocked) {
@@ -186,6 +251,18 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           renderSectionWaitingCard(prevSec ? prevSec.name : 'Previous Section', activeSec.name);
           return;
         }
+
+        // Set active question to the first unanswered question in the active section so we don't drop back to Q1 of Section 1!
+        if (activeSec && Array.isArray(activeSec.indices) && activeSec.indices.length > 0) {
+          const firstUnanswered = activeSec.indices.find(idx => !isQuestionAnswered(currentAttempt.questions[idx]));
+          activeQuestionIndex = (firstUnanswered !== undefined) ? firstUnanswered : activeSec.indices[0];
+        } else {
+          const overallUnanswered = currentAttempt.questions.findIndex(q => !isQuestionAnswered(q));
+          if (overallUnanswered !== -1) {
+            activeQuestionIndex = overallUnanswered;
+          }
+        }
+
         renderLiveExamInterface();
       } else {
         renderResultsScreen();
@@ -362,6 +439,9 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
                   <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 6a3 3 0 013-3h10a1 1 0 01.8 1.6L14.25 8l2.55 3.4A1 1 0 0116 13H6a1 1 0 00-1 1v3a1 1 0 11-2 0V6z" clip-rule="evenodd"/></svg>
                   <span id="flag-label">Flag for Review</span>
                 </button>
+                <button type="button" class="btn btn-secondary" id="btn-skip-q" style="border-color:var(--warning); color:var(--warning); font-weight:700;">
+                  ⏩ Skip Question
+                </button>
               </div>
 
               <button type="button" class="btn btn-primary" id="btn-next-q">
@@ -446,10 +526,59 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       renderPalette();
     };
 
+    const skipBtn = viewContainer.querySelector('#btn-skip-q');
+    if (skipBtn) {
+      skipBtn.onclick = () => openSkipModal();
+    }
+
     viewContainer.querySelector('#btn-review-submit').onclick = openConfirmModal;
     viewContainer.querySelector('#btn-sidebar-end').onclick = openConfirmModal;
     viewContainer.querySelector('#btn-restart-exam').onclick = openRestartModal;
     viewContainer.querySelector('#btn-sidebar-restart').onclick = openRestartModal;
+  }
+
+  function openSkipModal() {
+    const q = currentAttempt.questions[activeQuestionIndex];
+    if (!q) return;
+    const distinctSecs = getDistinctSections();
+    const secName = q.section_name || 'Section 1';
+    const currSec = distinctSecs.find(s => s.name === secName) || distinctSecs[0];
+    if (currSec && currSec.is_submitted) {
+      alert('This section has already been submitted and reviewed.');
+      return;
+    }
+    if (q.saved_answer === '__SKIPPED__') {
+      alert('This question has already been skipped.');
+      return;
+    }
+
+    const titleEl = skipModal.querySelector('#skip-modal-title');
+    if (titleEl) {
+      titleEl.textContent = `⏩ Skip Question ${activeQuestionIndex + 1}`;
+    }
+
+    skipModal.showModal();
+
+    const cancelBtn = skipModal.querySelector('#btn-cancel-skip');
+    const closeBtn = skipModal.querySelector('#btn-close-skip-modal');
+    const confirmBtn = skipModal.querySelector('#btn-confirm-skip');
+
+    cancelBtn.onclick = () => skipModal.close();
+    closeBtn.onclick = () => skipModal.close();
+
+    confirmBtn.onclick = () => {
+      skipModal.close();
+      q.saved_answer = '__SKIPPED__';
+      q.is_locked = true;
+      triggerAutosave(q.id, '__SKIPPED__', q.is_flagged);
+      saveAttemptLocally();
+      renderPalette();
+      renderQuestion(activeQuestionIndex);
+      // Advance to next question after skipping
+      setTimeout(() => {
+        handleNextNavigation();
+      }, 150);
+    };
   }
 
   function startAuthoritativeTimer() {
@@ -934,19 +1063,22 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:0.4rem;">
           ${sec.indices.map(idx => {
             const q = currentAttempt.questions[idx];
-            const isAnswered = q.saved_answer !== null && q.saved_answer !== undefined && q.saved_answer !== '' && (typeof q.saved_answer !== 'object' || Object.keys(q.saved_answer).length > 0);
+            const isSkipped = q.saved_answer === '__SKIPPED__';
+            const isAnswered = isSkipped || (q.saved_answer !== null && q.saved_answer !== undefined && q.saved_answer !== '' && (typeof q.saved_answer !== 'object' || Object.keys(q.saved_answer).length > 0));
             const isCurrent = idx === activeQuestionIndex;
             const classes = ['palette-btn'];
 
             if (isCurrent) classes.push('active');
             if (sec.is_submitted) {
               classes.push(q.is_correct ? 'correct' : 'incorrect');
+            } else if (isSkipped) {
+              classes.push('skipped');
             } else if (isAnswered) {
               classes.push('answered');
             }
             if (q.is_flagged && !sec.is_submitted) classes.push('flagged');
 
-            return `<button type="button" class="${classes.join(' ')}" data-idx="${idx}" data-sec="${escapeHtml(sec.name)}" ${!sec.is_unlocked && !sec.is_submitted ? 'disabled style="cursor:not-allowed; opacity:0.5;"' : ''}>${!sec.is_unlocked && !sec.is_submitted ? '&#x1F512;' : (idx + 1)}</button>`;
+            return `<button type="button" class="${classes.join(' ')}" data-idx="${idx}" data-sec="${escapeHtml(sec.name)}" ${!sec.is_unlocked && !sec.is_submitted ? 'disabled style="cursor:not-allowed; opacity:0.5;"' : ''}>${!sec.is_unlocked && !sec.is_submitted ? '&#x1F512;' : (isSkipped ? '⏩' : (idx + 1))}</button>`;
           }).join('')}
         </div>
       </div>
@@ -1210,6 +1342,20 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     const isLocked = Boolean(isSecSubmitted) || Boolean(isQuestionLocked) || Boolean(q.is_locked);
     const type = q.question_type;
     const saved = q.saved_answer;
+
+    if (saved === '__SKIPPED__') {
+      return `
+        <div class="card" style="padding:1.5rem; background:rgba(234,179,8,0.08); border:1.5px solid var(--warning); border-radius:var(--radius-md); margin-top:1rem;">
+          <div style="display:flex; align-items:center; gap:0.6rem; color:var(--warning); font-weight:800; font-size:1.05rem; margin-bottom:0.5rem;">
+            <span>⏩</span>
+            <span>Question Skipped</span>
+          </div>
+          <p style="font-size:0.875rem; color:var(--text-muted); margin:0; line-height:1.45;">
+            This question was skipped by the delegate and sealed with 0 points awarded.
+          </p>
+        </div>
+      `;
+    }
 
     if (type === 'yes_no' || type === 'true_false') {
       const options = type === 'yes_no' ? ['Yes', 'No'] : ['True', 'False'];
@@ -1512,6 +1658,69 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       `;
     }
 
+    if (type === 'dropdown') {
+      const studentMap = (typeof saved === 'object' && saved !== null && !Array.isArray(saved)) ? saved : {};
+      let blanks = Array.isArray(q.answer_options) ? q.answer_options : [];
+      if (blanks.length === 0 && typeof q.answer_options === 'object' && q.answer_options !== null) {
+        blanks = Object.entries(q.answer_options).map(([k, v]) => ({ id: k, placeholder: k, options: Array.isArray(v) ? v : [] }));
+      }
+      let correctObj = {};
+      if (typeof q.correct_answer === 'object' && q.correct_answer !== null && !Array.isArray(q.correct_answer)) {
+        correctObj = q.correct_answer;
+      } else if (typeof q.correct_answer === 'string') {
+        try { correctObj = JSON.parse(q.correct_answer); } catch (_) { correctObj = { blank1: q.correct_answer }; }
+      }
+
+      return `
+        <div class="dropdown-question-container" style="display:flex; flex-direction:column; gap:1.25rem; margin-top:1rem;">
+          <p class="form-hint" style="margin-bottom:0.25rem;">
+            ${isSecSubmitted ? 'Review your dropdown selections below:' : 'Complete each sentence by selecting the correct option from the dropdown menu:'}
+          </p>
+          ${blanks.map((b, bIdx) => {
+            const blankId = b.id || ('blank_' + (bIdx + 1));
+            const blankLabel = b.placeholder || b.label || b.prompt || `Option ${bIdx + 1}`;
+            const selectedVal = studentMap[blankId] || '';
+            const correctVal = correctObj[blankId] || '';
+            const isCorrect = isSecSubmitted && selectedVal && String(selectedVal).trim().toLowerCase() === String(correctVal).trim().toLowerCase();
+            const isIncorrect = isSecSubmitted && (!isCorrect);
+            const optionsList = Array.isArray(b.options) ? b.options : [];
+
+            return `
+              <div class="dropdown-item-card" style="padding:1rem 1.25rem; background:var(--surface); border:1.5px solid ${isSecSubmitted ? (isCorrect ? 'var(--brand-lime)' : 'var(--danger)') : 'var(--border)'}; border-radius:var(--radius-md);">
+                <div style="font-weight:700; font-size:0.92rem; margin-bottom:0.5rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                  <span>${escapeHtml(blankLabel)}</span>
+                  ${isSecSubmitted ? (isCorrect
+                    ? '<span class="badge badge-success" style="font-size:0.75rem; font-weight:800;">✔ Correct</span>'
+                    : '<span class="badge badge-danger" style="font-size:0.75rem; font-weight:800;">✘ Incorrect</span>')
+                    : ''}
+                </div>
+                <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+                  <select 
+                    class="form-control dropdown-select" 
+                    data-blank-id="${escapeHtml(blankId)}" 
+                    ${isLocked ? 'disabled style="pointer-events:none; opacity:0.85;"' : ''}
+                    style="font-size:0.95rem; font-weight:600; padding:0.55rem 0.85rem; border-color:${isSecSubmitted ? (isCorrect ? 'var(--brand-lime)' : 'var(--danger)') : 'var(--border)'};">
+                    <option value="">-- Select an option --</option>
+                    ${optionsList.map(opt => {
+                      const optVal = typeof opt === 'object' && opt !== null ? (opt.id || opt.value || opt.text) : opt;
+                      const optText = typeof opt === 'object' && opt !== null ? (opt.text || opt.label || optVal) : opt;
+                      const isSel = String(selectedVal).trim().toLowerCase() === String(optVal).trim().toLowerCase();
+                      return `<option value="${escapeHtml(String(optVal))}" ${isSel ? 'selected' : ''}>${escapeHtml(String(optText))}</option>`;
+                    }).join('')}
+                  </select>
+                </div>
+                ${isSecSubmitted && isIncorrect && correctVal ? `
+                  <div style="margin-top:0.5rem; font-size:0.825rem; color:var(--success); font-weight:700;">
+                    ✔ Correct Option: ${escapeHtml(String(correctVal))}
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
     return `
       <div class="form-group">
         <textarea id="generic-input" class="form-control" placeholder="Enter answer..." ${isLocked ? 'disabled readonly style="pointer-events:none; opacity:0.65;"' : ''}>${escapeHtml(saved ? JSON.stringify(saved) : '')}</textarea>
@@ -1542,6 +1751,21 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
         triggerAutosave(q.id, q.saved_answer, q.is_flagged);
         renderPalette();
         renderQuestion(activeQuestionIndex);
+      };
+    });
+
+    // Dropdown selects
+    area.querySelectorAll('.dropdown-select').forEach(sel => {
+      sel.onchange = () => {
+        const blankId = sel.getAttribute('data-blank-id');
+        let cur = (typeof q.saved_answer === 'object' && q.saved_answer !== null && !Array.isArray(q.saved_answer))
+          ? { ...q.saved_answer }
+          : {};
+        cur[blankId] = sel.value;
+        q.saved_answer = cur;
+        triggerAutosave(q.id, q.saved_answer, q.is_flagged);
+        saveAttemptLocally();
+        renderPalette();
       };
     });
 
@@ -1716,6 +1940,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
 
   function triggerAutosave(questionId, savedAnswer, isFlagged) {
     hideRequiredQuestionWarning();
+    saveAttemptLocally();
     const q = currentAttempt.questions.find(item => item.id === questionId);
     if (!q) return;
     const secName = q.section_name || 'Section 1';
@@ -1833,10 +2058,23 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     confirmBtn.onclick = async () => {
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Submitting section...';
+      const sectionAnswers = {};
+      for (const idx of targetSec.indices) {
+        const sq = currentAttempt.questions[idx];
+        if (sq && sq.saved_answer !== undefined) {
+          sectionAnswers[sq.id] = sq.saved_answer;
+        }
+      }
       try {
         let updatedRes;
         try {
-          updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+          updatedRes = await api.submitSection(
+            currentAttempt.id,
+            targetSec.name,
+            sectionAnswers,
+            currentAttempt.assessment_id,
+            currentAttempt.class_id
+          );
         } catch (initialErr) {
           // Check if server already marked or completed this section despite network hiccup
           try {
@@ -1849,7 +2087,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
           if (!updatedRes) {
             await new Promise(r => setTimeout(r, 1200));
             try {
-              updatedRes = await api.submitSection(currentAttempt.id, targetSec.name);
+              updatedRes = await api.submitSection(
+                currentAttempt.id,
+                targetSec.name,
+                sectionAnswers,
+                currentAttempt.assessment_id,
+                currentAttempt.class_id
+              );
             } catch (retryErr) {
               try {
                 const finalCheck = await api.get(`/student/attempts/${currentAttempt.id}`);

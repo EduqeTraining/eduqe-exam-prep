@@ -160,7 +160,7 @@ export const api = {
     const q = params.toString();
     return apiRequest(`/instructor/progress${q ? `?${q}` : ''}`);
   },
-  submitSection: (attemptId, sectionName) => apiRequest(`/student/attempts/${attemptId}/submit-section`, { method: 'POST', body: { section_name: sectionName } }),
+  submitSection: (attemptId, sectionName, answers = null, assessmentId = null, classId = null) => apiRequest(`/student/attempts/${attemptId}/submit-section`, { method: 'POST', body: { section_name: sectionName, answers, assessment_id: assessmentId, class_id: classId } }),
   resumeAttemptTimer: (attemptId, sectionName = null) => apiRequest(`/student/attempts/${attemptId}/resume-timer`, { method: 'POST', body: { section_name: sectionName } }),
   getAttemptUnlockStatus: (attemptId) => apiRequest(`/student/attempts/${attemptId}/unlock-status`),
   getActiveAttempt: (assessmentId) => apiRequest(`/student/assessments/${assessmentId}/active-attempt`),

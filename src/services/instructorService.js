@@ -591,9 +591,10 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
          WHERE sa.user_id = ? AND (
            sa.class_id IN (${classPlaceholders})
            OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders})))
+           OR (sa.assessment_id IN (SELECT a2.id FROM assessments a2 JOIN classes cl2 ON cl2.course_id = a2.course_id WHERE cl2.id IN (${classPlaceholders})))
          )
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds]
+        [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds, ...targetClassIds]
       );
     } else {
       studentAttempts = db.all(
@@ -604,9 +605,10 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
            sa.class_id = ? 
            OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
            OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?))
+           OR (sa.assessment_id IN (SELECT a2.id FROM assessments a2 WHERE a2.course_id = ?))
          )
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
+        [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, targetClass.course_id]
       );
     }
 
@@ -736,8 +738,9 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             } catch (e) {}
           }
           const isSecSubmitted = completedSectionsList.includes(secName);
-          const totalQs = secAnswers.length;
-          const isSecCompleted = totalQs > 0 && (isGraded || isSecSubmitted || answeredCount === totalQs);
+          const configuredCount = sectionQuestionCounts.get(secName) || 0;
+          const totalQs = Math.max(secAnswers.length, configuredCount);
+          const isSecCompleted = totalQs > 0 && (isGraded || isSecSubmitted || answeredCount >= totalQs);
           const isSecInProgress = !isSecCompleted && answeredCount > 0;
           const secPct = (isSecCompleted || isSecInProgress) && maxPts > 0
             ? Math.round((awardedPts / maxPts) * 1000) / 10

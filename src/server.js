@@ -535,7 +535,24 @@ async function handleRequest(req, res) {
             await supabaseService.pullAttemptAnswersForAttempt(active.id);
             return sendJson(res, 200, { has_active: true, attempt_id: active.id, attempt: active });
           }
-          return sendJson(res, 200, { has_active: false, attempt_id: null });
+          // If no active in-progress attempt, check if there is a completed attempt so the user can see results/review instead of restarting
+          const db = require('./db').getDatabase();
+          const completed = db.get(
+            `SELECT id, status, percentage, is_passed, score, max_score, submitted_at FROM student_attempts
+             WHERE user_id = ? AND assessment_id = ? AND status IN ('submitted', 'marked', 'awaiting_review')
+             ORDER BY attempt_number DESC, submitted_at DESC LIMIT 1`,
+            [user.id, assessmentId]
+          );
+          if (completed) {
+            return sendJson(res, 200, {
+              has_active: false,
+              has_completed: true,
+              latest_attempt_id: completed.id,
+              attempt_id: completed.id,
+              attempt: completed
+            });
+          }
+          return sendJson(res, 200, { has_active: false, has_completed: false, attempt_id: null });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
         }
@@ -636,7 +653,10 @@ async function handleRequest(req, res) {
           const result = attemptService.submitSection({
             attemptId: targetAttemptId,
             userId: user.id,
-            sectionName: body.section_name
+            sectionName: body.section_name,
+            answers: body.answers,
+            assessmentId: body.assessment_id,
+            classId: body.class_id
           });
           await supabaseService.syncAttemptToSupabase(targetAttemptId);
           await supabaseService.syncAttemptAnswersToSupabase(targetAttemptId);
@@ -658,7 +678,7 @@ async function handleRequest(req, res) {
           const result = attemptService.resumeAttemptTimer({
             attemptId: targetAttemptId,
             userId: user.id,
-            sectionName: body.section_name || null
+            sectionName: body?.section_name || null
           });
           await supabaseService.syncAttemptToSupabase(targetAttemptId);
           return sendJson(res, 200, result);

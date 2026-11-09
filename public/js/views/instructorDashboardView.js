@@ -16,7 +16,11 @@ export function renderInstructorDashboard(container, router) {
           Monitor cohort exam readiness, track student progress, and identify topics requiring in-class review.
         </p>
       </div>
-      <div style="display:flex; gap:0.5rem; align-items:center;">
+      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <span class="badge" style="background:rgba(34,197,94,0.12); color:var(--brand-lime); border:1px solid var(--brand-lime); font-size:0.75rem; font-weight:700; display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.65rem;">
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-lime);"></span>
+          Live Auto-Refresh (15s)
+        </span>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-instructor-dash">
           &#x21BB; Refresh Live Stats
         </button>
@@ -239,8 +243,9 @@ export function renderInstructorDashboard(container, router) {
 
   let currentData = null;
   let activeClassId = requestedClassId;
+  let isConfigCollapsed = false;
 
-  async function loadDashboardData() {
+  async function loadDashboardData(isSilent = false) {
     try {
       const res = await api.getInstructorProgress(activeClassId, requestedInstructorId);
       currentData = res;
@@ -300,7 +305,7 @@ export function renderInstructorDashboard(container, router) {
       container.querySelector('#stat-class-enrolled').textContent = sum.total_enrolled;
       container.querySelector('#stat-class-participation').textContent = `${sum.completion_rate}% (${sum.students_attempted}/${sum.total_enrolled})`;
       container.querySelector('#stat-class-avg').textContent = `${sum.avg_score}%`;
-      container.querySelector('#subtext-range').textContent = `High: ${sum.highest_score}% &bull; Low: ${sum.lowest_score}%`;
+      container.querySelector('#subtext-range').textContent = `High: ${sum.highest_score}% • Low: ${sum.lowest_score}%`;
       container.querySelector('#stat-class-pass-rate').textContent = `${sum.pass_rate}%`;
       container.querySelector('#subtext-pass-count').textContent = `${sum.students_passed} of ${sum.students_attempted} passed`;
 
@@ -329,7 +334,7 @@ export function renderInstructorDashboard(container, router) {
           sectionsList.map(sec => `<option value="${escapeHtml(sec.name)}" ${sec.name === prevSecVal ? 'selected' : ''}>Needs Help: ${escapeHtml(sec.name)}</option>`).join('');
       }
 
-      renderAssessmentConfig();
+      renderAssessmentConfig(isSilent);
       renderSectionAnalytics();
       renderStudentRoster();
       renderQuestionAnalytics();
@@ -339,9 +344,13 @@ export function renderInstructorDashboard(container, router) {
     }
   }
 
-  function renderAssessmentConfig() {
+  function renderAssessmentConfig(isSilent = false) {
     const configContainer = container.querySelector('#assessment-config-container');
     if (!configContainer) return;
+    if (isSilent && configContainer.contains(document.activeElement)) {
+      // Don't overwrite if instructor is actively editing inputs
+      return;
+    }
 
     if (!currentData || !currentData.selected_class || currentData.selected_class.id === 'all') {
       configContainer.innerHTML = `
@@ -427,6 +436,7 @@ export function renderInstructorDashboard(container, router) {
               const rule = cfgSections[sec.name] || cfgSections[sec.name.trim()] || {};
               const limitVal = rule.limit !== null && rule.limit !== undefined ? rule.limit : '';
               const chunkVal = rule.chunk_size !== null && rule.chunk_size !== undefined ? rule.chunk_size : '';
+              const timerVal = rule.time_limit_minutes !== null && rule.time_limit_minutes !== undefined ? rule.time_limit_minutes : '';
               return `
                 <div style="padding:0.9rem 1.15rem; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);">
                   <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.65rem;">
@@ -441,7 +451,7 @@ export function renderInstructorDashboard(container, router) {
                     </span>
                   </div>
 
-                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1rem; padding-top:0.65rem; border-top:1px dashed var(--border);">
+                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:1rem; padding-top:0.65rem; border-top:1px dashed var(--border);">
                     <div>
                       <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
                         Limit Questions (e.g. 20 of ${sec.question_count}):
@@ -457,13 +467,13 @@ export function renderInstructorDashboard(container, router) {
                         style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
                       />
                       <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
-                        Delegates will only see and answer the first N questions. Leave blank for all.
+                        Delegates answer first N questions only. Leave blank for all.
                       </span>
                     </div>
 
                     <div>
                       <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
-                        Break Down Into Parts (e.g. 25 questions per part):
+                        Break Down Into Parts (e.g. 25 per part):
                       </label>
                       <input 
                         type="number" 
@@ -472,11 +482,30 @@ export function renderInstructorDashboard(container, router) {
                         min="1" 
                         max="${sec.question_count}" 
                         value="${chunkVal}" 
-                        placeholder="Do not split (keep as 1 section)" 
+                        placeholder="Keep as 1 section" 
                         style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
                       />
                       <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
-                        Creates Part 1, Part 2, etc. that can be locked and unlocked sequentially.
+                        Splits section into sequential unlockable parts.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                        ⏳ Section Timer (Minutes):
+                      </label>
+                      <input 
+                        type="number" 
+                        class="form-control input-sec-timer" 
+                        data-sec="${escapeHtml(sec.name)}" 
+                        min="1" 
+                        max="300" 
+                        value="${timerVal}" 
+                        placeholder="Exam default" 
+                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                      />
+                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                        Separate timer for this section. Blank for default.
                       </span>
                     </div>
                   </div>
@@ -494,7 +523,18 @@ export function renderInstructorDashboard(container, router) {
         </button>
         <span id="cfg-status-message" style="display:none; font-size:0.85rem; font-weight:700;"></span>
       </div>
+      </div>
     `;
+
+    const collapseBtn = configContainer.querySelector('#btn-toggle-cfg-collapse');
+    const bodyWrapper = configContainer.querySelector('#cfg-body-wrapper');
+    if (collapseBtn && bodyWrapper) {
+      collapseBtn.onclick = () => {
+        isConfigCollapsed = !isConfigCollapsed;
+        bodyWrapper.style.display = isConfigCollapsed ? 'none' : 'block';
+        collapseBtn.textContent = isConfigCollapsed ? '▼ Expand Settings' : '▲ Collapse Settings';
+      };
+    }
 
     const saveBtn = configContainer.querySelector('#btn-save-class-assessment-config');
     const statusMsg = configContainer.querySelector('#cfg-status-message');
@@ -512,9 +552,11 @@ export function renderInstructorDashboard(container, router) {
           configContainer.querySelectorAll('.input-sec-limit').forEach(limitInput => {
             const sName = limitInput.dataset.sec;
             const chunkInput = configContainer.querySelector(`.input-sec-chunk[data-sec="${CSS.escape(sName)}"]`);
+            const timerInput = configContainer.querySelector(`.input-sec-timer[data-sec="${CSS.escape(sName)}"]`);
             const lim = limitInput.value ? parseInt(limitInput.value, 10) : null;
             const chk = chunkInput && chunkInput.value ? parseInt(chunkInput.value, 10) : null;
-            sectionsPayload[sName] = { limit: lim, chunk_size: chk };
+            const timer = timerInput && timerInput.value ? parseInt(timerInput.value, 10) : null;
+            sectionsPayload[sName] = { limit: lim, chunk_size: chk, time_limit_minutes: timer };
           });
 
           await api.updateClassAssessmentConfig(activeClassId, {
@@ -879,7 +921,7 @@ export function renderInstructorDashboard(container, router) {
           <td>${sectionCellHtml}</td>
           <td>${statusBadge}</td>
           <td style="text-align:right; font-size:0.8rem; color:var(--text-muted);">
-            ${s.latest_attempt_at ? new Date(s.latest_attempt_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'}
+            ${formatLocalDate(s.latest_attempt_at)}
           </td>
         </tr>
       `;
@@ -930,7 +972,7 @@ export function renderInstructorDashboard(container, router) {
   }
 
   function renderQuestionChoices(q) {
-    const type = q.question_type || 'single_choice';
+    const rawType = (q.question_type || 'single_choice').toLowerCase().trim();
     let opts = q.answer_options;
     if (typeof opts === 'string') {
       try { opts = JSON.parse(opts); } catch (_) {}
@@ -944,16 +986,23 @@ export function renderInstructorDashboard(container, router) {
       if (correct === null || correct === undefined) return false;
       const strOpt = String(optVal).trim().toLowerCase();
       if (Array.isArray(correct)) {
-        return correct.some(c => String(c).trim().toLowerCase() === strOpt);
+        return correct.some(c => {
+          if (typeof c === 'object' && c !== null) {
+            return Object.values(c).some(val => String(val).trim().toLowerCase() === strOpt);
+          }
+          return String(c).trim().toLowerCase() === strOpt;
+        });
       }
       if (typeof correct === 'object' && correct !== null) {
-        return Object.values(correct).some(c => String(c).trim().toLowerCase() === strOpt);
+        return Object.entries(correct).some(([k, v]) => {
+          return String(k).trim().toLowerCase() === strOpt || String(v).trim().toLowerCase() === strOpt;
+        });
       }
       return String(correct).trim().toLowerCase() === strOpt;
     }
 
-    if (type === 'yes_no' || type === 'true_false') {
-      const list = type === 'yes_no' ? ['Yes', 'No'] : ['True', 'False'];
+    if (rawType === 'yes_no' || rawType === 'true_false') {
+      const list = rawType === 'yes_no' ? ['Yes', 'No'] : ['True', 'False'];
       return `
         <div style="display:flex; gap:0.65rem; flex-wrap:wrap; margin-top:0.5rem;">
           ${list.map(val => {
@@ -969,7 +1018,14 @@ export function renderInstructorDashboard(container, router) {
       `;
     }
 
-    if (type === 'single_choice' || type === 'multiple_choice' || type === 'scenario' || type === 'case_study') {
+    if (
+      rawType === 'single_choice' ||
+      rawType === 'multiple_choice' ||
+      rawType === 'multiple_response' ||
+      rawType === 'multiple_select' ||
+      rawType === 'scenario' ||
+      rawType === 'case_study'
+    ) {
       const list = Array.isArray(opts) ? opts : [];
       return `
         <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
@@ -986,7 +1042,7 @@ export function renderInstructorDashboard(container, router) {
                   </span>
                   <span style="font-size:0.9rem; color:var(--text-main); line-height:1.4;">${escapeHtml(String(optText))}</span>
                 </div>
-                ${isCorrect ? '<span class="badge badge-success" style="font-size:0.72rem; font-weight:800; flex-shrink:0;">✔ CORRECT ANSWER</span>' : ''}
+                ${isCorrect ? '<span class="badge badge-success" style="font-size:0.72rem; font-weight:800; flex-shrink:0;">✔ CORRECT CHOICE</span>' : ''}
               </div>
             `;
           }).join('')}
@@ -994,18 +1050,52 @@ export function renderInstructorDashboard(container, router) {
       `;
     }
 
-    if (type === 'fill_blank') {
+    if (rawType === 'dropdown') {
+      let groups = [];
+      if (Array.isArray(opts)) {
+        if (opts.length > 0 && (opts[0].options || opts[0].choices || opts[0].dropdowns)) {
+          groups = opts;
+        } else {
+          groups = [{ label: 'Dropdown Options', options: opts }];
+        }
+      } else if (typeof opts === 'object' && opts !== null) {
+        groups = Object.entries(opts).map(([k, v]) => ({
+          label: k,
+          options: Array.isArray(v) ? v : [v]
+        }));
+      }
+
       return `
-        <div style="margin-top:0.5rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
-          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Expected Fill-In-The-Blank Answer:</span>
-          <div style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--text-main); margin-top:0.25rem;">
-            ${escapeHtml(formatAnswerText(correct, opts))}
-          </div>
+        <div style="display:flex; flex-direction:column; gap:0.65rem; margin-top:0.5rem;">
+          ${groups.map((grp, gIdx) => {
+            const grpLabel = grp.label || grp.name || grp.prompt || `Dropdown Option Area ${gIdx + 1}`;
+            const choices = Array.isArray(grp.options) ? grp.options : (Array.isArray(grp.choices) ? grp.choices : []);
+            return `
+              <div style="padding:0.75rem 0.95rem; border-radius:var(--radius-md); border:1px solid var(--border); background:var(--surface);">
+                <div style="font-weight:700; font-size:0.85rem; color:var(--text-main); margin-bottom:0.45rem;">
+                  🔽 ${escapeHtml(grpLabel)}
+                </div>
+                <div style="display:flex; flex-direction:column; gap:0.35rem;">
+                  ${choices.map((c, cIdx) => {
+                    const cId = typeof c === 'object' && c !== null ? (c.id || c.value || c.text) : c;
+                    const cText = typeof c === 'object' && c !== null ? (c.text || c.label || c.id) : c;
+                    const isCorrect = isOptCorrect(cId) || isOptCorrect(cText);
+                    return `
+                      <div style="padding:0.45rem 0.75rem; border-radius:var(--radius-sm); border:1px solid ${isCorrect ? 'var(--brand-lime)' : 'var(--border)'}; background:${isCorrect ? 'rgba(34,197,94,0.12)' : 'var(--surface-subtle)'}; display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:0.875rem; color:var(--text-main);"><strong style="margin-right:0.35rem;">${cIdx + 1}.</strong>${escapeHtml(String(cText))}</span>
+                        ${isCorrect ? '<span class="badge badge-success" style="font-size:0.7rem; font-weight:800;">✔ CORRECT SELECTION</span>' : ''}
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
         </div>
       `;
     }
 
-    if (type === 'ordering_sequence') {
+    if (rawType === 'ordering' || rawType === 'ordering_sequence') {
       const list = Array.isArray(correct) ? correct : (Array.isArray(opts) ? opts : []);
       return `
         <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.4rem;">
@@ -1027,7 +1117,54 @@ export function renderInstructorDashboard(container, router) {
       `;
     }
 
-    // Matching pairs / drag drop / hotspot / dropdown
+    if (rawType === 'matching' || rawType === 'drag_drop') {
+      let pairs = [];
+      if (Array.isArray(correct)) {
+        pairs = correct.map(p => ({
+          target: p.target || p.left || p.key,
+          source: p.source || p.right || p.value
+        }));
+      } else if (typeof correct === 'object' && correct !== null) {
+        pairs = Object.entries(correct).map(([k, v]) => ({ target: k, source: v }));
+      }
+
+      return `
+        <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.45rem;">
+          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Correct Matches &amp; Mappings:</span>
+          ${pairs.map(p => `
+            <div style="padding:0.5rem 0.75rem; border-radius:var(--radius-sm); border:1px solid var(--brand-lime); background:rgba(34,197,94,0.08); display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+              <span style="font-weight:700; font-size:0.85rem; color:var(--text-main);">${escapeHtml(resolveOptionText(p.target, opts))}</span>
+              <span style="color:var(--brand-lime); font-weight:800;">➔</span>
+              <span style="font-size:0.85rem; color:var(--text-main);">${escapeHtml(resolveOptionText(p.source, opts))}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    if (rawType === 'hotspot') {
+      return `
+        <div style="margin-top:0.5rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
+          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Hotspot Correct Target Area:</span>
+          <div style="font-family:monospace; font-weight:700; font-size:0.95rem; color:var(--text-main); margin-top:0.25rem;">
+            ${escapeHtml(formatAnswerText(correct, opts))}
+          </div>
+        </div>
+      `;
+    }
+
+    if (rawType === 'fill_blank' || rawType === 'fill_in_the_blank') {
+      return `
+        <div style="margin-top:0.5rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
+          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Expected Fill-In-The-Blank Answer:</span>
+          <div style="font-family:monospace; font-weight:700; font-size:1.05rem; color:var(--text-main); margin-top:0.25rem;">
+            ${escapeHtml(formatAnswerText(correct, opts))}
+          </div>
+        </div>
+      `;
+    }
+
+    // Default fallback
     return `
       <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.4rem;">
         <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Answer Key &amp; Matches:</span>
@@ -1077,6 +1214,11 @@ export function renderInstructorDashboard(container, router) {
     }
 
     function updateQuestionList() {
+      const currentlyOpenIds = new Set(
+        Array.from(questionsContainer.querySelectorAll('.q-details-drawer'))
+          .filter(d => d.style.display === 'block')
+          .map(d => d.id.replace('q-details-', ''))
+      );
       const searchVal = (qSearchFilter?.value || '').trim().toLowerCase();
       const secVal = qSectionFilter?.value || '';
       const statusVal = qStatusFilter?.value || '';
@@ -1164,7 +1306,7 @@ export function renderInstructorDashboard(container, router) {
                       ${isAttempted ? `${q.correct_answers} / ${q.total_answers} correct` : '0 attempts recorded'}
                     </div>
                     <button type="button" class="btn btn-secondary btn-sm btn-toggle-q-details" data-qid="${escapeHtml(q.id)}" style="font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; margin-top:0.25rem;">
-                      👁 View Answers ▼
+                      ${currentlyOpenIds.has(String(q.id)) ? '▲ Close Details' : '👁 View Answers ▼'}
                     </button>
                   </div>
                 </div>
@@ -1175,7 +1317,7 @@ export function renderInstructorDashboard(container, router) {
                 </div>
 
                 <!-- Expandable Question Details Drawer -->
-                <div id="q-details-${escapeHtml(q.id)}" class="q-details-drawer" style="display:none; padding:1.15rem; background:var(--surface-subtle); border-top:1px dashed var(--border);">
+                <div id="q-details-${escapeHtml(q.id)}" class="q-details-drawer" style="display:${currentlyOpenIds.has(String(q.id)) ? 'block' : 'none'}; padding:1.15rem; background:var(--surface-subtle); border-top:1px dashed var(--border);">
                   
                   <!-- Scenario / Reference Material if Present -->
                   ${q.question_description ? `
@@ -1322,8 +1464,35 @@ export function renderInstructorDashboard(container, router) {
     }
   };
 
+  // 15-second background auto-refresh loop
+  const autoRefreshInterval = setInterval(() => {
+    if (document.body.contains(container)) {
+      loadDashboardData(true);
+    } else {
+      clearInterval(autoRefreshInterval);
+    }
+  }, 15000);
+
   // Initial Load
   loadDashboardData();
+}
+
+function formatLocalDate(dateStr) {
+  if (!dateStr) return 'Never';
+  let d;
+  if (typeof dateStr === 'string' && !dateStr.includes('Z') && !dateStr.includes('+')) {
+    d = new Date(dateStr.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(dateStr);
+  }
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
 }
 
 function escapeHtml(str) {

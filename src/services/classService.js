@@ -771,10 +771,14 @@ function saveClassAssessmentConfig(classId, config = {}, adminUserId = null, adm
       const cleanChunk = rule.chunk_size !== null && rule.chunk_size !== undefined && String(rule.chunk_size).trim() !== ''
         ? Math.max(1, Number(rule.chunk_size))
         : null;
+      const cleanTimer = rule.time_limit_minutes !== null && rule.time_limit_minutes !== undefined && String(rule.time_limit_minutes).trim() !== ''
+        ? Math.max(1, Number(rule.time_limit_minutes))
+        : null;
 
       sectionsConfig[secName] = {
         limit: cleanLimit,
-        chunk_size: cleanChunk
+        chunk_size: cleanChunk,
+        time_limit_minutes: cleanTimer
       };
     }
   }

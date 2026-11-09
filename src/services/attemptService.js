@@ -257,7 +257,7 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
 
   const newAttemptNumber = attemptCount + 1;
   const durationMs = (assessment.duration_minutes || 60) * 60 * 1000;
-  const deadlineDate = new Date(now + durationMs).toISOString();
+  let deadlineDate = new Date(now + durationMs).toISOString();
   const attemptId = generateId();
 
   // Compile question items (direct questions + pool questions)
@@ -295,14 +295,23 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     }
   }
 
-  // Apply class-specific assessment configuration (question limits, section breakdown/chunking)
+  // Apply class-specific assessment configuration (question limits, section breakdown/chunking, per-section timer)
+  let section1TimerMinutes = null;
   if (targetClassId) {
     const { getClassAssessmentConfig } = require('./classService');
     const classConfig = getClassAssessmentConfig(targetClassId, assessmentId);
     if (classConfig) {
       resolvedQuestions = applyClassSectionRules(resolvedQuestions, classConfig);
+      const firstSecName = resolvedQuestions[0]?.section_name || 'Section 1';
+      const secRule = classConfig?.sections?.[firstSecName] || classConfig?.sections?.[firstSecName.trim()];
+      if (secRule && Number(secRule.time_limit_minutes) > 0) {
+        section1TimerMinutes = Number(secRule.time_limit_minutes);
+      }
     }
   }
+
+  const effectiveDurationMs = (section1TimerMinutes ? section1TimerMinutes : (assessment.duration_minutes || 60)) * 60 * 1000;
+  deadlineDate = new Date(now + effectiveDurationMs).toISOString();
 
   // Insert attempt record
   db.run(
@@ -427,6 +436,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
 
   let isCorrectVal = null;
   let awardedPointsVal = null;
+  let markedStatusVal = null;
   if (savedAnswer !== undefined) {
     const item = db.get(
       `SELECT aa.max_points, q.question_type, q.answer_options, q.correct_answer, q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
@@ -450,6 +460,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
       }, savedAnswer);
       isCorrectVal = evalResult.isCorrect ? 1 : 0;
       awardedPointsVal = evalResult.awardedPoints;
+      markedStatusVal = evalResult.status || 'auto_marked';
     }
   }
 
@@ -459,6 +470,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
          is_flagged = COALESCE(?, is_flagged),
          is_correct = COALESCE(?, is_correct),
          awarded_points = COALESCE(?, awarded_points),
+         marked_status = COALESCE(?, marked_status),
          saved_at = datetime('now')
      WHERE attempt_id = ? AND question_id = ?`,
     [
@@ -466,6 +478,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
       isFlagged !== null && isFlagged !== undefined ? (isFlagged ? 1 : 0) : null,
       isCorrectVal,
       awardedPointsVal,
+      markedStatusVal,
       attemptId,
       questionId
     ]
@@ -600,7 +613,7 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
   return getAttemptState(attemptId, userId);
 }
 
-function submitSection({ attemptId, userId, sectionName }) {
+function submitSection({ attemptId, userId, sectionName, answers: clientAnswers, assessmentId = null, classId = null }) {
   const db = getDatabase();
   let attempt = db.get(
     `SELECT sa.*, a.pass_mark_percentage, a.result_visibility, a.explanation_visibility, a.sections as assessment_sections
@@ -639,6 +652,31 @@ function submitSection({ attemptId, userId, sectionName }) {
           explanation_visibility: assRow?.explanation_visibility ?? 'immediate',
           assessment_sections: assRow?.sections ?? JSON.stringify(['Section 1'])
         };
+      } else if (assessmentId || attemptId) {
+        // Self-heal: reconstruct attempt record on this container so serverless cold start never throws 'Attempt not found'
+        const assId = assessmentId || db.get('SELECT id FROM assessments LIMIT 1')?.id;
+        const assRow = assId ? db.get('SELECT * FROM assessments WHERE id = ?', [assId]) : null;
+        let cId = classId;
+        if (!cId) {
+          const enroll = db.get('SELECT class_id FROM class_enrollments WHERE user_id = ? AND status = "active" ORDER BY enrolled_at DESC LIMIT 1', [userId]);
+          cId = enroll?.class_id || null;
+        }
+        const healAttemptId = attemptId || generateId();
+        db.run(
+          `INSERT OR IGNORE INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, completed_sections)
+           VALUES (?, ?, ?, ?, 1, datetime('now'), datetime('now', '+60 minutes'), 'in_progress', ?)`,
+          [healAttemptId, assId || 'general', userId, cId, JSON.stringify([])]
+        );
+        attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [healAttemptId]);
+        if (attempt) {
+          attemptId = healAttemptId;
+          attempt.pass_mark_percentage = assRow?.pass_mark_percentage ?? 70;
+          attempt.result_visibility = assRow?.result_visibility ?? 'immediate';
+          attempt.explanation_visibility = assRow?.explanation_visibility ?? 'immediate';
+          attempt.assessment_sections = assRow?.sections ?? JSON.stringify(['Section 1']);
+        } else {
+          throw new Error('Attempt not found.');
+        }
       } else {
         throw new Error('Attempt not found.');
       }
@@ -659,6 +697,19 @@ function submitSection({ attemptId, userId, sectionName }) {
   attempt.result_visibility = attempt.result_visibility ?? 'immediate';
   attempt.explanation_visibility = attempt.explanation_visibility ?? 'immediate';
   attempt.assessment_sections = attempt.assessment_sections ?? JSON.stringify(['Section 1']);
+
+  // If client provided live answers map, persist them first so nothing is lost!
+  if (clientAnswers && typeof clientAnswers === 'object') {
+    for (const [qId, ansVal] of Object.entries(clientAnswers)) {
+      if (ansVal !== undefined) {
+        const answerJson = (ansVal !== null && typeof ansVal === 'object') ? JSON.stringify(ansVal) : (ansVal !== null ? String(ansVal) : null);
+        db.run(
+          `UPDATE attempt_answers SET saved_answer = ?, saved_at = datetime('now') WHERE attempt_id = ? AND question_id = ?`,
+          [answerJson, attempt.id, qId]
+        );
+      }
+    }
+  }
 
   if (attempt.user_id !== userId) {
     throw new Error('Unauthorized attempt access.');
@@ -858,7 +909,7 @@ function submitSection({ attemptId, userId, sectionName }) {
   } else {
     // Calculate current cumulative score so far
     const currentScoredAnswers = db.all(
-      `SELECT aa.awarded_points, aa.max_points FROM attempt_answers aa WHERE aa.attempt_id = ? AND aa.marked_status = 'marked'`,
+      `SELECT aa.awarded_points, aa.max_points FROM attempt_answers aa WHERE aa.attempt_id = ? AND (aa.marked_status IN ('marked', 'auto_marked', 'manual_marked') OR aa.is_correct IS NOT NULL)`,
       [attemptId]
     );
     let runningScore = 0;
@@ -1268,6 +1319,19 @@ function resumeAttemptTimer({ attemptId, userId, sectionName = null }) {
         }
       } catch (_) {}
     }
+  }
+
+  // If a specific section is provided, check for a per-section timer override
+  if (sectionName && attempt.class_id) {
+    try {
+      const { getClassAssessmentConfig } = require('./classService');
+      const classConfig = getClassAssessmentConfig(attempt.class_id, attempt.assessment_id);
+      const secRule = classConfig?.sections?.[sectionName] || classConfig?.sections?.[sectionName.trim()];
+      if (secRule && Number(secRule.time_limit_minutes) > 0) {
+        pausedRemainingSec = Number(secRule.time_limit_minutes) * 60;
+        isPaused = true;
+      }
+    } catch (_) {}
   }
 
   if (isPaused && pausedRemainingSec !== null && pausedRemainingSec !== undefined) {
