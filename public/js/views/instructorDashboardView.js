@@ -12,6 +12,9 @@ export function renderInstructorDashboard(container, router, options = {}) {
   const activeTab = (options && options.activeTab) || (currentHashPath === 'instructor-questions' ? 'questions' : 'overview');
 
   let isConfigCollapsed = sessionStorage.getItem('eduqe_inst_cfg_collapsed') !== 'false';
+  let isDivisionsTrackerCollapsed = sessionStorage.getItem('eduqe_inst_divisions_collapsed') === 'true';
+  const collapsedQuestionSections = new Set(JSON.parse(sessionStorage.getItem('eduqe_inst_collapsed_q_sections') || '[]'));
+  const collapsedDivisionCards = new Set(JSON.parse(sessionStorage.getItem('eduqe_inst_collapsed_div_cards') || '[]'));
 
   if (activeTab === 'questions') {
     // TAB 2: Class Questions & Topics Weak-Spot Analysis
@@ -88,6 +91,9 @@ export function renderInstructorDashboard(container, router, options = {}) {
           </div>
           <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
             <span class="badge badge-warning" id="badge-weak-count" style="display:none;">0 Questions Need Review</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all-sections" style="font-size:0.75rem; font-weight:700;">
+              Collapse All Sections ▲
+            </button>
             <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-all-questions" style="font-size:0.75rem; font-weight:700;">
               Expand All Details
             </button>
@@ -238,10 +244,15 @@ export function renderInstructorDashboard(container, router, options = {}) {
                 Tracks student progression from one section to the next and highlights which specific sections each learner needs help in.
               </p>
             </div>
-            <span class="badge badge-warning" id="badge-sections-help-count" style="display:none;">0 Sections Need Support</span>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <span class="badge badge-warning" id="badge-sections-help-count" style="display:none;">0 Sections Need Support</span>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-divisions-tracker" style="font-size:0.75rem; font-weight:700;">
+                ${isDivisionsTrackerCollapsed ? '➕ Expand Tracker' : '▲ Minimize Tracker'}
+              </button>
+            </div>
           </div>
 
-          <div id="sections-analysis-container">
+          <div id="sections-analysis-container" style="display:${isDivisionsTrackerCollapsed ? 'none' : 'block'};">
             <div style="text-align:center; padding:1.5rem; color:var(--text-muted);">
               Loading sub-assessment section divisions...
             </div>
@@ -751,6 +762,7 @@ export function renderInstructorDashboard(container, router, options = {}) {
           const latestAvg = sec.latest_avg_percentage !== null && sec.latest_avg_percentage !== undefined ? sec.latest_avg_percentage : avgPct;
           const bestAvg = sec.best_avg_percentage !== null && sec.best_avg_percentage !== undefined ? sec.best_avg_percentage : avgPct;
           const hasHelpNeeded = helpList.length > 0 || Boolean(sec.needs_help || sec.needs_review);
+          const isCardCollapsed = collapsedDivisionCards.has(secName);
 
           return `
             <div style="border:1px solid ${hasHelpNeeded ? 'rgba(220,38,38,0.4)' : 'var(--border)'}; background:${hasHelpNeeded ? 'rgba(220,38,38,0.03)' : 'var(--surface-subtle)'}; border-top:4px solid ${hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)'}; border-radius:var(--radius-md); padding:1rem 1.15rem; display:flex; flex-direction:column; justify-content:space-between; gap:0.85rem;">
@@ -760,13 +772,18 @@ export function renderInstructorDashboard(container, router, options = {}) {
                     <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted);">Sub-Assessment Division ${idx + 1}</span>
                     <h3 style="font-size:1.05rem; font-weight:800; margin:0.1rem 0 0; color:var(--text-main);">${escapeHtml(secName)}</h3>
                   </div>
-                  <div style="text-align:right;">
-                    <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!hasAttempts ? 'var(--text-muted)' : (hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)')};">
-                      ${hasAttempts ? `${avgPct}%` : '-'}
+                  <div style="display:flex; align-items:flex-start; gap:0.6rem;">
+                    <div style="text-align:right;">
+                      <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!hasAttempts ? 'var(--text-muted)' : (hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)')};">
+                        ${hasAttempts ? `${avgPct}%` : '-'}
+                      </div>
+                      <div style="font-size:0.7rem; color:var(--text-muted);">
+                        ${hasAttempts ? `${correctAnswers}/${totalAnswers} Correct` : 'Cohort Avg'}
+                      </div>
                     </div>
-                    <div style="font-size:0.7rem; color:var(--text-muted);">
-                      ${hasAttempts ? `${correctAnswers}/${totalAnswers} Correct` : 'Cohort Avg'}
-                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm btn-toggle-div-card" data-sec="${escapeHtml(secName)}" style="font-size:0.75rem; font-weight:700; padding:0.2rem 0.5rem; margin-top:0.15rem;" title="${isCardCollapsed ? 'Expand Division Details' : 'Collapse Division Details'}">
+                      ${isCardCollapsed ? '▶' : '▼'}
+                    </button>
                   </div>
                 </div>
 
@@ -789,74 +806,77 @@ export function renderInstructorDashboard(container, router, options = {}) {
                 </div>
               </div>
 
-              <!-- Per-Student Tracked Results for this Section -->
-              ${allStudentResults.length > 0 ? `
-                <div style="border-top:1px solid var(--border); padding-top:0.65rem;">
-                  <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.4rem;">
-                    Tracked Student Results (${allStudentResults.length})
-                  </div>
-                  <div style="display:flex; flex-direction:column; gap:0.4rem;">
-                    ${allStudentResults.map(st => {
-                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
-                      const attHist = Array.isArray(st.attempt_history) ? st.attempt_history : [];
-                      if (!st.is_completed && !st.is_in_progress) {
+              <!-- Collapsible Division Details Body (Student List & Help List) -->
+              <div class="div-card-body" data-sec="${escapeHtml(secName)}" style="display:${isCardCollapsed ? 'none' : 'block'};">
+                <!-- Per-Student Tracked Results for this Section -->
+                ${allStudentResults.length > 0 ? `
+                  <div style="border-top:1px solid var(--border); padding-top:0.65rem;">
+                    <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.4rem;">
+                      Tracked Student Results (${allStudentResults.length})
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:0.4rem;">
+                      ${allStudentResults.map(st => {
+                        const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
+                        const attHist = Array.isArray(st.attempt_history) ? st.attempt_history : [];
+                        if (!st.is_completed && !st.is_in_progress) {
+                          return `
+                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.3rem 0.5rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
+                              <span style="font-weight:600; color:var(--text-main);">${escapeHtml(sName)}</span>
+                              <span class="badge badge-neutral" style="font-size:0.68rem;">Not Started</span>
+                            </div>
+                          `;
+                        }
                         return `
-                          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.3rem 0.5rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
-                            <span style="font-weight:600; color:var(--text-main);">${escapeHtml(sName)}</span>
-                            <span class="badge badge-neutral" style="font-size:0.68rem;">Not Started</span>
+                          <div style="display:flex; flex-direction:column; gap:0.25rem; padding:0.4rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid ${st.needs_help ? 'rgba(220,38,38,0.35)' : 'var(--border)'};">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                              <span style="font-weight:700; font-size:0.8rem; color:var(--text-main);">${escapeHtml(sName)}</span>
+                              <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
+                                ${st.is_in_progress ? `&#x23F3; ${st.answered_count}/${st.total_questions} (${st.percentage ?? 0}%)` : `Latest: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
+                                ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : ' &#x2713;'}
+                              </span>
+                            </div>
+                            ${attHist.length > 1 ? `
+                              <div style="display:flex; flex-wrap:wrap; gap:0.3rem; align-items:center; font-size:0.7rem; color:var(--text-muted);">
+                                <span>All Attempts (${st.total_correct_all_attempts}/${st.total_answers_all_attempts} &bull; Avg ${st.avg_percentage}% &bull; Best ${st.best_percentage}%):</span>
+                                ${attHist.map(ah => `
+                                  <span style="padding:0.1rem 0.35rem; border-radius:4px; background:var(--surface-subtle); border:1px solid var(--border); font-weight:600;">
+                                    #${ah.attempt_number}: ${ah.correct_count}/${ah.total_questions} (${ah.percentage}%)
+                                  </span>
+                                `).join('')}
+                              </div>
+                            ` : ''}
                           </div>
                         `;
-                      }
-                      return `
-                        <div style="display:flex; flex-direction:column; gap:0.25rem; padding:0.4rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid ${st.needs_help ? 'rgba(220,38,38,0.35)' : 'var(--border)'};">
-                          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
-                            <span style="font-weight:700; font-size:0.8rem; color:var(--text-main);">${escapeHtml(sName)}</span>
-                            <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
-                              ${st.is_in_progress ? `&#x23F3; ${st.answered_count}/${st.total_questions} (${st.percentage ?? 0}%)` : `Latest: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
-                              ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : ' &#x2713;'}
-                            </span>
-                          </div>
-                          ${attHist.length > 1 ? `
-                            <div style="display:flex; flex-wrap:wrap; gap:0.3rem; align-items:center; font-size:0.7rem; color:var(--text-muted);">
-                              <span>All Attempts (${st.total_correct_all_attempts}/${st.total_answers_all_attempts} &bull; Avg ${st.avg_percentage}% &bull; Best ${st.best_percentage}%):</span>
-                              ${attHist.map(ah => `
-                                <span style="padding:0.1rem 0.35rem; border-radius:4px; background:var(--surface-subtle); border:1px solid var(--border); font-weight:600;">
-                                  #${ah.attempt_number}: ${ah.correct_count}/${ah.total_questions} (${ah.percentage}%)
-                                </span>
-                              `).join('')}
-                            </div>
-                          ` : ''}
-                        </div>
-                      `;
-                    }).join('')}
+                      }).join('')}
+                    </div>
                   </div>
-                </div>
-              ` : ''}
+                ` : ''}
 
-              <div style="border-top:1px dashed var(--border); padding-top:0.65rem;">
-                ${helpList.length > 0 ? `
-                  <div style="font-size:0.75rem; font-weight:700; color:var(--danger); margin-bottom:0.35rem;">
-                    &#x26A0;&#xFE0F; Students Needing Help in ${escapeHtml(secName)} (${helpList.length}):
-                  </div>
-                  <div style="display:flex; flex-wrap:wrap; gap:0.35rem;">
-                    ${helpList.map(st => {
-                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
-                      const pctLabel = st.best_percentage !== undefined && st.best_percentage !== null && st.best_percentage !== st.percentage
-                        ? `Latest: ${st.percentage}% | Best: ${st.best_percentage}%`
-                        : `${st.percentage ?? 0}%`;
-                      return `
-                        <span class="badge badge-danger" style="font-size:0.72rem;" title="Student Number: ${escapeHtml(st.student_number || 'N/A')}">
-                          ${escapeHtml(sName)} (${pctLabel})
-                        </span>
-                      `;
-                    }).join('')}
-                  </div>
-                ` : `
-                  <div style="font-size:0.78rem; color:var(--text-muted); display:flex; align-items:center; gap:0.35rem;">
-                    <span style="color:var(--brand-lime); font-weight:800;">&#x2714;</span>
-                    ${hasAttempts ? 'All participating students meet the pass threshold for this section.' : 'Awaiting student section submissions.'}
-                  </div>
-                `}
+                <div style="border-top:1px dashed var(--border); padding-top:0.65rem;">
+                  ${helpList.length > 0 ? `
+                    <div style="font-size:0.75rem; font-weight:700; color:var(--danger); margin-bottom:0.35rem;">
+                      &#x26A0;&#xFE0F; Students Needing Help in ${escapeHtml(secName)} (${helpList.length}):
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:0.35rem;">
+                      ${helpList.map(st => {
+                        const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
+                        const pctLabel = st.best_percentage !== undefined && st.best_percentage !== null && st.best_percentage !== st.percentage
+                          ? `Latest: ${st.percentage}% | Best: ${st.best_percentage}%`
+                          : `${st.percentage ?? 0}%`;
+                        return `
+                          <span class="badge badge-danger" style="font-size:0.72rem;" title="Student Number: ${escapeHtml(st.student_number || 'N/A')}">
+                            ${escapeHtml(sName)} (${pctLabel})
+                          </span>
+                        `;
+                      }).join('')}
+                    </div>
+                  ` : `
+                    <div style="font-size:0.78rem; color:var(--text-muted); display:flex; align-items:center; gap:0.35rem;">
+                      <span style="color:var(--brand-lime); font-weight:800;">&#x2714;</span>
+                      ${hasAttempts ? 'All participating students meet the pass threshold for this section.' : 'Awaiting student section submissions.'}
+                    </div>
+                  `}
+                </div>
               </div>
 
               <!-- Cohort Section Access Control & Progressive Unlocking -->
@@ -935,6 +955,33 @@ export function renderInstructorDashboard(container, router, options = {}) {
         }
       };
     });
+
+    // Attach toggle collapse/expand for individual division cards
+    sectionsContainer.querySelectorAll('.btn-toggle-div-card').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const sec = btn.dataset.sec;
+        if (!sec) return;
+        if (collapsedDivisionCards.has(sec)) {
+          collapsedDivisionCards.delete(sec);
+        } else {
+          collapsedDivisionCards.add(sec);
+        }
+        sessionStorage.setItem('eduqe_inst_collapsed_div_cards', JSON.stringify(Array.from(collapsedDivisionCards)));
+        renderSectionsAnalysis();
+      };
+    });
+
+    // Attach toggle for entire divisions tracker card
+    const toggleDivisionsBtn = container.querySelector('#btn-toggle-divisions-tracker');
+    if (toggleDivisionsBtn) {
+      toggleDivisionsBtn.onclick = () => {
+        isDivisionsTrackerCollapsed = !isDivisionsTrackerCollapsed;
+        sessionStorage.setItem('eduqe_inst_divisions_collapsed', isDivisionsTrackerCollapsed ? 'true' : 'false');
+        sectionsContainer.style.display = isDivisionsTrackerCollapsed ? 'none' : 'block';
+        toggleDivisionsBtn.textContent = isDivisionsTrackerCollapsed ? '➕ Expand Tracker' : '▲ Minimize Tracker';
+      };
+    }
   }
 
   function renderStudentRoster() {
@@ -1452,6 +1499,7 @@ export function renderInstructorDashboard(container, router, options = {}) {
     const qStatusFilter = container.querySelector('#q-status-filter');
     const qCountBadge = container.querySelector('#q-count-badge');
     const toggleAllBtn = container.querySelector('#btn-toggle-all-questions');
+    const toggleAllSectionsBtn = container.querySelector('#btn-toggle-all-sections');
 
     if (questions.length === 0) {
       qAnalysisContainer.innerHTML = `
@@ -1547,161 +1595,222 @@ export function renderInstructorDashboard(container, router, options = {}) {
         return (a.question_number || 0) - (b.question_number || 0);
       });
 
-      let lastSection = null;
-      qAnalysisContainer.innerHTML = `
-        <div style="display:flex; flex-direction:column; gap:0.85rem;">
-          ${filtered.map((q, idx) => {
-            const qNum = q.question_number || (idx + 1);
-            const isWeak = q.needs_review;
-            const isAttempted = q.is_attempted;
-            const pct = isAttempted && q.success_percentage !== null ? q.success_percentage : null;
-            const cardBorder = isWeak ? 'rgba(220,38,38,0.45)' : (isAttempted ? 'var(--border)' : 'var(--border)');
-            const accentBorder = isWeak ? 'var(--danger)' : (isAttempted ? 'var(--brand-lime)' : 'var(--border)');
+      // Group filtered questions strictly by section
+      const sectionGroups = new Map();
+      filtered.forEach(q => {
+        const secName = (q.section_name || 'Section 1').trim();
+        if (!sectionGroups.has(secName)) {
+          sectionGroups.set(secName, []);
+        }
+        sectionGroups.get(secName).push(q);
+      });
 
-            let sectionHeaderHtml = '';
-            const secName = (q.section_name || 'Section 1').trim();
+      // Update toggle all sections button state
+      if (toggleAllSectionsBtn) {
+        toggleAllSectionsBtn.style.display = 'inline-block';
+        const allSecKeys = Array.from(sectionGroups.keys()).map(s => s.toLowerCase());
+        const allCollapsed = allSecKeys.length > 0 && allSecKeys.every(k => collapsedQuestionSections.has(k));
+        toggleAllSectionsBtn.textContent = allCollapsed ? 'Expand All Sections ▼' : 'Collapse All Sections ▲';
+
+        toggleAllSectionsBtn.onclick = () => {
+          if (allCollapsed) {
+            allSecKeys.forEach(k => collapsedQuestionSections.delete(k));
+          } else {
+            allSecKeys.forEach(k => collapsedQuestionSections.add(k));
+          }
+          sessionStorage.setItem('eduqe_inst_collapsed_q_sections', JSON.stringify(Array.from(collapsedQuestionSections)));
+          updateQuestionList();
+        };
+      }
+
+      qAnalysisContainer.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:1.15rem;">
+          ${Array.from(sectionGroups.entries()).map(([secName, secQuestions]) => {
             const normSec = secName.toLowerCase();
-            if (normSec !== lastSection) {
-              lastSection = normSec;
-              const countInSec = q.total_questions_in_section || filtered.filter(item => (item.section_name || 'Section 1').trim().toLowerCase() === normSec).length;
-              sectionHeaderHtml = `
-                <div style="margin:${idx === 0 ? '0 0 0.4rem 0' : '1.25rem 0 0.4rem 0'}; padding:0.65rem 1rem; background:var(--surface-subtle); border:1px solid var(--border); border-left:4px solid var(--brand-lime); border-radius:var(--radius-sm); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-                  <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span style="font-size:1.1rem;">📁</span>
-                    <span style="font-weight:800; font-family:var(--font-heading); font-size:1rem; color:var(--text-main);">
-                      ${escapeHtml(secName)} &bull; Questions 1 - ${countInSec}
-                    </span>
-                  </div>
-                  <span class="badge badge-primary" style="font-size:0.75rem; font-weight:700;">
-                    ${countInSec} Question${countInSec === 1 ? '' : 's'}
-                  </span>
-                </div>
-              `;
-            }
+            const isCollapsed = collapsedQuestionSections.has(normSec);
+            const countInSec = secQuestions[0]?.total_questions_in_section || secQuestions.length;
 
             return `
-              ${sectionHeaderHtml}
-              <div class="card q-card-item" data-qid="${escapeHtml(q.id)}" style="border:1px solid ${cardBorder}; border-left:5px solid ${accentBorder}; padding:0; overflow:hidden; transition:border-color 0.15s ease;">
-                <!-- Clickable Question Card Header -->
-                <div class="q-card-header" data-qid="${escapeHtml(q.id)}" style="padding:0.9rem 1.15rem; cursor:pointer; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; user-select:none;">
-                  <div style="flex:1;">
-                    <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.35rem; flex-wrap:wrap;">
-                      <span class="badge" style="font-size:0.75rem; font-weight:800; background:var(--brand-lime, #62b017); color:#000;">
-                        Question ${qNum}
-                      </span>
-                      ${isWeak ? `
-                        <span class="badge badge-danger" style="font-size:0.7rem; font-weight:800;">
-                          ⚠️ WEAK SPOT (${pct}%)
-                        </span>
-                      ` : (isAttempted ? `
-                        <span class="badge badge-success" style="font-size:0.7rem; font-weight:800;">
-                          ✔ GOOD MASTERY (${pct}%)
-                        </span>
-                      ` : `
-                        <span class="badge badge-neutral" style="font-size:0.7rem;">
-                          ⏳ NOT YET ATTEMPTED
-                        </span>
-                      `)}
-                      <span class="badge badge-secondary" style="font-size:0.7rem;">📁 ${escapeHtml(q.section_name || 'Section 1')}</span>
-                      <span class="badge badge-neutral" style="font-size:0.7rem;">🏷️ ${escapeHtml(q.topic || 'General')}</span>
-                      <span class="badge badge-neutral" style="font-size:0.7rem; text-transform:capitalize;">${escapeHtml(q.difficulty || 'medium')}</span>
-                      <span class="badge badge-neutral" style="font-size:0.7rem;">${q.points || 1} pt(s)</span>
-                    </div>
-                    <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); line-height:1.45;">
-                      <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
-                    </div>
+              <div class="card section-group-card" data-sec="${escapeHtml(normSec)}" style="padding:0; overflow:hidden; border:1px solid var(--border); box-shadow:0 1px 3px rgba(0,0,0,0.04); background:var(--surface);">
+                
+                <!-- Clickable Section Accordion Header Banner -->
+                <div class="section-group-header" data-sec="${escapeHtml(normSec)}" style="padding:0.85rem 1.15rem; background:var(--surface-subtle); border-left:5px solid var(--brand-lime); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.6rem; cursor:pointer; user-select:none; transition:background 0.15s ease;">
+                  <div style="display:flex; align-items:center; gap:0.65rem;">
+                    <span class="sec-collapse-icon" style="font-size:0.85rem; color:var(--brand-lime); font-weight:900; width:14px; text-align:center;">
+                      ${isCollapsed ? '▶' : '▼'}
+                    </span>
+                    <span style="font-size:1.15rem;">📁</span>
+                    <span style="font-weight:800; font-family:var(--font-heading); font-size:1.02rem; color:var(--text-main);">
+                      ${escapeHtml(secName)} &bull; Questions 1 - ${countInSec}
+                    </span>
+                    ${isCollapsed ? `
+                      <span class="badge badge-neutral" style="font-size:0.7rem; font-weight:700;">(Collapsed &bull; Click to Expand)</span>
+                    ` : ''}
                   </div>
-
-                  <div style="text-align:right; min-width:130px; display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
-                    <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!isAttempted ? 'var(--text-muted)' : (isWeak ? 'var(--danger)' : 'var(--brand-lime)')};">
-                      ${pct !== null ? `${pct}%` : '-'}
-                    </div>
-                    <div style="font-size:0.72rem; color:var(--text-muted);">
-                      ${isAttempted ? `${q.correct_answers} / ${q.total_answers} correct` : '0 attempts recorded'}
-                    </div>
-                    <button type="button" class="btn btn-secondary btn-sm btn-toggle-q-details" data-qid="${escapeHtml(q.id)}" style="font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; margin-top:0.25rem;">
-                      ${currentlyOpenIds.has(String(q.id)) ? '▲ Close Details' : '👁 View Answers ▼'}
+                  
+                  <div style="display:flex; align-items:center; gap:0.6rem;">
+                    <span class="badge badge-primary" style="font-size:0.75rem; font-weight:700;">
+                      ${countInSec} Question${countInSec === 1 ? '' : 's'}
+                    </span>
+                    <button type="button" class="btn btn-secondary btn-sm btn-toggle-sec-collapse" style="font-size:0.72rem; font-weight:700; padding:0.25rem 0.65rem; pointer-events:none;">
+                      ${isCollapsed ? 'Expand Section ▼' : 'Collapse Section ▲'}
                     </button>
                   </div>
                 </div>
 
-                <!-- Accuracy Progress Bar -->
-                <div style="height:4px; background:var(--surface-subtle); width:100%;">
-                  <div style="height:100%; width:${pct !== null ? pct : 0}%; background:${isWeak ? 'var(--danger)' : 'var(--brand-lime)'};"></div>
+                <!-- Collapsible Questions Container -->
+                <div class="sec-questions-body" data-sec="${escapeHtml(normSec)}" style="display:${isCollapsed ? 'none' : 'flex'}; flex-direction:column; gap:0.85rem; padding:1rem; border-top:1px solid var(--border);">
+                  ${secQuestions.map((q) => {
+                    const qNum = q.question_number || 1;
+                    const isWeak = q.needs_review;
+                    const isAttempted = q.is_attempted;
+                    const pct = isAttempted && q.success_percentage !== null ? q.success_percentage : null;
+                    const cardBorder = isWeak ? 'rgba(220,38,38,0.45)' : (isAttempted ? 'var(--border)' : 'var(--border)');
+                    const accentBorder = isWeak ? 'var(--danger)' : (isAttempted ? 'var(--brand-lime)' : 'var(--border)');
+
+                    return `
+                      <div class="card q-card-item" data-qid="${escapeHtml(q.id)}" style="border:1px solid ${cardBorder}; border-left:5px solid ${accentBorder}; padding:0; overflow:hidden; transition:border-color 0.15s ease;">
+                        <!-- Clickable Question Card Header -->
+                        <div class="q-card-header" data-qid="${escapeHtml(q.id)}" style="padding:0.9rem 1.15rem; cursor:pointer; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; user-select:none;">
+                          <div style="flex:1;">
+                            <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.35rem; flex-wrap:wrap;">
+                              <span class="badge" style="font-size:0.75rem; font-weight:800; background:var(--brand-lime, #62b017); color:#000;">
+                                Question ${qNum}
+                              </span>
+                              ${isWeak ? `
+                                <span class="badge badge-danger" style="font-size:0.7rem; font-weight:800;">
+                                  ⚠️ WEAK SPOT (${pct}%)
+                                </span>
+                              ` : (isAttempted ? `
+                                <span class="badge badge-success" style="font-size:0.7rem; font-weight:800;">
+                                  ✔ GOOD MASTERY (${pct}%)
+                                </span>
+                              ` : `
+                                <span class="badge badge-neutral" style="font-size:0.7rem;">
+                                  ⏳ NOT YET ATTEMPTED
+                                </span>
+                              `)}
+                              <span class="badge badge-secondary" style="font-size:0.7rem;">📁 ${escapeHtml(q.section_name || 'Section 1')}</span>
+                              <span class="badge badge-neutral" style="font-size:0.7rem;">🏷️ ${escapeHtml(q.topic || 'General')}</span>
+                              <span class="badge badge-neutral" style="font-size:0.7rem; text-transform:capitalize;">${escapeHtml(q.difficulty || 'medium')}</span>
+                              <span class="badge badge-neutral" style="font-size:0.7rem;">${q.points || 1} pt(s)</span>
+                            </div>
+                            <div style="font-weight:700; font-size:0.95rem; color:var(--text-main); line-height:1.45;">
+                              <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
+                            </div>
+                          </div>
+
+                          <div style="text-align:right; min-width:130px; display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
+                            <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!isAttempted ? 'var(--text-muted)' : (isWeak ? 'var(--danger)' : 'var(--brand-lime)')};">
+                              ${pct !== null ? `${pct}%` : '-'}
+                            </div>
+                            <div style="font-size:0.72rem; color:var(--text-muted);">
+                              ${isAttempted ? `${q.correct_answers} / ${q.total_answers} correct` : '0 attempts recorded'}
+                            </div>
+                            <button type="button" class="btn btn-secondary btn-sm btn-toggle-q-details" data-qid="${escapeHtml(q.id)}" style="font-size:0.72rem; font-weight:700; padding:0.2rem 0.55rem; margin-top:0.25rem;">
+                              ${currentlyOpenIds.has(String(q.id)) ? '▲ Close Details' : '👁 View Answers ▼'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <!-- Accuracy Progress Bar -->
+                        <div style="height:4px; background:var(--surface-subtle); width:100%;">
+                          <div style="height:100%; width:${pct !== null ? pct : 0}%; background:${isWeak ? 'var(--danger)' : 'var(--brand-lime)'};"></div>
+                        </div>
+
+                        <!-- Expandable Question Details Drawer -->
+                        <div id="q-details-${escapeHtml(q.id)}" class="q-details-drawer" style="display:${currentlyOpenIds.has(String(q.id)) ? 'block' : 'none'}; padding:1.15rem; background:var(--surface-subtle); border-top:1px dashed var(--border);">
+                          
+                          <!-- Scenario / Reference Material if Present -->
+                          ${q.question_description ? `
+                            <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--primary);">
+                              <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.3rem;">
+                                📋 Scenario &amp; Reference Material
+                              </div>
+                              <div style="font-size:0.875rem; color:var(--text-main); white-space:pre-wrap; line-height:1.45;">${escapeHtml(q.question_description)}</div>
+                            </div>
+                          ` : ''}
+
+                          <!-- Question Text Full Prompt -->
+                          <div style="margin-bottom:1rem;">
+                            <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
+                              Question ${qNum} Prompt:
+                            </span>
+                            <div style="font-size:1.05rem; font-weight:800; color:var(--text-main); margin-top:0.25rem; line-height:1.45;">
+                              <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
+                            </div>
+                          </div>
+
+                          <!-- Choices & Options Delegates Could Choose -->
+                          <div style="margin-bottom:1.15rem;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+                              <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
+                                Answer Options &amp; Correct Answer Key:
+                              </span>
+                              <span class="badge badge-neutral" style="font-size:0.7rem;">${escapeHtml(q.question_type.toUpperCase().replace(/_/g, ' '))}</span>
+                            </div>
+                            ${renderQuestionChoices(q)}
+                          </div>
+
+                          <!-- Official Correct Answer Summary Box -->
+                          <div style="margin-bottom:1rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
+                            <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.25rem;">
+                              <span style="color:var(--brand-lime); font-size:1rem;">✔</span>
+                              <strong style="font-size:0.85rem; color:var(--text-main);">Official Correct Answer:</strong>
+                            </div>
+                            <div style="font-family:monospace; font-size:0.9rem; font-weight:700; color:var(--text-main);">
+                              ${escapeHtml(formatAnswerText(q.correct_answer, q.answer_options))}
+                            </div>
+                          </div>
+
+                          <!-- Explanation & Discussion Notes -->
+                          ${q.answer_explanation ? `
+                            <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--brand-lime);">
+                              <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.35rem;">
+                                💡 Pedagogical Explanation &amp; Discussion Notes for Class
+                              </div>
+                              <div style="font-size:0.875rem; color:var(--text-main); line-height:1.5; white-space:pre-wrap;">${escapeHtml(q.answer_explanation)}</div>
+                            </div>
+                          ` : ''}
+
+                          <!-- Cohort Performance Stats Bar -->
+                          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-top:0.75rem; border-top:1px dashed var(--border); font-size:0.78rem; color:var(--text-muted);">
+                            <div>
+                              Cohort Accuracy: <strong style="color:var(--text-main);">${pct !== null ? `${pct}%` : 'No attempts'}</strong>
+                              ${isAttempted ? ` (${q.correct_answers} correct, ${q.incorrect_answers} incorrect out of ${q.total_answers} answers)` : ''}
+                            </div>
+                            <div>
+                              Section: <strong style="color:var(--text-main);">${escapeHtml(q.section_name)}</strong>
+                            </div>
+                          </div>
+
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
                 </div>
 
-                <!-- Expandable Question Details Drawer -->
-                <div id="q-details-${escapeHtml(q.id)}" class="q-details-drawer" style="display:${currentlyOpenIds.has(String(q.id)) ? 'block' : 'none'}; padding:1.15rem; background:var(--surface-subtle); border-top:1px dashed var(--border);">
-                  
-                  <!-- Scenario / Reference Material if Present -->
-                  ${q.question_description ? `
-                    <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--primary);">
-                      <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.3rem;">
-                        📋 Scenario &amp; Reference Material
-                      </div>
-                      <div style="font-size:0.875rem; color:var(--text-main); white-space:pre-wrap; line-height:1.45;">${escapeHtml(q.question_description)}</div>
-                    </div>
-                  ` : ''}
-
-                  <!-- Question Text Full Prompt -->
-                  <div style="margin-bottom:1rem;">
-                    <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
-                      Question ${qNum} Prompt:
-                    </span>
-                    <div style="font-size:1.05rem; font-weight:800; color:var(--text-main); margin-top:0.25rem; line-height:1.45;">
-                      <span style="color:var(--brand-lime, #62b017); font-weight:800; margin-right:0.35rem;">Q${qNum}.</span>${escapeHtml(q.question_text)}
-                    </div>
-                  </div>
-
-                  <!-- Choices & Options Delegates Could Choose -->
-                  <div style="margin-bottom:1.15rem;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
-                      <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">
-                        Answer Options &amp; Correct Answer Key:
-                      </span>
-                      <span class="badge badge-neutral" style="font-size:0.7rem;">${escapeHtml(q.question_type.toUpperCase().replace(/_/g, ' '))}</span>
-                    </div>
-                    ${renderQuestionChoices(q)}
-                  </div>
-
-                  <!-- Official Correct Answer Summary Box -->
-                  <div style="margin-bottom:1rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
-                    <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.25rem;">
-                      <span style="color:var(--brand-lime); font-size:1rem;">✔</span>
-                      <strong style="font-size:0.85rem; color:var(--text-main);">Official Correct Answer:</strong>
-                    </div>
-                    <div style="font-family:monospace; font-size:0.9rem; font-weight:700; color:var(--text-main);">
-                      ${escapeHtml(formatAnswerText(q.correct_answer, q.answer_options))}
-                    </div>
-                  </div>
-
-                  <!-- Explanation & Discussion Notes -->
-                  ${q.answer_explanation ? `
-                    <div style="margin-bottom:1rem; padding:0.85rem 1rem; border-radius:var(--radius-md); background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--brand-lime);">
-                      <div style="font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.35rem;">
-                        💡 Pedagogical Explanation &amp; Discussion Notes for Class
-                      </div>
-                      <div style="font-size:0.875rem; color:var(--text-main); line-height:1.5; white-space:pre-wrap;">${escapeHtml(q.answer_explanation)}</div>
-                    </div>
-                  ` : ''}
-
-                  <!-- Cohort Performance Stats Bar -->
-                  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-top:0.75rem; border-top:1px dashed var(--border); font-size:0.78rem; color:var(--text-muted);">
-                    <div>
-                      Cohort Accuracy: <strong style="color:var(--text-main);">${pct !== null ? `${pct}%` : 'No attempts'}</strong>
-                      ${isAttempted ? ` (${q.correct_answers} correct, ${q.incorrect_answers} incorrect out of ${q.total_answers} answers)` : ''}
-                    </div>
-                    <div>
-                      Section: <strong style="color:var(--text-main);">${escapeHtml(q.section_name)}</strong>
-                    </div>
-                  </div>
-
-                </div>
               </div>
             `;
           }).join('')}
         </div>
       `;
+
+      // Attach click handlers to section group headers
+      qAnalysisContainer.querySelectorAll('.section-group-header').forEach(header => {
+        header.onclick = (e) => {
+          e.stopPropagation();
+          const normSec = header.dataset.sec;
+          if (!normSec) return;
+          if (collapsedQuestionSections.has(normSec)) {
+            collapsedQuestionSections.delete(normSec);
+          } else {
+            collapsedQuestionSections.add(normSec);
+          }
+          sessionStorage.setItem('eduqe_inst_collapsed_q_sections', JSON.stringify(Array.from(collapsedQuestionSections)));
+          updateQuestionList();
+        };
+      });
 
       // Attach click handlers to headers and toggle buttons
       qAnalysisContainer.querySelectorAll('.q-card-header, .btn-toggle-q-details').forEach(el => {
