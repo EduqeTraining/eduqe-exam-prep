@@ -569,21 +569,19 @@ async function syncAttemptToSupabase(attemptId) {
   // Upsert attempt record directly to Supabase first for fast persistence
   let syncSuccess = await upsertRecord('student_attempts', attempt);
 
-  // If initial sync failed due to foreign key missing in Supabase, ensure shallow parent records exist and retry
+  // If initial sync failed due to foreign key missing in Supabase, ensure full parent hierarchy exists and retry
   if (!syncSuccess) {
     if (attempt.user_id) {
       try { await syncUserToSupabase(attempt.user_id); } catch (e) {}
     }
     if (attempt.class_id) {
       try {
-        const cls = db.get('SELECT * FROM classes WHERE id = ?', [attempt.class_id]);
-        if (cls) await upsertRecord('classes', cls);
+        await syncClassToSupabase(attempt.class_id);
       } catch (e) {}
     }
     if (attempt.assessment_id) {
       try {
-        const ass = db.get('SELECT * FROM assessments WHERE id = ?', [attempt.assessment_id]);
-        if (ass) await upsertRecord('assessments', ass);
+        await syncAssessmentToSupabase(attempt.assessment_id);
       } catch (e) {}
     }
     syncSuccess = await upsertRecord('student_attempts', attempt);
@@ -641,7 +639,7 @@ async function pullAttemptAnswersForAttempt(attemptId) {
  * Ensures the attempt, its assessment, questions, classes, answers, and settings
  * are fully synchronized into local SQLite regardless of microVM cache state.
  */
-async function ensureAttemptFullyHydrated(attemptId, userId = null) {
+async function ensureAttemptFullyHydrated(attemptId, userId = null, assessmentIdHint = null, classIdHint = null) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || (!attemptId && !userId)) {
     const db = getDatabase();
@@ -654,19 +652,26 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null) {
   // 1. Fetch attempt locally or pull directly from Supabase
   let attempt = attemptId ? db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]) : null;
   if (!attempt && userId) {
-    attempt = db.get(
-      "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
-      [userId]
-    ) || db.get(
-      "SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
-      [userId]
-    );
+    attempt = (assessmentIdHint
+      ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId, assessmentIdHint])
+      : null)
+      || db.get("SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId])
+      || (assessmentIdHint
+        ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? ORDER BY started_at DESC LIMIT 1", [userId, assessmentIdHint])
+        : null)
+      || db.get("SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1", [userId]);
     if (attempt) attemptId = attempt.id;
   }
 
   if (!attempt) {
     try {
       let rows = attemptId ? await supabaseRequest(`student_attempts?id=eq.${encodeURIComponent(attemptId)}&select=*`, { method: 'GET' }) : [];
+      if ((!Array.isArray(rows) || rows.length === 0) && userId && assessmentIdHint) {
+        rows = await supabaseRequest(
+          `student_attempts?user_id=eq.${encodeURIComponent(userId)}&assessment_id=eq.${encodeURIComponent(assessmentIdHint)}&status=eq.in_progress&order=started_at.desc&limit=1&select=*`,
+          { method: 'GET' }
+        );
+      }
       if ((!Array.isArray(rows) || rows.length === 0) && userId) {
         rows = await supabaseRequest(
           `student_attempts?user_id=eq.${encodeURIComponent(userId)}&status=eq.in_progress&order=started_at.desc&limit=1&select=*`,

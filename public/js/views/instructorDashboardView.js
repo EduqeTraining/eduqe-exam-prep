@@ -891,14 +891,25 @@ export function renderInstructorDashboard(container, router, options = {}) {
     }
 
     if (Array.isArray(parsed)) {
-      const found = parsed.find(o => (typeof o === 'object' && o !== null ? (String(o.id) === key || String(o.value) === key) : String(o) === key));
-      if (found && typeof found === 'object') return found.text || found.label || key;
+      const found = parsed.find(o => (typeof o === 'object' && o !== null ? (String(o.id) === key || String(o.value) === key || String(o.statement) === key) : String(o) === key));
+      if (found && typeof found === 'object') return found.statement || found.text || found.label || found.prompt || key;
+      const stmtMatch = key.match(/^stmt_(\d+)$/i);
+      if (stmtMatch) {
+        const sIndex = parseInt(stmtMatch[1], 10) - 1;
+        if (parsed[sIndex]) {
+          const item = parsed[sIndex];
+          if (typeof item === 'object' && item !== null) {
+            return `Statement ${sIndex + 1}`;
+          }
+          return `Statement ${sIndex + 1}`;
+        }
+      }
     } else if (typeof parsed === 'object' && parsed !== null) {
       const sources = Array.isArray(parsed.sources) ? parsed.sources : [];
       const targets = Array.isArray(parsed.targets) ? parsed.targets : [];
       for (const item of [...sources, ...targets]) {
         if (item && (String(item.id) === key || String(item.value) === key)) {
-          return item.text || item.label || key;
+          return item.text || item.label || item.statement || key;
         }
       }
     }
@@ -918,7 +929,11 @@ export function renderInstructorDashboard(container, router, options = {}) {
           return resolveOptionText(item, opts);
         }).join(', ');
       }
-      return Object.entries(val).map(([k, v]) => `${resolveOptionText(k, opts)} → ${resolveOptionText(v, opts)}`).join(' | ');
+      return Object.entries(val).map(([k, v]) => {
+        const cleanK = resolveOptionText(k, opts);
+        const cleanV = resolveOptionText(v, opts);
+        return `${cleanK}: ${cleanV}`;
+      }).join(' • ');
     }
     return resolveOptionText(val, opts);
   }
@@ -1070,36 +1085,165 @@ export function renderInstructorDashboard(container, router, options = {}) {
     }
 
     if (rawType === 'matching' || rawType === 'drag_drop') {
-      let pairs = [];
-      if (Array.isArray(correct)) {
-        pairs = correct.map(p => ({
-          target: p.target || p.left || p.key,
-          source: p.source || p.right || p.value
-        }));
-      } else if (typeof correct === 'object' && correct !== null) {
-        pairs = Object.entries(correct).map(([k, v]) => ({ target: k, source: v }));
+      let sources = [];
+      let targets = [];
+      let sourceTitle = 'Sources';
+      let targetTitle = 'Answer Area';
+
+      if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
+        sources = Array.isArray(opts.sources) ? opts.sources : [];
+        targets = Array.isArray(opts.targets) ? opts.targets : [];
+        sourceTitle = opts.source_title || 'Sources';
+        targetTitle = opts.target_title || 'Answer Area';
+      } else if (Array.isArray(opts) && opts.length > 0 && (opts[0].source || opts[0].left || opts[0].target || opts[0].right)) {
+        sources = opts.map((p, idx) => ({ id: 'src_' + idx, text: p.source || p.left || '' }));
+        targets = opts.map((p, idx) => ({ id: 'tgt_' + idx, text: p.target || p.right || '' }));
+      }
+
+      let correctMap = {};
+      if (typeof correct === 'object' && correct !== null && !Array.isArray(correct)) {
+        correctMap = correct;
+      } else if (Array.isArray(correct)) {
+        correct.forEach((item, idx) => {
+          if (typeof item === 'object' && item !== null) {
+            const t = item.target || item.left || item.target_id || `tgt_${idx}`;
+            const s = item.source || item.right || item.source_id || '';
+            correctMap[t] = s;
+          }
+        });
       }
 
       return `
-        <div style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.45rem;">
-          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Correct Matches &amp; Mappings:</span>
-          ${pairs.map(p => `
-            <div style="padding:0.5rem 0.75rem; border-radius:var(--radius-sm); border:1px solid var(--brand-lime); background:rgba(34,197,94,0.08); display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
-              <span style="font-weight:700; font-size:0.85rem; color:var(--text-main);">${escapeHtml(resolveOptionText(p.target, opts))}</span>
-              <span style="color:var(--brand-lime); font-weight:800;">➔</span>
-              <span style="font-size:0.85rem; color:var(--text-main);">${escapeHtml(resolveOptionText(p.source, opts))}</span>
+        <div class="ms-drag-container" style="margin-top:0.75rem; border:1px solid var(--border); border-radius:var(--radius-md); padding:1rem; background:var(--surface);">
+          <div style="display:inline-block; font-size:0.72rem; font-weight:800; background:var(--surface-subtle); border:1px solid var(--border); padding:0.2rem 0.5rem; border-radius:var(--radius-sm); color:var(--text-muted); margin-bottom:0.5rem;">
+            DRAG DROP &bull; STUDENT VIEW
+          </div>
+          <div style="font-size:0.875rem; color:var(--text-muted); line-height:1.45; margin-bottom:0.85rem;">
+            Match each item on the left to its appropriate description on the right.
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1.25rem;">
+            <!-- Left Column: Source Draggable Pool -->
+            <div style="background:var(--surface-subtle); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.85rem;">
+              <div style="font-weight:800; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.6rem;">
+                ${escapeHtml(sourceTitle)}
+              </div>
+              <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                ${sources.map(s => `
+                  <div style="padding:0.6rem 0.85rem; background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius-sm); font-size:0.88rem; font-weight:600; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                    <span>${escapeHtml(s.text)}</span>
+                    <span style="color:var(--brand-cyan, #00a4ef); font-size:0.85rem; opacity:0.8;">⠿</span>
+                  </div>
+                `).join('')}
+              </div>
             </div>
-          `).join('')}
+
+            <!-- Right Column: Answer Area Targets with Correct Slotting -->
+            <div style="background:var(--surface-subtle); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.85rem;">
+              <div style="font-weight:800; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.6rem;">
+                ${escapeHtml(targetTitle)} (Correct Matching)
+              </div>
+              <div style="display:flex; flex-direction:column; gap:0.6rem;">
+                ${targets.map(t => {
+                  const targetVal = correctMap[t.id] !== undefined ? correctMap[t.id] : (correctMap[t.text] !== undefined ? correctMap[t.text] : '');
+                  let matchedSource = sources.find(s => s.id === targetVal || s.text === targetVal);
+                  let filledText = matchedSource ? matchedSource.text : (targetVal || 'Unmatched');
+                  return `
+                    <div style="display:flex; flex-direction:column; gap:0.35rem; padding:0.65rem 0.85rem; background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius-sm);">
+                      <div style="display:flex; align-items:center; gap:0.5rem;">
+                        <span style="display:inline-flex; align-items:center; gap:0.3rem; padding:0.25rem 0.65rem; background:rgba(34,197,94,0.18); border:1.5px solid var(--brand-lime, #62b017); color:var(--success, #16a34a); border-radius:var(--radius-xs, 4px); font-size:0.82rem; font-weight:800;">
+                          ✔ ${escapeHtml(filledText)}
+                        </span>
+                      </div>
+                      <div style="font-size:0.85rem; color:var(--text-main); line-height:1.4;">
+                        ${escapeHtml(t.text)}
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
         </div>
       `;
     }
 
     if (rawType === 'hotspot') {
+      let statements = [];
+      if (Array.isArray(opts)) {
+        statements = opts;
+      } else if (typeof opts === 'object' && opts !== null) {
+        statements = Object.entries(opts).map(([k, v]) => ({
+          id: k,
+          statement: typeof v === 'object' && v !== null ? (v.statement || v.text || k) : String(v)
+        }));
+      }
+
+      let correctMap = {};
+      if (typeof correct === 'object' && correct !== null && !Array.isArray(correct)) {
+        correctMap = correct;
+      } else if (Array.isArray(correct)) {
+        correct.forEach((item, idx) => {
+          if (typeof item === 'object' && item !== null) {
+            const id = item.id || item.statement_id || `stmt_${idx + 1}`;
+            correctMap[id] = item.answer || item.correct || item.value || '';
+          } else {
+            correctMap[`stmt_${idx + 1}`] = String(item);
+          }
+        });
+      }
+
       return `
-        <div style="margin-top:0.5rem; padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(34,197,94,0.1); border:1px solid var(--brand-lime);">
-          <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Hotspot Correct Target Area:</span>
-          <div style="font-family:monospace; font-weight:700; font-size:0.95rem; color:var(--text-main); margin-top:0.25rem;">
-            ${escapeHtml(formatAnswerText(correct, opts))}
+        <div class="hotspot-area" style="border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--surface); margin-top:0.65rem;">
+          <div style="padding:0.75rem 1.25rem; background:var(--surface-subtle); border-bottom:1px solid var(--border); font-weight:800; font-family:var(--font-heading); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <span>Hot Area: Answer Area</span>
+            <span style="font-size:0.8rem; font-weight:600; color:var(--text-muted);">Select Yes or No for each statement</span>
+          </div>
+          <div class="table-container" style="border:none; margin:0; overflow-x:auto;">
+            <table class="table" style="margin:0; width:100%;">
+              <thead>
+                <tr style="background:var(--surface-subtle);">
+                  <th style="width:70%; font-weight:700; padding:0.85rem 1.25rem;">Statements</th>
+                  <th style="width:15%; text-align:center; font-weight:700; padding:0.85rem 1rem;">Yes</th>
+                  <th style="width:15%; text-align:center; font-weight:700; padding:0.85rem 1rem;">No</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${statements.map((st, sIdx) => {
+                  const sId = st.id || ('stmt_' + (sIdx + 1));
+                  const sText = st.statement || st.text || st;
+                  const correctVal = correctMap[sId] || correctMap[String(sIdx + 1)] || correctMap[sText] || '';
+                  const isYes = String(correctVal).trim().toLowerCase() === 'yes';
+                  const isNo = String(correctVal).trim().toLowerCase() === 'no';
+
+                  return `
+                    <tr style="border-bottom:1px solid var(--border);">
+                      <td style="padding:1rem 1.25rem; font-size:0.92rem; line-height:1.5; color:var(--text-main);">
+                        ${escapeHtml(String(sText))}
+                      </td>
+                      <td style="text-align:center; vertical-align:middle; padding:0.75rem 0.5rem;">
+                        ${isYes ? `
+                          <span style="display:inline-flex; align-items:center; justify-content:center; gap:0.35rem; padding:0.35rem 0.85rem; background:rgba(34,197,94,0.18); border:2px solid var(--brand-lime, #62b017); color:var(--success, #16a34a); border-radius:var(--radius-sm); font-weight:800; font-size:0.85rem;">
+                            ✔ Yes
+                          </span>
+                        ` : `
+                          <span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; border:2px solid var(--border); color:var(--text-muted); opacity:0.4;"></span>
+                        `}
+                      </td>
+                      <td style="text-align:center; vertical-align:middle; padding:0.75rem 0.5rem;">
+                        ${isNo ? `
+                          <span style="display:inline-flex; align-items:center; justify-content:center; gap:0.35rem; padding:0.35rem 0.85rem; background:rgba(34,197,94,0.18); border:2px solid var(--brand-lime, #62b017); color:var(--success, #16a34a); border-radius:var(--radius-sm); font-weight:800; font-size:0.85rem;">
+                            ✔ No
+                          </span>
+                        ` : `
+                          <span style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; border:2px solid var(--border); color:var(--text-muted); opacity:0.4;"></span>
+                        `}
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
           </div>
         </div>
       `;

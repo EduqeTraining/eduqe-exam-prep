@@ -417,6 +417,31 @@ test('Instructor-Led Section Locking & Progressive Gating Lifecycle Suite', asyn
     assert.equal(markedSubmitRes.already_submitted, true);
   });
 
+  await t.test('13. submitSection self-heals in serverless cold container environment with live client answers and without parent records', async () => {
+    const coldUserId = 'usr_cold_test_999';
+    const coldAttemptId = 'att_cold_test_999';
+    const coldAssId = 'ass_cold_test_999';
+    const coldClassId = 'cls_cold_test_999';
+
+    // Must successfully self-heal without throwing 'Attempt not found'
+    const selfHealRes = submitSection({
+      attemptId: coldAttemptId,
+      userId: coldUserId,
+      sectionName: 'Section 1',
+      answers: { 'q_cold_1': 'A', 'q_cold_2': 'B' },
+      assessmentId: coldAssId,
+      classId: coldClassId
+    });
+
+    assert.ok(selfHealRes, 'Self heal must return valid result');
+    assert.equal(selfHealRes.success, true);
+    assert.ok(selfHealRes.completed_sections.includes('Section 1'));
+
+    // Check that answers were saved
+    const savedAns = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [coldAttemptId]);
+    assert.equal(savedAns.length, 2, 'Live client answers must be saved during self-healing');
+  });
+
   // Cleanup test database
   t.after(() => {
     if (fs.existsSync(testDbPath)) {

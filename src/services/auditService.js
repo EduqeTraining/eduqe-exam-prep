@@ -6,11 +6,22 @@ function logAction({ userId = null, username = 'system', action, entityType, ent
   const id = generateId();
   const detailsStr = typeof details === 'object' && details !== null ? JSON.stringify(details) : (details || '');
   
-  db.run(
-    `INSERT INTO audit_logs (id, user_id, username, action, entity_type, entity_id, details, ip_address, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    [id, userId, username, action, entityType, entityId, detailsStr, ipAddress]
-  );
+  try {
+    db.run(
+      `INSERT INTO audit_logs (id, user_id, username, action, entity_type, entity_id, details, ip_address, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [id, userId, username, action, entityType, entityId, detailsStr, ipAddress]
+    );
+  } catch (err) {
+    // Audit logging should never crash primary operations; if FK on user_id fails, insert with NULL user_id
+    try {
+      db.run(
+        `INSERT INTO audit_logs (id, user_id, username, action, entity_type, entity_id, details, ip_address, created_at)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [id, username, action, entityType, entityId, detailsStr, ipAddress]
+      );
+    } catch (_) {}
+  }
   return id;
 }
 

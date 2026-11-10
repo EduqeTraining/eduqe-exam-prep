@@ -2100,7 +2100,20 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
                 if (finalCheck && (finalCheck.status !== 'in_progress' || (finalCheck.completed_sections || []).includes(targetSec.name))) {
                   updatedRes = { attempt_state: finalCheck, ...finalCheck };
                 } else {
-                  throw retryErr;
+                  // Fallback: check active attempt by assessment id
+                  const active = await api.getActiveAttempt(currentAttempt.assessment_id);
+                  if (active && active.attempt_id) {
+                    currentAttempt.id = active.attempt_id;
+                    updatedRes = await api.submitSection(
+                      active.attempt_id,
+                      targetSec.name,
+                      sectionAnswers,
+                      currentAttempt.assessment_id,
+                      currentAttempt.class_id
+                    );
+                  } else {
+                    throw retryErr;
+                  }
                 }
               } catch (_) {
                 throw retryErr;

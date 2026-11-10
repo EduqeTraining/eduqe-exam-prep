@@ -646,9 +646,9 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitSectionMatch[1];
-        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
-        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id, body.assessment_id || null, body.class_id || null);
+        const targetAttemptId = hydrated?.attemptId || attemptId;
         try {
           const result = attemptService.submitSection({
             attemptId: targetAttemptId,

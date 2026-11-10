@@ -626,22 +626,25 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
   if (!attempt) {
     const rawSa = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
     if (rawSa) {
+      const assRow = db.get('SELECT pass_mark_percentage, result_visibility, explanation_visibility, sections FROM assessments WHERE id = ?', [rawSa.assessment_id]);
       attempt = {
         ...rawSa,
-        pass_mark_percentage: 70,
-        result_visibility: 'immediate',
-        explanation_visibility: 'immediate',
-        assessment_sections: JSON.stringify(['Section 1'])
+        pass_mark_percentage: assRow?.pass_mark_percentage ?? 70,
+        result_visibility: assRow?.result_visibility ?? 'immediate',
+        explanation_visibility: assRow?.explanation_visibility ?? 'immediate',
+        assessment_sections: assRow?.sections ?? JSON.stringify(['Section 1'])
       };
     } else if (userId) {
-      // Fallback: check if the student has an active in-progress attempt, or most recent attempt
-      const userActive = db.get(
-        "SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
-        [userId]
-      ) || db.get(
-        "SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
-        [userId]
-      );
+      // Fallback 1: check if the student has an active in-progress attempt, or most recent attempt
+      const userActive = (assessmentId
+        ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId, assessmentId])
+        : null)
+        || db.get("SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId])
+        || (assessmentId
+          ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? ORDER BY started_at DESC LIMIT 1", [userId, assessmentId])
+          : null)
+        || db.get("SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1", [userId]);
+
       if (userActive) {
         attemptId = userActive.id;
         const assRow = db.get('SELECT pass_mark_percentage, result_visibility, explanation_visibility, sections FROM assessments WHERE id = ?', [userActive.assessment_id]);
@@ -652,37 +655,73 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
           explanation_visibility: assRow?.explanation_visibility ?? 'immediate',
           assessment_sections: assRow?.sections ?? JSON.stringify(['Section 1'])
         };
-      } else if (assessmentId || attemptId) {
-        // Self-heal: reconstruct attempt record on this container so serverless cold start never throws 'Attempt not found'
-        const assId = assessmentId || db.get('SELECT id FROM assessments LIMIT 1')?.id;
-        const assRow = assId ? db.get('SELECT * FROM assessments WHERE id = ?', [assId]) : null;
+      } else {
+        // Fallback 2: Self-heal - reconstruct attempt record on this container so serverless cold start never throws 'Attempt not found'
+        try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+
+        // Ensure user row exists in SQLite
+        if (!db.get('SELECT id FROM users WHERE id = ?', [userId])) {
+          try {
+            db.run(
+              "INSERT OR IGNORE INTO users (id, username, email, display_name, role, status) VALUES (?, ?, ?, ?, 'student', 'active')",
+              [userId, `user_${userId.slice(0, 8)}`, `${userId}@eduqe.local`, 'Student User']
+            );
+          } catch (_) {}
+        }
+
+        // Ensure assessment row exists in SQLite
+        let assId = assessmentId || db.get('SELECT id FROM assessments LIMIT 1')?.id || 'general';
+        let assRow = db.get('SELECT * FROM assessments WHERE id = ?', [assId]);
+        if (!assRow) {
+          try {
+            db.run(
+              "INSERT OR IGNORE INTO assessments (id, course_id, title, sections, pass_mark_percentage, status) VALUES (?, 'course_general', 'Assessment', ?, 70, 'published')",
+              [assId, JSON.stringify([sectionName || 'Section 1'])]
+            );
+            assRow = db.get('SELECT * FROM assessments WHERE id = ?', [assId]);
+          } catch (_) {}
+        }
+
+        // Ensure class row exists in SQLite
         let cId = classId;
         if (!cId) {
           const enroll = db.get('SELECT class_id FROM class_enrollments WHERE user_id = ? AND status = "active" ORDER BY enrolled_at DESC LIMIT 1', [userId]);
-          cId = enroll?.class_id || null;
+          cId = enroll?.class_id || db.get('SELECT id FROM classes LIMIT 1')?.id || 'cls_general';
         }
+        if (!db.get('SELECT id FROM classes WHERE id = ?', [cId])) {
+          try {
+            db.run(
+              "INSERT OR IGNORE INTO classes (id, course_id, name, status) VALUES (?, 'course_general', 'Class', 'active')",
+              [cId]
+            );
+          } catch (_) {}
+        }
+
         const healAttemptId = attemptId || generateId();
-        db.run(
-          `INSERT OR IGNORE INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, completed_sections)
-           VALUES (?, ?, ?, ?, 1, datetime('now'), datetime('now', '+60 minutes'), 'in_progress', ?)`,
-          [healAttemptId, assId || 'general', userId, cId, JSON.stringify([])]
-        );
+        try {
+          db.run(
+            `INSERT OR REPLACE INTO student_attempts (id, assessment_id, user_id, class_id, attempt_number, started_at, deadline_at, status, completed_sections)
+             VALUES (?, ?, ?, ?, 1, datetime('now'), datetime('now', '+60 minutes'), 'in_progress', ?)`,
+            [healAttemptId, assId, userId, cId, JSON.stringify([])]
+          );
+        } catch (_) {}
+
         attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [healAttemptId]);
         if (attempt) {
           attemptId = healAttemptId;
           attempt.pass_mark_percentage = assRow?.pass_mark_percentage ?? 70;
           attempt.result_visibility = assRow?.result_visibility ?? 'immediate';
           attempt.explanation_visibility = assRow?.explanation_visibility ?? 'immediate';
-          attempt.assessment_sections = assRow?.sections ?? JSON.stringify(['Section 1']);
-        } else {
-          throw new Error('Attempt not found.');
+          attempt.assessment_sections = assRow?.sections ?? JSON.stringify([sectionName || 'Section 1']);
         }
-      } else {
-        throw new Error('Attempt not found.');
+
+        try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
       }
-    } else {
-      throw new Error('Attempt not found.');
     }
+  }
+
+  if (!attempt) {
+    throw new Error('Attempt not found.');
   }
   attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
   if (attempt.class_id) {
@@ -700,15 +739,36 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
 
   // If client provided live answers map, persist them first so nothing is lost!
   if (clientAnswers && typeof clientAnswers === 'object') {
+    try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
     for (const [qId, ansVal] of Object.entries(clientAnswers)) {
       if (ansVal !== undefined) {
         const answerJson = (ansVal !== null && typeof ansVal === 'object') ? JSON.stringify(ansVal) : (ansVal !== null ? String(ansVal) : null);
-        db.run(
-          `UPDATE attempt_answers SET saved_answer = ?, saved_at = datetime('now') WHERE attempt_id = ? AND question_id = ?`,
-          [answerJson, attempt.id, qId]
-        );
+        // Ensure question row exists in local SQLite if running on fresh container
+        if (!db.get('SELECT id FROM questions WHERE id = ?', [qId])) {
+          try {
+            db.run(
+              "INSERT OR IGNORE INTO questions (id, question_text, question_type, status) VALUES (?, 'Question', 'single_choice', 'published')",
+              [qId]
+            );
+          } catch (_) {}
+        }
+
+        const existingAns = db.get('SELECT id FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attempt.id, qId]);
+        if (existingAns) {
+          db.run(
+            `UPDATE attempt_answers SET saved_answer = ?, saved_at = datetime('now') WHERE attempt_id = ? AND question_id = ?`,
+            [answerJson, attempt.id, qId]
+          );
+        } else {
+          db.run(
+            `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, saved_answer, section_name, saved_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+            [`aa_${attempt.id}_${qId}`, attempt.id, qId, answerJson, (sectionName || '').trim() || 'Section 1']
+          );
+        }
       }
     }
+    try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
   }
 
   if (attempt.user_id !== userId) {
