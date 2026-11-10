@@ -650,8 +650,17 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
 
   await t.test('12. Instructor progress question analytics handles attempt answers for orphan questions without idx is not defined error', async () => {
     const db = getDatabase();
-    const allocatedClass = db.get(`SELECT id, instructor_id FROM classes WHERE instructor_id IS NOT NULL LIMIT 1`);
+    const allocatedClass = db.get(`SELECT id, instructor_id, course_id FROM classes WHERE instructor_id IS NOT NULL LIMIT 1`);
     assert.ok(allocatedClass, 'Must find an allocated class');
+
+    const asm = db.get(`SELECT id FROM assessments LIMIT 1`);
+    assert.ok(asm, 'Must find an assessment');
+
+    db.run(
+      `INSERT OR IGNORE INTO assessment_classes (id, assessment_id, class_id)
+       VALUES ('ac_orphan_test_999', ?, ?)`,
+      [asm.id, allocatedClass.id]
+    );
 
     // Insert an orphan question not tied to any assessment
     const orphanQId = 'q_orphan_test_999';
@@ -665,8 +674,8 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     const dummyAttemptId = 'att_orphan_test_999';
     db.run(
       `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, deadline_at, score, max_score, percentage)
-       VALUES (?, ?, (SELECT id FROM assessments LIMIT 1), ?, 1, 'completed', datetime('now', '+1 hour'), 1, 1, 100)`,
-      [dummyAttemptId, 'usr_admin_001', allocatedClass.id]
+       VALUES (?, ?, ?, ?, 1, 'completed', datetime('now', '+1 hour'), 1, 1, 100)`,
+      [dummyAttemptId, 'usr_admin_001', asm.id, allocatedClass.id]
     );
 
     db.run(
@@ -684,5 +693,104 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     const orphanAnalysis = progressRes.data.questions_analysis.find(q => q.id === orphanQId);
     assert.ok(orphanAnalysis, 'Orphan question must be present in analysis');
     assert.ok(typeof orphanAnalysis.question_number === 'number', 'Orphan question must have a numeric question_number');
+  });
+
+  await t.test('13. Class sections isolation: foreign attempts and foreign section names from another class/assessment do not leak into cohort tracker', async () => {
+    const db = getDatabase();
+
+    const existingCourse = db.get(`SELECT id FROM courses LIMIT 1`);
+    const existingInstructor = db.get(`SELECT id FROM users WHERE role = 'instructor' LIMIT 1`);
+    const existingStudent = db.get(`SELECT id FROM users WHERE role = 'student' OR role = 'delegate' OR role = 'learner' LIMIT 1`);
+    assert.ok(existingCourse && existingInstructor && existingStudent, 'Must find seeded course, instructor, and student');
+
+    const testCourseId = existingCourse.id;
+    const testInstructorId = existingInstructor.id;
+    const studentId = existingStudent.id;
+
+    // 1. Create a class with 2 configured sections
+    const testClassId = 'cls_isolate_test_101';
+    db.run(
+      `INSERT OR REPLACE INTO classes (id, course_id, instructor_id, name, status)
+       VALUES (?, ?, ?, 'Isolate Test Class', 'active')`,
+      [testClassId, testCourseId, testInstructorId]
+    );
+
+    // 2. Create an assessment with exactly 2 sections: 'Section 1' and 'Section 2'
+    const testAsmId = 'asm_isolate_test_101';
+    db.run(
+      `INSERT OR REPLACE INTO assessments (id, course_id, name, duration_minutes, pass_mark_percentage, status, sections)
+       VALUES (?, ?, 'Isolate Test Assessment', 60, 70, 'published', ?)`,
+      [testAsmId, testCourseId, JSON.stringify(['Section 1', 'Section 2'])]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO assessment_classes (id, assessment_id, class_id)
+       VALUES ('ac_isolate_101', ?, ?)`,
+      [testAsmId, testClassId]
+    );
+
+    // Add 2 questions for this assessment
+    db.run(
+      `INSERT OR REPLACE INTO questions (id, course_id, question_text, question_type, topic, difficulty, status, answer_options, correct_answer)
+       VALUES ('q_iso_1', ?, 'Question 1', 'single_choice', 'Cloud', 'easy', 'published', '["A","B"]', 'A'),
+              ('q_iso_2', ?, 'Question 2', 'single_choice', 'Cloud', 'easy', 'published', '["A","B"]', 'A')`,
+      [testCourseId, testCourseId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO assessment_questions (id, assessment_id, question_id, section_name, order_index)
+       VALUES ('aq_iso_1', ?, 'q_iso_1', 'Section 1', 1),
+              ('aq_iso_2', ?, 'q_iso_2', 'Section 2', 2)`,
+      [testAsmId, testAsmId]
+    );
+
+    // 3. Enroll student in this class
+    db.run(
+      `INSERT OR REPLACE INTO class_enrollments (id, class_id, user_id, status)
+       VALUES ('ce_iso_101', ?, ?, 'active')`,
+      [testClassId, studentId]
+    );
+
+    // 4. Simulate that student has an attempt from a DIFFERENT class/assessment with a rogue section name
+    const foreignClassId = 'cls_other_test_999';
+    const foreignAsmId = 'asm_other_test_999';
+    db.run(
+      `INSERT OR REPLACE INTO classes (id, course_id, instructor_id, name, status)
+       VALUES (?, ?, ?, 'Other Class', 'active')`,
+      [foreignClassId, testCourseId, testInstructorId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO assessments (id, course_id, name, duration_minutes, pass_mark_percentage, status, sections)
+       VALUES (?, ?, 'Other Assessment', 60, 70, 'published', ?)`,
+      [foreignAsmId, testCourseId, JSON.stringify(['Objective 1: Identity, Governance, Security & Storage'])]
+    );
+
+    const foreignAttemptId = 'att_foreign_leak_999';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, deadline_at, score, max_score, percentage)
+       VALUES (?, ?, ?, ?, 1, 'completed', datetime('now', '+1 hour'), 1, 5, 20)`,
+      [foreignAttemptId, studentId, foreignAsmId, foreignClassId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+       VALUES ('aa_foreign_leak_1', ?, 'q_iso_1', 'A', 1, 'Objective 1: Identity, Governance, Security & Storage')`,
+      [foreignAttemptId]
+    );
+
+    // 5. Query instructor progress for testClassId
+    const progressRes = await req(`/api/instructor/progress?class_id=${testClassId}`, {
+      token: adminToken
+    });
+
+    assert.equal(progressRes.status, 200);
+    assert.ok(Array.isArray(progressRes.data.sections_analysis), 'Must return sections_analysis');
+
+    const sectionNames = progressRes.data.sections_analysis.map(s => s.name);
+    assert.deepEqual(sectionNames, ['Section 1', 'Section 2'], 'Must strictly contain ONLY Section 1 and Section 2');
+    assert.ok(!sectionNames.includes('Objective 1: Identity, Governance, Security & Storage'), 'Must NOT leak foreign objective from another class');
+
+    const studentRecord = progressRes.data.students.find(s => s.id === studentId);
+    assert.ok(studentRecord, 'Student must be listed in roster');
+    const studentSecNames = studentRecord.section_breakdown.map(s => s.name);
+    assert.deepEqual(studentSecNames, ['Section 1', 'Section 2'], 'Student section breakdown must strictly only have Section 1 and Section 2');
   });
 });

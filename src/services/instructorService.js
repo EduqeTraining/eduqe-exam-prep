@@ -407,6 +407,11 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     } catch (_) {}
   }
 
+  const classAssessmentIds = classAssessments.map(a => a.id).filter(Boolean);
+  const classAssessmentPlaceholders = classAssessmentIds.length > 0 
+    ? classAssessmentIds.map(() => '?').join(',') 
+    : null;
+
   const defaultPassMark = (classAssessmentConfig && classAssessmentConfig.pass_mark_percentage) || (classAssessments[0] && classAssessments[0].pass_mark_percentage) || 70;
   const baseSectionQuestionCounts = new Map();
   const baseOrderedSectionNames = [];
@@ -433,7 +438,12 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         sName = baseOrderedSectionNames[0] || 'Section 1';
       }
       if (!baseOrderedSectionNames.includes(sName)) {
-        baseOrderedSectionNames.push(sName);
+        if (secs.length > 0) {
+          const match = baseOrderedSectionNames.find(b => b.trim().toLowerCase() === sName.toLowerCase());
+          sName = match || baseOrderedSectionNames[0] || 'Section 1';
+        } else {
+          baseOrderedSectionNames.push(sName);
+        }
       }
       if (aq.question_id) {
         questionSectionMap.set(aq.question_id, sName);
@@ -547,33 +557,12 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   });
 
   const ensureSectionInMap = (secName) => {
-    if (!orderedSectionNames.includes(secName)) {
-      orderedSectionNames.push(secName);
+    let target = secName;
+    if (!sectionStatsMap.has(target)) {
+      const match = orderedSectionNames.find(s => s.trim().toLowerCase() === String(secName).trim().toLowerCase());
+      target = match || orderedSectionNames[0] || 'Section 1';
     }
-    if (!sectionStatsMap.has(secName)) {
-      sectionStatsMap.set(secName, {
-        name: secName,
-        section_name: secName,
-        order_index: orderedSectionNames.indexOf(secName),
-        question_count: sectionQuestionCounts.get(secName) || 0,
-        pass_mark_percentage: defaultPassMark,
-        students_completed: 0,
-        students_in_progress: 0,
-        students_not_started: 0,
-        students_passed: 0,
-        total_attempts_count: 0,
-        total_answers: 0,
-        correct_answers: 0,
-        total_awarded_points: 0,
-        total_max_points: 0,
-        student_latest_percentages: [],
-        student_best_percentages: [],
-        student_overall_percentages: [],
-        students_needing_help: [],
-        all_student_results: []
-      });
-    }
-    return sectionStatsMap.get(secName);
+    return sectionStatsMap.get(target);
   };
 
   // Compute per-student attempts & section breakdown across ALL attempts
@@ -584,31 +573,39 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     let studentAttempts = [];
     if (isAllCohorts) {
       const classPlaceholders = targetClassIds.map(() => '?').join(',');
+      const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
       studentAttempts = db.all(
         `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
          FROM student_attempts sa
          LEFT JOIN assessments a ON a.id = sa.assessment_id
-         WHERE sa.user_id = ? AND (
-           sa.class_id IN (${classPlaceholders})
-           OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders})))
-           OR (sa.assessment_id IN (SELECT a2.id FROM assessments a2 JOIN classes cl2 ON cl2.course_id = a2.course_id WHERE cl2.id IN (${classPlaceholders})))
-         )
+         WHERE sa.user_id = ?
+           AND (
+             sa.class_id IN (${classPlaceholders})
+             OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders})))
+           )
+           ${asmCondition}
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds, ...targetClassIds]
+        classAssessmentPlaceholders
+          ? [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds, ...classAssessmentIds]
+          : [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds]
       );
     } else {
+      const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
       studentAttempts = db.all(
         `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
          FROM student_attempts sa
          LEFT JOIN assessments a ON a.id = sa.assessment_id
-         WHERE sa.user_id = ? AND (
-           sa.class_id = ? 
-           OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-           OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?))
-           OR (sa.assessment_id IN (SELECT a2.id FROM assessments a2 WHERE a2.course_id = ?))
-         )
+         WHERE sa.user_id = ?
+           AND (
+             sa.class_id = ? 
+             OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+             OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?))
+           )
+           ${asmCondition}
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, targetClass.course_id]
+        classAssessmentPlaceholders
+          ? [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, ...classAssessmentIds]
+          : [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
       );
     }
 
@@ -672,6 +669,10 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           let secName = (ans.aq_section_name || ans.section_name || questionSectionMap.get(ans.question_id) || '').trim();
           if (!secName || (secName === 'General' && !orderedSectionNames.includes('General'))) {
             secName = orderedSectionNames[0] || 'Section 1';
+          }
+          if (!orderedSectionNames.includes(secName)) {
+            const match = orderedSectionNames.find(s => s.trim().toLowerCase() === secName.toLowerCase());
+            secName = match || orderedSectionNames[0] || 'Section 1';
           }
           ensureSectionInMap(secName);
           if (!studentSectionAttemptsMap.has(secName)) {
@@ -1072,7 +1073,15 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const dq of directQuestions) {
       if (!questionsMap.has(dq.id)) {
-        questionsMap.set(dq.id, { ...dq, question_number: questionsMap.size + 1 });
+        let sec = (dq.section_name || '').trim();
+        if (!sec || (sec === 'General' && !orderedSectionNames.includes('General'))) {
+          sec = orderedSectionNames[0] || 'Section 1';
+        }
+        if (!orderedSectionNames.includes(sec)) {
+          const match = orderedSectionNames.find(s => s.trim().toLowerCase() === sec.toLowerCase());
+          sec = match || orderedSectionNames[0] || 'Section 1';
+        }
+        questionsMap.set(dq.id, { ...dq, section_name: sec, question_number: questionsMap.size + 1 });
       }
     }
 
@@ -1090,7 +1099,15 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
     for (const pq of poolQuestions) {
       if (!questionsMap.has(pq.id)) {
-        questionsMap.set(pq.id, { ...pq, question_number: questionsMap.size + 1 });
+        let sec = (pq.section_name || '').trim();
+        if (!sec || (sec === 'General' && !orderedSectionNames.includes('General'))) {
+          sec = orderedSectionNames[0] || 'Section 1';
+        }
+        if (!orderedSectionNames.includes(sec)) {
+          const match = orderedSectionNames.find(s => s.trim().toLowerCase() === sec.toLowerCase());
+          sec = match || orderedSectionNames[0] || 'Section 1';
+        }
+        questionsMap.set(pq.id, { ...pq, section_name: sec, question_number: questionsMap.size + 1 });
       }
     }
   }
@@ -1117,6 +1134,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   let attemptStats = [];
   if (isAllCohorts) {
     const classPlaceholders = targetClassIds.map(() => '?').join(',');
+    const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
     attemptStats = db.all(
       `SELECT aa.question_id,
               MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
@@ -1128,11 +1146,13 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
          sa.class_id IN (${classPlaceholders})
          OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
        )
+         ${asmCondition}
          AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
        GROUP BY aa.question_id`,
-      [...targetClassIds, ...targetClassIds]
+      classAssessmentPlaceholders ? [...targetClassIds, ...targetClassIds, ...classAssessmentIds] : [...targetClassIds, ...targetClassIds]
     );
   } else {
+    const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
     attemptStats = db.all(
       `SELECT aa.question_id,
               MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
@@ -1145,9 +1165,12 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
          OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
          OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        )
+         ${asmCondition}
          AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
        GROUP BY aa.question_id`,
-      [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
+      classAssessmentPlaceholders
+        ? [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, ...classAssessmentIds]
+        : [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
     );
   }
 
@@ -1162,9 +1185,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         [row.question_id]
       );
       if (qRow) {
+        let sec = (row.attempt_section_name || 'Section 1').trim();
+        if (!orderedSectionNames.includes(sec)) {
+          const match = orderedSectionNames.find(s => s.trim().toLowerCase() === sec.toLowerCase());
+          sec = match || orderedSectionNames[0] || 'Section 1';
+        }
         questionsMap.set(qRow.id, {
           ...qRow,
-          section_name: row.attempt_section_name || 'Section 1',
+          section_name: sec,
           order_index: 999,
           question_number: questionsMap.size + 1
         });
@@ -1179,7 +1207,11 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     const incorrectAnswers = Math.max(0, totalAnswers - correctAnswers);
     const successPercentage = totalAnswers > 0 ? Math.round((correctAnswers / totalAnswers) * 100) : null;
     const mappedSec = (stats && stats.attempt_section_name) || questionSectionMap.get(q.id) || q.section_name;
-    const secName = (!mappedSec || mappedSec === 'General') ? (orderedSectionNames[0] || 'Section 1') : mappedSec;
+    let secName = (!mappedSec || mappedSec === 'General') ? (orderedSectionNames[0] || 'Section 1') : mappedSec;
+    if (!orderedSectionNames.includes(secName)) {
+      const match = orderedSectionNames.find(s => s.trim().toLowerCase() === secName.toLowerCase());
+      secName = match || orderedSectionNames[0] || 'Section 1';
+    }
 
     let parsedOpts = [];
     try {
