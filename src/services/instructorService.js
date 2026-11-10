@@ -1147,6 +1147,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
       total_awarded_points: sec.total_awarded_points,
       total_max_points: sec.total_max_points,
       avg_percentage: avgPct,
+      avg_score: avgPct !== null ? avgPct : (latestAvgPct !== null ? latestAvgPct : 0),
       latest_avg_percentage: latestAvgPct,
       best_avg_percentage: bestAvgPct,
       students_needing_help_count: sec.students_needing_help.length,

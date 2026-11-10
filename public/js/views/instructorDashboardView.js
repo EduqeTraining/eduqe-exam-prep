@@ -344,7 +344,7 @@ export function renderInstructorDashboard(container, router, options = {}) {
       if (classSelect) {
         classSelect.innerHTML = allOptionHtml + res.assigned_classes.map(c => `
           <option value="${c.id}" ${c.id === res.selected_class.id ? 'selected' : ''}>
-            ${escapeHtml(c.name)} &bull; ${escapeHtml(c.course_name || 'Course')} (${c.student_count || 0} learner${c.student_count === 1 ? '' : 's'}${c.active_code ? ` &bull; Code: ${escapeHtml(c.active_code)}` : ''})
+            ${escapeHtml(c.name)} • ${escapeHtml(c.course_name || 'Course')} (${c.student_count || 0} learner${c.student_count === 1 ? '' : 's'}${c.active_code ? ` • Code: ${escapeHtml(c.active_code)}` : ''})
           </option>
         `).join('');
       }
@@ -722,10 +722,10 @@ export function renderInstructorDashboard(container, router, options = {}) {
       return;
     }
 
-    const helpNeededSections = sections.filter(s => s.needs_help);
+    const sectionsWithStrugglingStudents = sections.filter(sec => sec.students_needing_help && sec.students_needing_help.length > 0);
     if (badgeHelpCount) {
-      if (helpNeededSections.length > 0) {
-        badgeHelpCount.textContent = `${helpNeededSections.length} Section${helpNeededSections.length === 1 ? '' : 's'} Need Review`;
+      if (sectionsWithStrugglingStudents.length > 0) {
+        badgeHelpCount.textContent = `${sectionsWithStrugglingStudents.length} Section(s) Have Learners Needing Help`;
         badgeHelpCount.style.display = 'inline-block';
       } else {
         badgeHelpCount.style.display = 'none';
@@ -733,39 +733,208 @@ export function renderInstructorDashboard(container, router, options = {}) {
     }
 
     sectionsContainer.innerHTML = `
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1rem;">
         ${sections.map((sec, idx) => {
-          const passPct = sec.avg_score !== null ? sec.avg_score : 0;
-          const isWeak = sec.needs_help;
-          const statusColor = isWeak ? 'var(--danger)' : 'var(--brand-lime)';
+          const secName = sec.name || sec.section_name || `Section ${idx + 1}`;
+          const helpList = sec.students_needing_help || [];
+          const allStudentResults = sec.all_student_results || [];
+          const completedCount = sec.completed_students_count ?? sec.students_completed ?? 0;
+          const inProgressCount = sec.in_progress_students_count ?? sec.students_in_progress ?? 0;
+          const totalEnrolled = sec.total_enrolled ?? (currentData?.summary?.total_enrolled || 0);
+          const totalAttempts = sec.total_attempts_count ?? 0;
+          const totalAnswers = sec.total_answers ?? 0;
+          const correctAnswers = sec.correct_answers ?? 0;
+          const hasAttempts = (completedCount + inProgressCount) > 0 || totalAnswers > 0;
+          const avgPct = (sec.avg_percentage !== null && sec.avg_percentage !== undefined)
+            ? sec.avg_percentage
+            : ((sec.avg_score !== null && sec.avg_score !== undefined) ? sec.avg_score : 0);
+          const latestAvg = sec.latest_avg_percentage !== null && sec.latest_avg_percentage !== undefined ? sec.latest_avg_percentage : avgPct;
+          const bestAvg = sec.best_avg_percentage !== null && sec.best_avg_percentage !== undefined ? sec.best_avg_percentage : avgPct;
+          const hasHelpNeeded = helpList.length > 0 || Boolean(sec.needs_help || sec.needs_review);
+
           return `
-            <div style="border:1px solid var(--border); border-left:4px solid ${statusColor}; border-radius:var(--radius-md); padding:1rem; background:var(--surface);">
-              <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem;">
-                <div>
-                  <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; color:var(--text-muted);">Section ${idx + 1}</span>
-                  <div style="font-weight:700; font-size:1rem; color:var(--text-main);">${escapeHtml(sec.name)}</div>
+            <div style="border:1px solid ${hasHelpNeeded ? 'rgba(220,38,38,0.4)' : 'var(--border)'}; background:${hasHelpNeeded ? 'rgba(220,38,38,0.03)' : 'var(--surface-subtle)'}; border-top:4px solid ${hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)'}; border-radius:var(--radius-md); padding:1rem 1.15rem; display:flex; flex-direction:column; justify-content:space-between; gap:0.85rem;">
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.5rem; margin-bottom:0.5rem;">
+                  <div>
+                    <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted);">Sub-Assessment Division ${idx + 1}</span>
+                    <h3 style="font-size:1.05rem; font-weight:800; margin:0.1rem 0 0; color:var(--text-main);">${escapeHtml(secName)}</h3>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!hasAttempts ? 'var(--text-muted)' : (hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)')};">
+                      ${hasAttempts ? `${avgPct}%` : '-'}
+                    </div>
+                    <div style="font-size:0.7rem; color:var(--text-muted);">
+                      ${hasAttempts ? `${correctAnswers}/${totalAnswers} Correct` : 'Cohort Avg'}
+                    </div>
+                  </div>
                 </div>
-                ${isWeak ? '<span class="badge badge-danger" style="font-size:0.7rem;">Needs Help</span>' : '<span class="badge badge-success" style="font-size:0.7rem;">On Track</span>'}
+
+                <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:0.65rem;">
+                  <span class="badge badge-neutral" style="font-size:0.72rem;">${sec.question_count || 0} Question(s)</span>
+                  <span class="badge badge-success" style="font-size:0.72rem;">&#x2713; ${completedCount}/${totalEnrolled} Completed</span>
+                  ${inProgressCount > 0 ? `<span class="badge badge-warning" style="font-size:0.72rem;">&#x23F3; ${inProgressCount} In Progress</span>` : ''}
+                  ${totalAttempts > 0 ? `<span class="badge badge-neutral" style="font-size:0.72rem;">${totalAttempts} Attempt(s) Tracked</span>` : ''}
+                </div>
+
+                ${hasAttempts && bestAvg !== latestAvg ? `
+                  <div style="display:flex; justify-content:space-between; font-size:0.74rem; color:var(--text-muted); margin-bottom:0.4rem;">
+                    <span>Best Attempt Avg: <strong style="color:var(--text-main);">${bestAvg}%</strong></span>
+                    <span>Latest Attempt Avg: <strong style="color:var(--text-main);">${latestAvg}%</strong></span>
+                  </div>
+                ` : ''}
+
+                <div style="height:6px; background:var(--surface); border-radius:var(--radius-full); overflow:hidden; border:1px solid var(--border);">
+                  <div style="height:100%; width:${hasAttempts ? Math.min(100, Math.max(0, avgPct)) : 0}%; background:${hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)'}; transition:width 0.3s ease;"></div>
+                </div>
               </div>
 
-              <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.5rem;">
-                <span style="font-size:1.6rem; font-weight:900; font-family:var(--font-heading); color:${statusColor};">${passPct}%</span>
-                <span style="font-size:0.8rem; color:var(--text-muted);">avg score</span>
+              <!-- Per-Student Tracked Results for this Section -->
+              ${allStudentResults.length > 0 ? `
+                <div style="border-top:1px solid var(--border); padding-top:0.65rem;">
+                  <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.4rem;">
+                    Tracked Student Results (${allStudentResults.length})
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:0.4rem;">
+                    ${allStudentResults.map(st => {
+                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
+                      const attHist = Array.isArray(st.attempt_history) ? st.attempt_history : [];
+                      if (!st.is_completed && !st.is_in_progress) {
+                        return `
+                          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.3rem 0.5rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
+                            <span style="font-weight:600; color:var(--text-main);">${escapeHtml(sName)}</span>
+                            <span class="badge badge-neutral" style="font-size:0.68rem;">Not Started</span>
+                          </div>
+                        `;
+                      }
+                      return `
+                        <div style="display:flex; flex-direction:column; gap:0.25rem; padding:0.4rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid ${st.needs_help ? 'rgba(220,38,38,0.35)' : 'var(--border)'};">
+                          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
+                            <span style="font-weight:700; font-size:0.8rem; color:var(--text-main);">${escapeHtml(sName)}</span>
+                            <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
+                              ${st.is_in_progress ? `&#x23F3; ${st.answered_count}/${st.total_questions} (${st.percentage ?? 0}%)` : `Latest: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
+                              ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : ' &#x2713;'}
+                            </span>
+                          </div>
+                          ${attHist.length > 1 ? `
+                            <div style="display:flex; flex-wrap:wrap; gap:0.3rem; align-items:center; font-size:0.7rem; color:var(--text-muted);">
+                              <span>All Attempts (${st.total_correct_all_attempts}/${st.total_answers_all_attempts} &bull; Avg ${st.avg_percentage}% &bull; Best ${st.best_percentage}%):</span>
+                              ${attHist.map(ah => `
+                                <span style="padding:0.1rem 0.35rem; border-radius:4px; background:var(--surface-subtle); border:1px solid var(--border); font-weight:600;">
+                                  #${ah.attempt_number}: ${ah.correct_count}/${ah.total_questions} (${ah.percentage}%)
+                                </span>
+                              `).join('')}
+                            </div>
+                          ` : ''}
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              <div style="border-top:1px dashed var(--border); padding-top:0.65rem;">
+                ${helpList.length > 0 ? `
+                  <div style="font-size:0.75rem; font-weight:700; color:var(--danger); margin-bottom:0.35rem;">
+                    &#x26A0;&#xFE0F; Students Needing Help in ${escapeHtml(secName)} (${helpList.length}):
+                  </div>
+                  <div style="display:flex; flex-wrap:wrap; gap:0.35rem;">
+                    ${helpList.map(st => {
+                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
+                      const pctLabel = st.best_percentage !== undefined && st.best_percentage !== null && st.best_percentage !== st.percentage
+                        ? `Latest: ${st.percentage}% | Best: ${st.best_percentage}%`
+                        : `${st.percentage ?? 0}%`;
+                      return `
+                        <span class="badge badge-danger" style="font-size:0.72rem;" title="Student Number: ${escapeHtml(st.student_number || 'N/A')}">
+                          ${escapeHtml(sName)} (${pctLabel})
+                        </span>
+                      `;
+                    }).join('')}
+                  </div>
+                ` : `
+                  <div style="font-size:0.78rem; color:var(--text-muted); display:flex; align-items:center; gap:0.35rem;">
+                    <span style="color:var(--brand-lime); font-weight:800;">&#x2714;</span>
+                    ${hasAttempts ? 'All participating students meet the pass threshold for this section.' : 'Awaiting student section submissions.'}
+                  </div>
+                `}
               </div>
 
-              <div style="height:6px; background:var(--surface-subtle); border-radius:var(--radius-full); overflow:hidden; margin-bottom:0.75rem;">
-                <div style="height:100%; width:${passPct}%; background:${statusColor};"></div>
+              <!-- Cohort Section Access Control & Progressive Unlocking -->
+              <div style="border-top:1px solid var(--border); padding-top:0.65rem; margin-top:0.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                <div style="display:flex; align-items:center; gap:0.4rem;">
+                  <span class="badge ${sec.is_unlocked ? 'badge-success' : 'badge-warning'}" style="font-size:0.72rem; font-weight:700;">
+                    ${sec.is_unlocked ? '&#x1F513; UNLOCKED FOR COHORT' : '&#x1F512; LOCKED FOR COHORT'}
+                  </span>
+                </div>
+                <div>
+                  ${activeClassId !== 'all' ? `
+                    ${!sec.is_unlocked ? `
+                      <button type="button" class="btn btn-primary btn-sm btn-cohort-unlock" data-sec="${escapeHtml(secName)}" style="font-weight:700; font-size:0.75rem; padding:0.25rem 0.65rem;">
+                        &#x1F513; Unlock ${escapeHtml(secName)} for Cohort
+                      </button>
+                    ` : (idx > 0 ? `
+                      <button type="button" class="btn btn-secondary btn-sm btn-cohort-relock" data-sec="${escapeHtml(secName)}" style="font-size:0.72rem; padding:0.2rem 0.5rem; color:var(--text-muted);" title="Re-lock this section if needed">
+                        &#x1F512; Re-Lock
+                      </button>
+                    ` : `
+                      <span style="font-size:0.72rem; color:var(--text-muted); font-weight:600;">(Default Unlocked)</span>
+                    `)}
+                  ` : `
+                    <span style="font-size:0.72rem; color:var(--text-muted);">(Select cohort above to manage locks)</span>
+                  `}
+                </div>
               </div>
 
-              <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted); padding-top:0.5rem; border-top:1px dashed var(--border);">
-                <span>Completed: ${sec.students_completed} of ${sec.students_attempted || currentData.summary.total_enrolled}</span>
-                <span>Struggling: ${sec.struggling_students ? sec.struggling_students.length : 0} student(s)</span>
-              </div>
             </div>
           `;
         }).join('')}
       </div>
     `;
+
+    // Attach unlock / relock event listeners
+    sectionsContainer.querySelectorAll('.btn-cohort-unlock').forEach(btn => {
+      btn.onclick = async () => {
+        const secToUnlock = btn.dataset.sec;
+        if (!secToUnlock) return;
+        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
+        const nextList = [...new Set([...currentUnlocked, secToUnlock])];
+        btn.disabled = true;
+        btn.textContent = 'Unlocking...';
+        try {
+          const res = await api.setUnlockedSections(activeClassId, nextList);
+          if (currentData && currentData.selected_class) {
+            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
+          }
+          await loadDashboardData();
+        } catch (err) {
+          alert('Failed to unlock section: ' + (err.message || 'Error occurred'));
+          btn.disabled = false;
+          btn.textContent = `🔓 Unlock ${secToUnlock} for Cohort`;
+        }
+      };
+    });
+
+    sectionsContainer.querySelectorAll('.btn-cohort-relock').forEach(btn => {
+      btn.onclick = async () => {
+        const secToLock = btn.dataset.sec;
+        if (!secToLock) return;
+        if (!confirm(`Are you sure you want to lock ${secToLock} for this cohort?`)) return;
+        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
+        const nextList = currentUnlocked.filter(s => s !== secToLock);
+        btn.disabled = true;
+        btn.textContent = 'Locking...';
+        try {
+          const res = await api.setUnlockedSections(activeClassId, nextList);
+          if (currentData && currentData.selected_class) {
+            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
+          }
+          await loadDashboardData();
+        } catch (err) {
+          alert('Failed to lock section: ' + (err.message || 'Error occurred'));
+          btn.disabled = false;
+        }
+      };
+    });
   }
 
   function renderStudentRoster() {
