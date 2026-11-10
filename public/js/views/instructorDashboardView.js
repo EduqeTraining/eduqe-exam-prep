@@ -1791,7 +1791,7 @@ export function renderInstructorDashboard(container, router, options = {}) {
                           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; padding-top:0.75rem; border-top:1px dashed var(--border); font-size:0.78rem; color:var(--text-muted);">
                             <div>
                               Cohort Accuracy: <strong style="color:var(--text-main);">${pct !== null ? `${pct}%` : 'No attempts'}</strong>
-                              ${isAttempted ? ` (${q.correct_answers} correct, ${q.incorrect_answers} incorrect out of ${q.total_answers} answers)` : ''}
+                              ${isAttempted ? ` (${q.correct_answers} correct, ${q.incorrect_answers} incorrect out of ${q.total_answers} delegate${q.total_answers === 1 ? '' : 's'})` : ''}
                             </div>
                             <div>
                               Section: <strong style="color:var(--text-main);">${escapeHtml(q.section_name)}</strong>

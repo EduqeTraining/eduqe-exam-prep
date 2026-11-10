@@ -890,4 +890,183 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
       }
     }
   });
+
+  await t.test('16. Question mastery analytics uses best result per delegate: 1 delegate with multiple attempts shows 100% (1/1) not (2/3), and 4 delegates show 4/4 not 6/8', async () => {
+    const db = getDatabase();
+    const testClassId = 'cls_best_metric_test_16';
+    const testCourseId = db.get('SELECT id FROM courses LIMIT 1').id;
+    const testInstructor = db.get("SELECT id FROM users WHERE role = 'instructor' LIMIT 1");
+    const testAsmId = 'asm_best_metric_16';
+    const testQ1 = 'q_best_metric_16_1';
+    const testQ2 = 'q_best_metric_16_2';
+
+    db.run(
+      `INSERT OR REPLACE INTO classes (id, course_id, instructor_id, name, status)
+       VALUES (?, ?, ?, 'Delegate Best Metric Test Class', 'active')`,
+      [testClassId, testCourseId, testInstructor.id]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO assessments (id, course_id, name, duration_minutes, pass_mark_percentage, status, sections)
+       VALUES (?, ?, 'Metric Test Assessment', 60, 70, 'published', ?)`,
+      [testAsmId, testCourseId, JSON.stringify(['Section 1'])]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO assessment_classes (id, assessment_id, class_id)
+       VALUES ('ac_metric_16', ?, ?)`,
+      [testAsmId, testClassId]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO questions (id, course_id, question_text, question_type, section_module, status, points, answer_options, correct_answer)
+       VALUES (?, ?, 'Question 1 Best Metric Test', 'single_choice', 'Section 1', 'published', 1, '["A","B"]', '"A"')`,
+      [testQ1, testCourseId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO questions (id, course_id, question_text, question_type, section_module, status, points, answer_options, correct_answer)
+       VALUES (?, ?, 'Question 2 Best Metric Test', 'single_choice', 'Section 1', 'published', 1, '["A","B"]', '"A"')`,
+      [testQ2, testCourseId]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO assessment_questions (id, assessment_id, question_id, section_name, order_index)
+       VALUES ('aq_metric_1', ?, ?, 'Section 1', 1)`,
+      [testAsmId, testQ1]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO assessment_questions (id, assessment_id, question_id, section_name, order_index)
+       VALUES ('aq_metric_2', ?, ?, 'Section 1', 2)`,
+      [testAsmId, testQ2]
+    );
+
+    // Scenario A: 1 Delegate taking multiple attempts
+    const userA = 'usr_metric_delegate_a';
+    db.run(
+      `INSERT OR REPLACE INTO users (id, first_name, surname, username, email, password_hash, role)
+       VALUES (?, 'DelegateA', 'Single', 'del_a_16', 'del_a_16@test.com', 'hash', 'student')`,
+      [userA]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO class_enrollments (id, user_id, class_id, status, enrolled_at)
+       VALUES ('ce_metric_a', ?, ?, 'active', datetime('now'))`,
+      [userA, testClassId]
+    );
+
+    // Attempt 1: Delegate A got Question 1 WRONG
+    const attA1 = 'att_metric_a_1';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at)
+       VALUES (?, ?, ?, ?, 1, 'marked', datetime('now', '-3 hours'), datetime('now', '-2 hours'))`,
+      [attA1, userA, testAsmId, testClassId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+       VALUES ('aa_m_a1_q1', ?, ?, 'wrong', 0, 'Section 1')`,
+      [attA1, testQ1]
+    );
+
+    // Check after Attempt 1: 0% and 0/1 correct
+    let progressRes = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    assert.equal(progressRes.status, 200);
+    let q1Analytic = progressRes.data.questions_analysis.find(q => q.id === testQ1);
+    assert.ok(q1Analytic, 'Q1 must be found');
+    assert.equal(q1Analytic.total_answers, 1, '1 delegate attempted');
+    assert.equal(q1Analytic.correct_answers, 0, '0 delegates correct on attempt 1');
+    assert.equal(q1Analytic.success_percentage, 0, 'Success percentage must be 0% on attempt 1');
+
+    // Attempt 2: Delegate A got Question 1 RIGHT
+    const attA2 = 'att_metric_a_2';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at)
+       VALUES (?, ?, ?, ?, 2, 'marked', datetime('now', '-2 hours'), datetime('now', '-1 hour'))`,
+      [attA2, userA, testAsmId, testClassId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+       VALUES ('aa_m_a2_q1', ?, ?, 'correct', 1, 'Section 1')`,
+      [attA2, testQ1]
+    );
+
+    // Attempt 3: Delegate A got Question 1 RIGHT again
+    const attA3 = 'att_metric_a_3';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at)
+       VALUES (?, ?, ?, ?, 3, 'marked', datetime('now', '-1 hour'), datetime('now'))`,
+      [attA3, userA, testAsmId, testClassId]
+    );
+    db.run(
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+       VALUES ('aa_m_a3_q1', ?, ?, 'correct', 1, 'Section 1')`,
+      [attA3, testQ1]
+    );
+
+    // Check after 3 attempts: Must show 100% and 1/1 correct (NOT 2/3 or 67%)
+    progressRes = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    assert.equal(progressRes.status, 200);
+    q1Analytic = progressRes.data.questions_analysis.find(q => q.id === testQ1);
+    assert.equal(q1Analytic.total_answers, 1, '1 delegate attempted across all attempts');
+    assert.equal(q1Analytic.correct_answers, 1, 'Best result for Delegate A is correct (1)');
+    assert.equal(q1Analytic.success_percentage, 100, 'Success percentage must be 100% for 1 delegate who got it right in best attempt');
+
+    // Scenario B: 4 delegates attending
+    const users = ['usr_metric_del_1', 'usr_metric_del_2', 'usr_metric_del_3', 'usr_metric_del_4'];
+    for (let i = 0; i < 4; i++) {
+      db.run(
+        `INSERT OR REPLACE INTO users (id, first_name, surname, username, email, password_hash, role)
+         VALUES (?, ?, 'CohortLearner', ?, ?, 'hash', 'student')`,
+        [users[i], `Learner${i + 1}`, `learner_${i + 1}_16`, `learner_${i + 1}_16@test.com`]
+      );
+      db.run(
+        `INSERT OR REPLACE INTO class_enrollments (id, user_id, class_id, status, enrolled_at)
+         VALUES (?, ?, ?, 'active', datetime('now'))`,
+        [`ce_m_${i}`, users[i], testClassId]
+      );
+    }
+
+    // Attempt 1: 2 got it correct, 2 got it wrong
+    for (let i = 0; i < 4; i++) {
+      const attId = `att_m_b1_${i}`;
+      const isCorr = i < 2 ? 1 : 0; // Learners 0 & 1 correct, 2 & 3 wrong
+      db.run(
+        `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at)
+         VALUES (?, ?, ?, ?, 1, 'marked', datetime('now', '-2 hours'), datetime('now', '-1 hour'))`,
+        [attId, users[i], testAsmId, testClassId]
+      );
+      db.run(
+        `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+         VALUES (?, ?, ?, 'ans', ?, 'Section 1')`,
+        [`aa_m_b1_${i}`, attId, testQ2, isCorr]
+      );
+    }
+
+    // Verify after Attempt 1: 2/4 correct (50%)
+    progressRes = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    let q2Analytic = progressRes.data.questions_analysis.find(q => q.id === testQ2);
+    assert.equal(q2Analytic.total_answers, 4, '4 delegates attempted');
+    assert.equal(q2Analytic.correct_answers, 2, '2 delegates correct on attempt 1');
+    assert.equal(q2Analytic.success_percentage, 50, 'Success percentage must be 50% (2/4 correct)');
+
+    // Attempt 2: All 4 delegates get it right
+    for (let i = 0; i < 4; i++) {
+      const attId = `att_m_b2_${i}`;
+      db.run(
+        `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at)
+         VALUES (?, ?, ?, ?, 2, 'marked', datetime('now', '-1 hour'), datetime('now'))`,
+        [attId, users[i], testAsmId, testClassId]
+      );
+      db.run(
+        `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, saved_answer, is_correct, section_name)
+         VALUES (?, ?, ?, 'ans', 1, 'Section 1')`,
+        [`aa_m_b2_${i}`, attId, testQ2]
+      );
+    }
+
+    // Verify after Attempt 2: 4/4 correct (100%), NOT 6/8
+    progressRes = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    q2Analytic = progressRes.data.questions_analysis.find(q => q.id === testQ2);
+    assert.equal(q2Analytic.total_answers, 4, 'Total delegates attempted must be 4, NOT 8');
+    assert.equal(q2Analytic.correct_answers, 4, 'All 4 delegates now got it correct in best attempt, NOT 6');
+    assert.equal(q2Analytic.success_percentage, 100, 'Success percentage must be 100% (4/4 correct), NOT 75% (6/8)');
+  });
 });

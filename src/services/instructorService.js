@@ -1139,20 +1139,22 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const classUnlocked = (targetClass && targetClass.unlocked_sections) || ['Section 1'];
 
   const sectionsAnalysis = Array.from(sectionStatsMap.values()).map((sec, idx) => {
-    // Overall point-weighted accuracy across all attempts in this section
-    const overallAccuracyPct = sec.total_max_points > 0
-      ? Math.round((sec.total_awarded_points / sec.total_max_points) * 1000) / 10
-      : (sec.total_answers > 0 ? Math.round((sec.correct_answers / sec.total_answers) * 1000) / 10 : null);
+    // Best results across students for this section
+    const attemptedStudents = (sec.all_student_results || []).filter(st => st.is_completed || st.is_in_progress || (st.attempts_count && st.attempts_count > 0));
+    const bestCorrectSum = attemptedStudents.reduce((sum, st) => sum + (st.best_correct_count ?? st.correct_count ?? 0), 0);
+    const bestTotalSum = attemptedStudents.reduce((sum, st) => sum + (st.total_questions || sec.question_count || 0), 0);
+
+    const bestCohortPct = bestTotalSum > 0
+      ? Math.round((bestCorrectSum / bestTotalSum) * 1000) / 10
+      : (sec.student_best_percentages.length > 0
+        ? Math.round((sec.student_best_percentages.reduce((a, b) => a + b, 0) / sec.student_best_percentages.length) * 10) / 10
+        : null);
 
     const latestAvgPct = sec.student_latest_percentages.length > 0
       ? Math.round((sec.student_latest_percentages.reduce((a, b) => a + b, 0) / sec.student_latest_percentages.length) * 10) / 10
-      : overallAccuracyPct;
+      : bestCohortPct;
 
-    const bestAvgPct = sec.student_best_percentages.length > 0
-      ? Math.round((sec.student_best_percentages.reduce((a, b) => a + b, 0) / sec.student_best_percentages.length) * 10) / 10
-      : overallAccuracyPct;
-
-    const avgPct = overallAccuracyPct !== null ? overallAccuracyPct : latestAvgPct;
+    const avgPct = bestCohortPct !== null ? bestCohortPct : latestAvgPct;
     const passMark = sec.pass_mark_percentage || defaultPassMark;
     const needsHelp = sec.students_needing_help.length > 0 || (avgPct !== null && avgPct < passMark);
 
@@ -1173,14 +1175,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
       passed_students_count: sec.students_passed,
       students_passed: sec.students_passed,
       total_attempts_count: sec.total_attempts_count,
-      total_answers: sec.total_answers,
-      correct_answers: sec.correct_answers,
+      total_answers: bestTotalSum > 0 ? bestTotalSum : sec.total_answers,
+      correct_answers: bestTotalSum > 0 ? bestCorrectSum : sec.correct_answers,
       total_awarded_points: sec.total_awarded_points,
       total_max_points: sec.total_max_points,
       avg_percentage: avgPct,
-      avg_score: avgPct !== null ? avgPct : (latestAvgPct !== null ? latestAvgPct : 0),
+      avg_score: avgPct !== null ? avgPct : (bestCohortPct !== null ? bestCohortPct : 0),
       latest_avg_percentage: latestAvgPct,
-      best_avg_percentage: bestAvgPct,
+      best_avg_percentage: bestCohortPct,
       students_needing_help_count: sec.students_needing_help.length,
       students_needing_help: sec.students_needing_help,
       all_student_results: sec.all_student_results,
@@ -1284,38 +1286,60 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     const classPlaceholders = targetClassIds.map(() => '?').join(',');
     const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
     attemptStats = db.all(
-      `SELECT aa.question_id,
-              MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
-              COUNT(aa.id) as total_answers,
-              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers
-       FROM attempt_answers aa
-       JOIN student_attempts sa ON sa.id = aa.attempt_id
-       WHERE (
-         sa.class_id IN (${classPlaceholders})
-         OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
+      `SELECT question_id,
+              MAX(attempt_section_name) as attempt_section_name,
+              COUNT(user_id) as total_answers,
+              SUM(is_best_correct) as correct_answers
+       FROM (
+         SELECT aa.question_id,
+                sa.user_id,
+                MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
+                MAX(CASE WHEN aa.is_correct = 1 OR (aa.awarded_points IS NOT NULL AND aa.max_points IS NOT NULL AND aa.awarded_points >= aa.max_points AND aa.max_points > 0) THEN 1 ELSE 0 END) as is_best_correct
+         FROM attempt_answers aa
+         JOIN student_attempts sa ON sa.id = aa.attempt_id
+         WHERE (
+           sa.class_id IN (${classPlaceholders})
+           OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
+         )
+           ${asmCondition}
+           AND (
+             aa.is_correct IS NOT NULL
+             OR (aa.saved_answer IS NOT NULL AND aa.saved_answer != '' AND aa.saved_answer != 'null' AND aa.saved_answer != '[]' AND aa.saved_answer != '{}')
+             OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked')
+           )
+         GROUP BY aa.question_id, sa.user_id
        )
-         ${asmCondition}
-         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked'))
-       GROUP BY aa.question_id`,
+       GROUP BY question_id`,
       classAssessmentPlaceholders ? [...targetClassIds, ...targetClassIds, ...classAssessmentIds] : [...targetClassIds, ...targetClassIds]
     );
   } else {
     const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
     attemptStats = db.all(
-      `SELECT aa.question_id,
-              MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
-              COUNT(aa.id) as total_answers,
-              SUM(CASE WHEN aa.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers
-       FROM attempt_answers aa
-       JOIN student_attempts sa ON sa.id = aa.attempt_id
-       WHERE (
-         sa.class_id = ? 
-         OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-         OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
+      `SELECT question_id,
+              MAX(attempt_section_name) as attempt_section_name,
+              COUNT(user_id) as total_answers,
+              SUM(is_best_correct) as correct_answers
+       FROM (
+         SELECT aa.question_id,
+                sa.user_id,
+                MAX(COALESCE(aa.section_name, 'Section 1')) as attempt_section_name,
+                MAX(CASE WHEN aa.is_correct = 1 OR (aa.awarded_points IS NOT NULL AND aa.max_points IS NOT NULL AND aa.awarded_points >= aa.max_points AND aa.max_points > 0) THEN 1 ELSE 0 END) as is_best_correct
+         FROM attempt_answers aa
+         JOIN student_attempts sa ON sa.id = aa.attempt_id
+         WHERE (
+           sa.class_id = ? 
+           OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
+           OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
+         )
+           ${asmCondition}
+           AND (
+             aa.is_correct IS NOT NULL
+             OR (aa.saved_answer IS NOT NULL AND aa.saved_answer != '' AND aa.saved_answer != 'null' AND aa.saved_answer != '[]' AND aa.saved_answer != '{}')
+             OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked')
+           )
+         GROUP BY aa.question_id, sa.user_id
        )
-         ${asmCondition}
-         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked'))
-       GROUP BY aa.question_id`,
+       GROUP BY question_id`,
       classAssessmentPlaceholders
         ? [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, ...classAssessmentIds]
         : [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
