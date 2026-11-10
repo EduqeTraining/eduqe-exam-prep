@@ -1524,6 +1524,18 @@ export function renderInstructorDashboard(container, router, options = {}) {
         return;
       }
 
+      // Sort filtered questions strictly in sequential delegate view order: by section then question_number (1 to 25)
+      filtered.sort((a, b) => {
+        const aSec = (a.section_name || 'Section 1').trim();
+        const bSec = (b.section_name || 'Section 1').trim();
+        const aSecIdx = (currentData?.selected_class?.section_names || []).indexOf(aSec);
+        const bSecIdx = (currentData?.selected_class?.section_names || []).indexOf(bSec);
+        const secDiff = (aSecIdx !== -1 ? aSecIdx : 999) - (bSecIdx !== -1 ? bSecIdx : 999);
+        if (secDiff !== 0) return secDiff;
+        return (a.question_number || 0) - (b.question_number || 0);
+      });
+
+      let lastSection = null;
       qAnalysisContainer.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:0.85rem;">
           ${filtered.map((q, idx) => {
@@ -1534,7 +1546,28 @@ export function renderInstructorDashboard(container, router, options = {}) {
             const cardBorder = isWeak ? 'rgba(220,38,38,0.45)' : (isAttempted ? 'var(--border)' : 'var(--border)');
             const accentBorder = isWeak ? 'var(--danger)' : (isAttempted ? 'var(--brand-lime)' : 'var(--border)');
 
+            let sectionHeaderHtml = '';
+            const secName = q.section_name || 'Section 1';
+            if (secName !== lastSection) {
+              lastSection = secName;
+              const countInSec = q.total_questions_in_section || filtered.filter(item => item.section_name === secName).length;
+              sectionHeaderHtml = `
+                <div style="margin:${idx === 0 ? '0 0 0.4rem 0' : '1.25rem 0 0.4rem 0'}; padding:0.65rem 1rem; background:var(--surface-subtle); border:1px solid var(--border); border-left:4px solid var(--brand-lime); border-radius:var(--radius-sm); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                  <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <span style="font-size:1.1rem;">📁</span>
+                    <span style="font-weight:800; font-family:var(--font-heading); font-size:1rem; color:var(--text-main);">
+                      ${escapeHtml(secName)} &bull; Questions 1 - ${countInSec}
+                    </span>
+                  </div>
+                  <span class="badge badge-primary" style="font-size:0.75rem; font-weight:700;">
+                    ${countInSec} Question${countInSec === 1 ? '' : 's'}
+                  </span>
+                </div>
+              `;
+            }
+
             return `
+              ${sectionHeaderHtml}
               <div class="card q-card-item" data-qid="${escapeHtml(q.id)}" style="border:1px solid ${cardBorder}; border-left:5px solid ${accentBorder}; padding:0; overflow:hidden; transition:border-color 0.15s ease;">
                 <!-- Clickable Question Card Header -->
                 <div class="q-card-header" data-qid="${escapeHtml(q.id)}" style="padding:0.9rem 1.15rem; cursor:pointer; background:${isWeak ? 'rgba(220,38,38,0.03)' : 'var(--surface)'}; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; user-select:none;">

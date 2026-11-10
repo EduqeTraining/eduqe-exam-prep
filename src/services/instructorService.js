@@ -1317,7 +1317,38 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     }
   }
 
-  const questionAnalytics = Array.from(questionsMap.values()).map((q, idx) => {
+  // Order questions strictly by Section (orderedSectionNames) and order_index ASC, id ASC
+  const sortedQuestions = Array.from(questionsMap.values()).sort((a, b) => {
+    const aSec = (a.section_name || 'Section 1').trim();
+    const bSec = (b.section_name || 'Section 1').trim();
+    const aSecIdx = orderedSectionNames.indexOf(aSec);
+    const bSecIdx = orderedSectionNames.indexOf(bSec);
+    const secDiff = (aSecIdx !== -1 ? aSecIdx : 999) - (bSecIdx !== -1 ? bSecIdx : 999);
+    if (secDiff !== 0) return secDiff;
+    const aOrder = Number(a.order_index ?? 9999);
+    const bOrder = Number(b.order_index ?? 9999);
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return String(a.id).localeCompare(String(b.id));
+  });
+
+  // Calculate total questions per section
+  const sectionTotals = new Map();
+  sortedQuestions.forEach(q => {
+    const sName = (q.section_name || 'Section 1').trim();
+    sectionTotals.set(sName, (sectionTotals.get(sName) || 0) + 1);
+  });
+
+  // Assign sequential question_number (1 to N per section) matching delegate view
+  const sectionCounters = new Map();
+  sortedQuestions.forEach(q => {
+    const sName = (q.section_name || 'Section 1').trim();
+    const num = (sectionCounters.get(sName) || 0) + 1;
+    sectionCounters.set(sName, num);
+    q.question_number = num;
+    q.total_questions_in_section = sectionTotals.get(sName) || 25;
+  });
+
+  const questionAnalytics = sortedQuestions.map((q) => {
     const stats = statsMap.get(q.id);
     const totalAnswers = stats ? Number(stats.total_answers) : 0;
     const correctAnswers = stats ? Number(stats.correct_answers) : 0;
@@ -1346,7 +1377,9 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
 
     return {
       id: q.id,
-      question_number: q.question_number || (idx + 1),
+      question_number: q.question_number,
+      total_questions_in_section: q.total_questions_in_section,
+      order_index: q.order_index ?? 0,
       question_text: q.question_text || '',
       question_description: q.question_description || '',
       question_type: q.question_type || 'single_choice',
@@ -1364,17 +1397,6 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
       is_attempted: totalAnswers > 0,
       needs_review: Boolean(totalAnswers > 0 && successPercentage < 60)
     };
-  });
-
-  questionAnalytics.sort((a, b) => {
-    if (a.needs_review && !b.needs_review) return -1;
-    if (!a.needs_review && b.needs_review) return 1;
-    if (a.is_attempted && !b.is_attempted) return -1;
-    if (!a.is_attempted && b.is_attempted) return 1;
-    if (a.is_attempted && b.is_attempted) {
-      return (a.success_percentage ?? 0) - (b.success_percentage ?? 0);
-    }
-    return (a.section_name || '').localeCompare(b.section_name || '') || (a.question_text || '').localeCompare(b.question_text || '');
   });
 
   // 6. Recent Attempt Activity Stream

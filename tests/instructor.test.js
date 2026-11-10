@@ -864,4 +864,30 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     assert.equal(studentRec2.best_score, 32.0, 'Best score must not disappear');
     assert.equal(studentRec2.latest_score, 32.0, 'Latest score must not disappear');
   });
+
+  await t.test('15. Question Weak Spots and Bank questions are sequentially numbered per section (Question 1 to N) matching delegate view', async () => {
+    const progressRes = await req('/api/instructor/progress', { token: seededInstructorToken });
+    assert.equal(progressRes.status, 200);
+    const questions = progressRes.data.questions_analysis;
+    assert.ok(Array.isArray(questions) && questions.length > 0, 'Must return questions array');
+
+    // Group by section
+    const bySection = new Map();
+    questions.forEach(q => {
+      const s = q.section_name || 'Section 1';
+      if (!bySection.has(s)) bySection.set(s, []);
+      bySection.get(s).push(q);
+    });
+
+    // Check each section starts at Question 1 and increments sequentially
+    for (const [secName, secQuestions] of bySection.entries()) {
+      for (let i = 0; i < secQuestions.length; i++) {
+        assert.equal(
+          secQuestions[i].question_number,
+          i + 1,
+          `In ${secName}, question at index ${i} must have question_number ${i + 1}`
+        );
+      }
+    }
+  });
 });
