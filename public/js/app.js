@@ -86,7 +86,8 @@ class Router {
 
     // Instructor routes
     if (authState.isInstructor()) {
-      renderInstructorDashboard(pageContainer, this);
+      const activeTab = path === 'instructor-questions' ? 'questions' : 'overview';
+      renderInstructorDashboard(pageContainer, this, { activeTab });
       return;
     }
 
@@ -141,7 +142,11 @@ class Router {
         break;
 
       case 'instructor':
-        renderInstructorDashboard(pageContainer, this);
+        renderInstructorDashboard(pageContainer, this, { activeTab: 'overview' });
+        break;
+
+      case 'instructor-questions':
+        renderInstructorDashboard(pageContainer, this, { activeTab: 'questions' });
         break;
 
       case 'question-bank':
@@ -272,6 +277,11 @@ function updateNavigationUI(currentPath) {
       <li class="nav-item">
         <a href="#instructor" class="nav-link ${currentPath === 'instructor' || currentPath === 'dashboard' ? 'active' : ''}">
           <span style="font-size:1.1rem;">&#x1F4CA;</span> Cohort Progress &amp; Stats
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#instructor-questions" class="nav-link ${currentPath === 'instructor-questions' ? 'active' : ''}">
+          <span style="font-size:1.1rem;">&#x1F4A1;</span> Questions &amp; Weak Spots
         </a>
       </li>
     `;

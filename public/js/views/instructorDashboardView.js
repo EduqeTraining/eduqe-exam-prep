@@ -2,179 +2,75 @@
 
 import { api, authState } from '../api.js';
 
-export function renderInstructorDashboard(container, router) {
+let savedSelectedClassId = null;
+
+export function renderInstructorDashboard(container, router, options = {}) {
   const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
-  const requestedClassId = urlParams.get('class_id') || null;
+  const requestedClassId = urlParams.get('class_id') || savedSelectedClassId || null;
   const requestedInstructorId = urlParams.get('instructor_id') || null;
+  const currentHashPath = window.location.hash.split('?')[0].replace('#', '');
+  const activeTab = (options && options.activeTab) || (currentHashPath === 'instructor-questions' ? 'questions' : 'overview');
 
-  container.innerHTML = `
-    <div class="eduqe-hero-banner" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem;">
-      <div>
-        <div class="eduqe-kicker">&#x1F468;&#x200D;&#x1F3EB; INSTRUCTOR-LED TRAINING &bull; COHORT ANALYTICS</div>
-        <h1 style="font-size:1.8rem; font-weight:900; font-family:var(--font-heading); margin-bottom:0.25rem;">Instructor Portal</h1>
-        <p class="form-hint" style="margin-bottom:0; font-size:0.9rem;">
-          Monitor cohort exam readiness, track student progress, and identify topics requiring in-class review.
-        </p>
-      </div>
-      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-        <span class="badge" style="background:rgba(34,197,94,0.12); color:var(--brand-lime); border:1px solid var(--brand-lime); font-size:0.75rem; font-weight:700; display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.65rem;">
-          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-lime);"></span>
-          Live Auto-Refresh (15s)
-        </span>
-        <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-instructor-dash">
-          &#x21BB; Refresh Live Stats
-        </button>
-        <button type="button" class="btn btn-primary btn-sm" id="btn-export-instructor-report">
-          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-          Export Class CSV
-        </button>
-      </div>
-    </div>
+  let isConfigCollapsed = sessionStorage.getItem('eduqe_inst_cfg_collapsed') !== 'false';
 
-    <!-- Active Class Selector Bar -->
-    <div class="card" style="padding:1rem 1.25rem; margin-bottom:1.5rem; background:var(--surface);">
-      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
-        <div style="display:flex; align-items:center; gap:0.75rem; flex:1; min-width:280px;">
-          <label class="form-label" for="instructor-class-select" style="margin-bottom:0; white-space:nowrap; font-weight:700;">
-            Select Cohort / Class:
-          </label>
-          <select id="instructor-class-select" class="form-control" style="font-weight:600; font-family:var(--font-heading);">
-            <option value="">Loading allocated classes...</option>
-          </select>
+  if (activeTab === 'questions') {
+    // TAB 2: Class Questions & Topics Weak-Spot Analysis
+    container.innerHTML = `
+      <div class="eduqe-hero-banner" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem;">
+        <div>
+          <div class="eduqe-kicker">&#x1F4A1; INSTRUCTOR-LED TRAINING &bull; TOPIC &amp; QUESTION ANALYSIS</div>
+          <h1 style="font-size:1.8rem; font-weight:900; font-family:var(--font-heading); margin-bottom:0.25rem;">Class Questions &amp; Weak-Spot Analysis</h1>
+          <p class="form-hint" style="margin-bottom:0; font-size:0.9rem;">
+            Deep-dive analysis of student accuracy across all questions, identifying weak spots for in-class review, with answer keys and pedagogical explanations.
+          </p>
         </div>
-        <div id="class-metadata-pills" style="display:flex; gap:0.5rem; align-items:center;"></div>
-      </div>
-    </div>
-
-    <!-- Overview Stats Grid -->
-    <div class="stats-grid" id="inst-metrics-grid" style="margin-bottom:1.5rem;">
-      <div class="stat-card">
-        <span class="stat-label">Enrolled Learners</span>
-        <span class="stat-value" id="stat-class-enrolled">-</span>
-        <span class="stat-subtext" id="subtext-enrolled">Active cohort students</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Assessment Participation</span>
-        <span class="stat-value" id="stat-class-participation">-</span>
-        <span class="stat-subtext" id="subtext-participation">Learners attempted</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Class Average Score</span>
-        <span class="stat-value" id="stat-class-avg">-</span>
-        <span class="stat-subtext" id="subtext-range">High / Low range</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Cohort Pass Rate</span>
-        <span class="stat-value" id="stat-class-pass-rate" style="color:var(--brand-lime);">-</span>
-        <span class="stat-subtext" id="subtext-pass-count">Met certification mark</span>
-      </div>
-    </div>
-
-    <!-- Progress Breakdown Bar -->
-    <div class="card" style="padding:1.25rem; margin-bottom:1.5rem;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-        <span style="font-weight:700; font-family:var(--font-heading); font-size:0.9rem;">Cohort Certification Readiness Distribution</span>
-        <span id="label-completion-status" style="font-size:0.8rem; color:var(--text-muted);">Calculating...</span>
-      </div>
-      <div style="height:12px; border-radius:var(--radius-full); background:var(--surface-subtle); display:flex; overflow:hidden; border:1px solid var(--border);">
-        <div id="bar-passed" style="height:100%; background:var(--brand-lime); width:0%; transition:width 0.4s ease;" title="Passed"></div>
-        <div id="bar-failed" style="height:100%; background:var(--danger); width:0%; transition:width 0.4s ease;" title="Failed"></div>
-        <div id="bar-unattempted" style="height:100%; background:var(--border-strong); width:100%; transition:width 0.4s ease;" title="Not Started"></div>
-      </div>
-      <div style="display:flex; gap:1.5rem; margin-top:0.75rem; font-size:0.8rem; color:var(--text-muted); flex-wrap:wrap;">
-        <div style="display:flex; align-items:center; gap:0.4rem;">
-          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--brand-lime);"></span>
-          <span>Passed Certification Mark: <strong id="legend-passed" style="color:var(--text-main);">0</strong></span>
-        </div>
-        <div style="display:flex; align-items:center; gap:0.4rem;">
-          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--danger);"></span>
-          <span>Needs Retake (Below Pass Mark): <strong id="legend-failed" style="color:var(--text-main);">0</strong></span>
-        </div>
-        <div style="display:flex; align-items:center; gap:0.4rem;">
-          <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--border-strong);"></span>
-          <span>Not Yet Attempted: <strong id="legend-not-started" style="color:var(--text-main);">0</strong></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Main Content Tabs / Grid -->
-    <div style="display:grid; grid-template-columns:1fr; gap:1.5rem;">
-
-      <!-- Assessment Pass Rate & Section Question Breakdown Controls -->
-      <div class="card" id="assessment-config-card" style="padding:1.25rem;">
-        <div id="assessment-config-container">
-          <div style="text-align:center; padding:1rem; color:var(--text-muted);">
-            Loading assessment settings...
-          </div>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <span class="badge" style="background:rgba(34,197,94,0.12); color:var(--brand-lime); border:1px solid var(--brand-lime); font-size:0.75rem; font-weight:700; display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.65rem;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-lime);"></span>
+            Live Auto-Refresh (15s)
+          </span>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-instructor-dash">
+            &#x21BB; Refresh Live Stats
+          </button>
         </div>
       </div>
 
-      <!-- Sub-Assessment Section Divisions & Help Tracker -->
-      <div class="card" style="padding:1.25rem;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
-          <div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
-              <span style="font-size:1.25rem;">&#x1F4CA;</span>
-              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Sub-Assessment Section Divisions &amp; Support Tracker</h2>
-            </div>
-            <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
-              Tracks student progression from one section to the next and highlights which specific sections each learner needs help in.
-            </p>
-          </div>
-          <span class="badge badge-warning" id="badge-sections-help-count" style="display:none;">0 Sections Need Support</span>
-        </div>
-
-        <div id="sections-analysis-container">
-          <div style="text-align:center; padding:1.5rem; color:var(--text-muted);">
-            Loading sub-assessment section divisions...
-          </div>
-        </div>
-      </div>
-      
-      <!-- Student Performance Roster -->
-      <div class="card" style="padding:0; overflow:hidden;">
-        <div style="padding:1.25rem 1.25rem 0.75rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; border-bottom:1px solid var(--border);">
-          <div>
-            <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0.25rem;">Student Assessment &amp; Section Performance</h2>
-            <p class="form-hint" style="margin-bottom:0;">Live tracking of attempts, section-by-section scores, and areas where students need help.</p>
-          </div>
-          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-            <input 
-              type="text" 
-              id="student-search-filter" 
-              class="form-control" 
-              placeholder="Search student..." 
-              style="max-width:190px; padding:0.4rem 0.65rem; font-size:0.85rem;"
-            />
-            <select id="student-section-help-filter" class="form-control" style="max-width:195px; padding:0.4rem 0.65rem; font-size:0.85rem;">
-              <option value="">All Sections (Filter Help)</option>
-            </select>
-            <select id="student-status-filter" class="form-control" style="max-width:145px; padding:0.4rem 0.65rem; font-size:0.85rem;">
-              <option value="">All Statuses</option>
-              <option value="Passed">Passed</option>
-              <option value="Failed">Failed</option>
-              <option value="Not Started">Not Started</option>
+      <!-- Active Class Selector Bar -->
+      <div class="card" style="padding:1rem 1.25rem; margin-bottom:1.5rem; background:var(--surface);">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+          <div style="display:flex; align-items:center; gap:0.75rem; flex:1; min-width:280px;">
+            <label class="form-label" for="instructor-class-select" style="margin-bottom:0; white-space:nowrap; font-weight:700;">
+              Select Cohort / Class:
+            </label>
+            <select id="instructor-class-select" class="form-control" style="font-weight:600; font-family:var(--font-heading);">
+              <option value="">Loading allocated classes...</option>
             </select>
           </div>
+          <div id="class-metadata-pills" style="display:flex; gap:0.5rem; align-items:center;"></div>
         </div>
+      </div>
 
-        <div class="table-container" style="border:none; border-radius:0;">
-          <table class="table">
-            <thead>
-              <tr>
-                <th style="width:22%;">Student</th>
-                <th>Student ID</th>
-                <th>Attempts</th>
-                <th>Best Score</th>
-                <th style="width:30%;">Sub-Assessment Sections &amp; Help Needed</th>
-                <th>Status</th>
-                <th style="text-align:right;">Last Submission</th>
-              </tr>
-            </thead>
-            <tbody id="inst-students-tbody">
-              <tr><td colspan="7" style="text-align:center; padding:2rem;">Loading student roster...</td></tr>
-            </tbody>
-          </table>
+      <!-- Question Overview Stats Grid -->
+      <div class="stats-grid" style="margin-bottom:1.5rem;">
+        <div class="stat-card">
+          <span class="stat-label">Total Questions</span>
+          <span class="stat-value" id="stat-q-total">-</span>
+          <span class="stat-subtext" id="subtext-q-total">Configured for assessment</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Weak Spots (&lt; 60% Accuracy)</span>
+          <span class="stat-value" id="stat-q-weak" style="color:var(--danger);">-</span>
+          <span class="stat-subtext">Needs in-class review</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">High Mastery (&ge; 60% Accuracy)</span>
+          <span class="stat-value" id="stat-q-mastery" style="color:var(--brand-lime);">-</span>
+          <span class="stat-subtext">Well understood by cohort</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Questions Attempted</span>
+          <span class="stat-value" id="stat-q-attempted">-</span>
+          <span class="stat-subtext" id="subtext-q-attempted">Answered by students</span>
         </div>
       </div>
 
@@ -225,9 +121,183 @@ export function renderInstructorDashboard(container, router) {
           </div>
         </div>
       </div>
+    `;
+  } else {
+    // TAB 1: Cohort Progress & Stats
+    container.innerHTML = `
+      <div class="eduqe-hero-banner" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem;">
+        <div>
+          <div class="eduqe-kicker">&#x1F468;&#x200D;&#x1F3EB; INSTRUCTOR-LED TRAINING &bull; COHORT ANALYTICS</div>
+          <h1 style="font-size:1.8rem; font-weight:900; font-family:var(--font-heading); margin-bottom:0.25rem;">Instructor Portal</h1>
+          <p class="form-hint" style="margin-bottom:0; font-size:0.9rem;">
+            Monitor cohort exam readiness, track student progress, and configure assessment sections.
+          </p>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <span class="badge" style="background:rgba(34,197,94,0.12); color:var(--brand-lime); border:1px solid var(--brand-lime); font-size:0.75rem; font-weight:700; display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.65rem;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-lime);"></span>
+            Live Auto-Refresh (15s)
+          </span>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-instructor-dash">
+            &#x21BB; Refresh Live Stats
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-export-instructor-report">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Export Class CSV
+          </button>
+        </div>
+      </div>
 
-    </div>
-  `;
+      <!-- Active Class Selector Bar -->
+      <div class="card" style="padding:1rem 1.25rem; margin-bottom:1.5rem; background:var(--surface);">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+          <div style="display:flex; align-items:center; gap:0.75rem; flex:1; min-width:280px;">
+            <label class="form-label" for="instructor-class-select" style="margin-bottom:0; white-space:nowrap; font-weight:700;">
+              Select Cohort / Class:
+            </label>
+            <select id="instructor-class-select" class="form-control" style="font-weight:600; font-family:var(--font-heading);">
+              <option value="">Loading allocated classes...</option>
+            </select>
+          </div>
+          <div id="class-metadata-pills" style="display:flex; gap:0.5rem; align-items:center;"></div>
+        </div>
+      </div>
+
+      <!-- Overview Stats Grid -->
+      <div class="stats-grid" id="inst-metrics-grid" style="margin-bottom:1.5rem;">
+        <div class="stat-card">
+          <span class="stat-label">Enrolled Learners</span>
+          <span class="stat-value" id="stat-class-enrolled">-</span>
+          <span class="stat-subtext" id="subtext-enrolled">Active cohort students</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Assessment Participation</span>
+          <span class="stat-value" id="stat-class-participation">-</span>
+          <span class="stat-subtext" id="subtext-participation">Learners attempted</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Class Average Score</span>
+          <span class="stat-value" id="stat-class-avg">-</span>
+          <span class="stat-subtext" id="subtext-range">High / Low range</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Cohort Pass Rate</span>
+          <span class="stat-value" id="stat-class-pass-rate" style="color:var(--brand-lime);">-</span>
+          <span class="stat-subtext" id="subtext-pass-count">Met certification mark</span>
+        </div>
+      </div>
+
+      <!-- Progress Breakdown Bar -->
+      <div class="card" style="padding:1.25rem; margin-bottom:1.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+          <span style="font-weight:700; font-family:var(--font-heading); font-size:0.9rem;">Cohort Certification Readiness Distribution</span>
+          <span id="label-completion-status" style="font-size:0.8rem; color:var(--text-muted);">Calculating...</span>
+        </div>
+        <div style="height:12px; border-radius:var(--radius-full); background:var(--surface-subtle); display:flex; overflow:hidden; border:1px solid var(--border);">
+          <div id="bar-passed" style="height:100%; background:var(--brand-lime); width:0%; transition:width 0.4s ease;" title="Passed"></div>
+          <div id="bar-failed" style="height:100%; background:var(--danger); width:0%; transition:width 0.4s ease;" title="Failed"></div>
+          <div id="bar-unattempted" style="height:100%; background:var(--border-strong); width:100%; transition:width 0.4s ease;" title="Not Started"></div>
+        </div>
+        <div style="display:flex; gap:1.5rem; margin-top:0.75rem; font-size:0.8rem; color:var(--text-muted); flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:0.4rem;">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--brand-lime);"></span>
+            <span>Passed Certification Mark: <strong id="legend-passed" style="color:var(--text-main);">0</strong></span>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.4rem;">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--danger);"></span>
+            <span>Needs Retake (Below Pass Mark): <strong id="legend-failed" style="color:var(--text-main);">0</strong></span>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.4rem;">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--border-strong);"></span>
+            <span>Not Yet Attempted: <strong id="legend-not-started" style="color:var(--text-main);">0</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Content Grid -->
+      <div style="display:grid; grid-template-columns:1fr; gap:1.5rem;">
+
+        <!-- Assessment Pass Rate & Section Question Breakdown Controls (Minimizable) -->
+        <div class="card" id="assessment-config-card" style="padding:0; overflow:hidden; margin-bottom:0;">
+          <div id="assessment-config-container">
+            <div style="text-align:center; padding:1.25rem; color:var(--text-muted);">
+              Loading assessment settings...
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-Assessment Section Divisions & Help Tracker -->
+        <div class="card" style="padding:1.25rem;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
+            <div>
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <span style="font-size:1.25rem;">&#x1F4CA;</span>
+                <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Sub-Assessment Section Divisions &amp; Support Tracker</h2>
+              </div>
+              <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
+                Tracks student progression from one section to the next and highlights which specific sections each learner needs help in.
+              </p>
+            </div>
+            <span class="badge badge-warning" id="badge-sections-help-count" style="display:none;">0 Sections Need Support</span>
+          </div>
+
+          <div id="sections-analysis-container">
+            <div style="text-align:center; padding:1.5rem; color:var(--text-muted);">
+              Loading sub-assessment section divisions...
+            </div>
+          </div>
+        </div>
+        
+        <!-- Student Performance Roster -->
+        <div class="card" style="padding:0; overflow:hidden;">
+          <div style="padding:1.25rem 1.25rem 0.75rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; border-bottom:1px solid var(--border);">
+            <div>
+              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0.25rem;">Student Assessment &amp; Section Performance</h2>
+              <p class="form-hint" style="margin-bottom:0;">Live tracking of attempts, section-by-section scores, and areas where students need help.</p>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+              <input 
+                type="text" 
+                id="student-search-filter" 
+                class="form-control" 
+                placeholder="Search student..." 
+                style="max-width:190px; padding:0.4rem 0.65rem; font-size:0.85rem;"
+              />
+              <select id="student-section-help-filter" class="form-control" style="max-width:195px; padding:0.4rem 0.65rem; font-size:0.85rem;">
+                <option value="">All Sections (Filter Help)</option>
+              </select>
+              <select id="student-status-filter" class="form-control" style="max-width:145px; padding:0.4rem 0.65rem; font-size:0.85rem;">
+                <option value="">All Statuses</option>
+                <option value="Passed">Passed</option>
+                <option value="Failed">Failed</option>
+                <option value="Not Started">Not Started</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-container" style="border:none; border-radius:0;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width:22%;">Student</th>
+                  <th>Student ID</th>
+                  <th>Attempts</th>
+                  <th>Best Score</th>
+                  <th style="width:30%;">Sub-Assessment Sections &amp; Help Needed</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Last Submission</th>
+                </tr>
+              </thead>
+              <tbody id="inst-students-tbody">
+                <tr><td colspan="7" style="text-align:center; padding:2rem;">Loading student roster...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    `;
+  }
 
   // UI References
   const classSelect = container.querySelector('#instructor-class-select');
@@ -243,7 +313,6 @@ export function renderInstructorDashboard(container, router) {
 
   let currentData = null;
   let activeClassId = requestedClassId;
-  let isConfigCollapsed = false;
 
   async function loadDashboardData(isSilent = false) {
     try {
@@ -272,75 +341,99 @@ export function renderInstructorDashboard(container, router) {
         ? `<option value="all" ${res.selected_class.id === 'all' ? 'selected' : ''}>&#x1F4DA; All Cohorts / Classes (${totalLearnersAcrossClasses} Total Learners)</option>`
         : '';
 
-      classSelect.innerHTML = allOptionHtml + res.assigned_classes.map(c => `
-        <option value="${c.id}" ${c.id === res.selected_class.id ? 'selected' : ''}>
-          ${escapeHtml(c.name)} &bull; ${escapeHtml(c.course_name || 'Course')} (${c.student_count || 0} learner${c.student_count === 1 ? '' : 's'}${c.active_code ? ` &bull; Code: ${escapeHtml(c.active_code)}` : ''})
-        </option>
-      `).join('');
-
-      activeClassId = res.selected_class.id;
-
-      // Class Metadata Pills
-      metadataPills.innerHTML = res.selected_class.id === 'all'
-        ? `
-          <span class="badge badge-primary">&#x1F4DA; All Cohorts Overview</span>
-          <span class="badge badge-neutral">${res.assigned_classes.length} Classes</span>
-          <span class="badge badge-success">${totalLearnersAcrossClasses} Total Learners</span>
-        `
-        : `
-          ${res.selected_class.active_code ? `
-            <span class="badge badge-neutral" title="Active Class Access Code">&#x1F511; Code: <strong style="font-family:var(--font-mono);">${escapeHtml(res.selected_class.active_code)}</strong>
-              ${res.selected_class.code_max_uses ? `<span style="font-weight:600; margin-left:0.35rem; color:${res.selected_class.code_used_count >= res.selected_class.code_max_uses ? 'var(--danger)' : 'inherit'};">(${res.selected_class.code_used_count || 0}/${res.selected_class.code_max_uses} used)</span>` : ''}
-            </span>
-          ` : ''}
-          <span class="badge badge-primary">${escapeHtml(res.selected_class.course_code || 'COHORT')}</span>
-          <span class="badge badge-neutral">${res.selected_class.assessment_count || 0} Exam(s)</span>
-          <span class="badge ${res.selected_class.status === 'active' ? 'badge-success' : 'badge-neutral'}">
-            ${escapeHtml((res.selected_class.status || 'ACTIVE').toUpperCase())}
-          </span>
-        `;
-
-      // Render Summary Metrics
-      const sum = res.summary;
-      container.querySelector('#stat-class-enrolled').textContent = sum.total_enrolled;
-      container.querySelector('#stat-class-participation').textContent = `${sum.completion_rate}% (${sum.students_attempted}/${sum.total_enrolled})`;
-      container.querySelector('#stat-class-avg').textContent = `${sum.avg_score}%`;
-      container.querySelector('#subtext-range').textContent = `High: ${sum.highest_score}% • Low: ${sum.lowest_score}%`;
-      container.querySelector('#stat-class-pass-rate').textContent = `${sum.pass_rate}%`;
-      container.querySelector('#subtext-pass-count').textContent = `${sum.students_passed} of ${sum.students_attempted} passed`;
-
-      // Progress bar distribution
-      const total = sum.total_enrolled || 1;
-      const passedPct = Math.round((sum.students_passed / total) * 100);
-      const failedCount = Math.max(0, sum.students_attempted - sum.students_passed);
-      const failedPct = Math.round((failedCount / total) * 100);
-      const unattemptedCount = Math.max(0, sum.total_enrolled - sum.students_attempted);
-      const unattemptedPct = Math.max(0, 100 - passedPct - failedPct);
-
-      container.querySelector('#bar-passed').style.width = `${passedPct}%`;
-      container.querySelector('#bar-failed').style.width = `${failedPct}%`;
-      container.querySelector('#bar-unattempted').style.width = `${unattemptedPct}%`;
-
-      container.querySelector('#label-completion-status').textContent = `${sum.students_attempted} of ${sum.total_enrolled} students have taken assessments`;
-      container.querySelector('#legend-passed').textContent = `${sum.students_passed} (${passedPct}%)`;
-      container.querySelector('#legend-failed').textContent = `${failedCount} (${failedPct}%)`;
-      container.querySelector('#legend-not-started').textContent = `${unattemptedCount} (${unattemptedPct}%)`;
-
-      // Populate section filter options
-      const sectionsList = res.sections_analysis || [];
-      if (sectionHelpFilter) {
-        const prevSecVal = sectionHelpFilter.value;
-        sectionHelpFilter.innerHTML = `<option value="">All Sections (Filter Help)</option>` +
-          sectionsList.map(sec => `<option value="${escapeHtml(sec.name)}" ${sec.name === prevSecVal ? 'selected' : ''}>Needs Help: ${escapeHtml(sec.name)}</option>`).join('');
+      if (classSelect) {
+        classSelect.innerHTML = allOptionHtml + res.assigned_classes.map(c => `
+          <option value="${c.id}" ${c.id === res.selected_class.id ? 'selected' : ''}>
+            ${escapeHtml(c.name)} &bull; ${escapeHtml(c.course_name || 'Course')} (${c.student_count || 0} learner${c.student_count === 1 ? '' : 's'}${c.active_code ? ` &bull; Code: ${escapeHtml(c.active_code)}` : ''})
+          </option>
+        `).join('');
       }
 
-      renderAssessmentConfig(isSilent);
-      renderSectionAnalytics();
-      renderStudentRoster();
-      renderQuestionAnalytics();
+      activeClassId = res.selected_class.id;
+      savedSelectedClassId = activeClassId;
+
+      // Class Metadata Pills
+      if (metadataPills) {
+        metadataPills.innerHTML = res.selected_class.id === 'all'
+          ? `
+            <span class="badge badge-primary">&#x1F4DA; All Cohorts Overview</span>
+            <span class="badge badge-neutral">${res.assigned_classes.length} Classes</span>
+            <span class="badge badge-success">${totalLearnersAcrossClasses} Total Learners</span>
+          `
+          : `
+            ${res.selected_class.active_code ? `
+              <span class="badge badge-neutral" title="Active Class Access Code">&#x1F511; Code: <strong style="font-family:var(--font-mono);">${escapeHtml(res.selected_class.active_code)}</strong>
+                ${res.selected_class.code_max_uses ? `<span style="font-weight:600; margin-left:0.35rem; color:${res.selected_class.code_used_count >= res.selected_class.code_max_uses ? 'var(--danger)' : 'inherit'};">(${res.selected_class.code_used_count || 0}/${res.selected_class.code_max_uses} used)</span>` : ''}
+              </span>
+            ` : ''}
+            <span class="badge badge-primary">${escapeHtml(res.selected_class.course_code || 'COHORT')}</span>
+            <span class="badge badge-neutral">${res.selected_class.assessment_count || 0} Exam(s)</span>
+            <span class="badge ${res.selected_class.status === 'active' ? 'badge-success' : 'badge-neutral'}">
+              ${escapeHtml((res.selected_class.status || 'ACTIVE').toUpperCase())}
+            </span>
+          `;
+      }
+
+      if (activeTab === 'overview') {
+        // Render Summary Metrics
+        const sum = res.summary;
+        const setEl = (sel, val) => { const el = container.querySelector(sel); if (el) el.textContent = val; };
+        setEl('#stat-class-enrolled', sum.total_enrolled);
+        setEl('#stat-class-participation', `${sum.completion_rate}% (${sum.students_attempted}/${sum.total_enrolled})`);
+        setEl('#stat-class-avg', `${sum.avg_score}%`);
+        setEl('#subtext-range', `High: ${sum.highest_score}% • Low: ${sum.lowest_score}%`);
+        setEl('#stat-class-pass-rate', `${sum.pass_rate}%`);
+        setEl('#subtext-pass-count', `${sum.students_passed} of ${sum.students_attempted} passed`);
+
+        // Progress bar distribution
+        const total = sum.total_enrolled || 1;
+        const passedPct = Math.round((sum.students_passed / total) * 100);
+        const failedCount = Math.max(0, sum.students_attempted - sum.students_passed);
+        const failedPct = Math.round((failedCount / total) * 100);
+        const unattemptedCount = Math.max(0, sum.total_enrolled - sum.students_attempted);
+        const unattemptedPct = Math.max(0, 100 - passedPct - failedPct);
+
+        const barP = container.querySelector('#bar-passed'); if (barP) barP.style.width = `${passedPct}%`;
+        const barF = container.querySelector('#bar-failed'); if (barF) barF.style.width = `${failedPct}%`;
+        const barU = container.querySelector('#bar-unattempted'); if (barU) barU.style.width = `${unattemptedPct}%`;
+
+        setEl('#label-completion-status', `${sum.students_attempted} of ${sum.total_enrolled} students have taken assessments`);
+        setEl('#legend-passed', `${sum.students_passed} (${passedPct}%)`);
+        setEl('#legend-failed', `${failedCount} (${failedPct}%)`);
+        setEl('#legend-not-started', `${unattemptedCount} (${unattemptedPct}%)`);
+
+        // Populate section filter options
+        const sectionsList = res.sections_analysis || [];
+        if (sectionHelpFilter) {
+          const prevSecVal = sectionHelpFilter.value;
+          sectionHelpFilter.innerHTML = `<option value="">All Sections (Filter Help)</option>` +
+            sectionsList.map(sec => `<option value="${escapeHtml(sec.name)}" ${sec.name === prevSecVal ? 'selected' : ''}>Needs Help: ${escapeHtml(sec.name)}</option>`).join('');
+        }
+
+        renderAssessmentConfig(isSilent);
+        renderSectionAnalytics();
+        renderStudentRoster();
+      } else if (activeTab === 'questions') {
+        const questions = res.questions_analysis || [];
+        const weakCount = questions.filter(q => q.needs_review).length;
+        const masteryCount = questions.filter(q => q.is_attempted && !q.needs_review).length;
+        const attemptedCount = questions.filter(q => q.is_attempted).length;
+
+        const setEl = (sel, val) => { const el = container.querySelector(sel); if (el) el.textContent = val; };
+        setEl('#stat-q-total', questions.length);
+        setEl('#stat-q-weak', weakCount);
+        setEl('#stat-q-mastery', masteryCount);
+        setEl('#stat-q-attempted', `${attemptedCount} / ${questions.length}`);
+
+        renderQuestionAnalytics();
+      }
 
     } catch (err) {
-      studentsTbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger); text-align:center; padding:2rem;">Failed to load instructor dashboard: ${escapeHtml(err.message)}</td></tr>`;
+      if (studentsTbody) {
+        studentsTbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger); text-align:center; padding:2rem;">Failed to load instructor dashboard: ${escapeHtml(err.message)}</td></tr>`;
+      } else if (questionsContainer) {
+        questionsContainer.innerHTML = `<div style="color:var(--danger); text-align:center; padding:2rem;">Failed to load questions analysis: ${escapeHtml(err.message)}</div>`;
+      }
     }
   }
 
@@ -354,17 +447,17 @@ export function renderInstructorDashboard(container, router) {
 
     if (!currentData || !currentData.selected_class || currentData.selected_class.id === 'all') {
       configContainer.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem;">
-          <div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
-              <span style="font-size:1.25rem;">⚙️</span>
-              <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">Assessment Pass Rate &amp; Section Question Breakdown</h2>
+        <div style="padding:1.15rem 1.25rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem;">
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span style="font-size:1.25rem;">⚙️</span>
+            <div>
+              <h2 style="font-size:1.05rem; font-weight:700; margin-bottom:0;">Assessment Pass Rate &amp; Section Question Breakdown</h2>
+              <p class="form-hint" style="margin-top:0.15rem; margin-bottom:0; font-size:0.8rem;">
+                Customize the passing threshold and divide assessment sections into smaller sequential parts.
+              </p>
             </div>
-            <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
-              Customize the passing threshold and divide assessment sections into smaller sequential parts.
-            </p>
           </div>
-          <div style="font-size:0.825rem; color:var(--text-muted); font-style:italic; background:var(--surface-subtle); padding:0.35rem 0.65rem; border-radius:var(--radius-sm); border:1px solid var(--border);">
+          <div style="font-size:0.8rem; color:var(--text-muted); font-style:italic; background:var(--surface-subtle); padding:0.35rem 0.65rem; border-radius:var(--radius-sm); border:1px solid var(--border);">
             👉 Please select a specific cohort above to customize pass rates and question breakdowns.
           </div>
         </div>
@@ -379,161 +472,192 @@ export function renderInstructorDashboard(container, router) {
     const baseSections = currentData.base_sections || [];
 
     configContainer.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.1rem; flex-wrap:wrap; gap:0.75rem;">
-        <div>
-          <div style="display:flex; align-items:center; gap:0.5rem;">
-            <span style="font-size:1.25rem;">⚙️</span>
-            <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:0;">
-              Assessment Pass Rate &amp; Section Question Breakdown: <span style="color:var(--brand-lime);">${escapeHtml(cls.name)}</span>
-            </h2>
+      <!-- Minimizable Header Bar -->
+      <div id="cfg-card-header" style="padding:0.95rem 1.25rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:var(--surface); user-select:none; border-bottom:${isConfigCollapsed ? 'none' : '1px solid var(--border)'}; transition:background 0.15s ease;">
+        <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+          <span style="font-size:1.35rem;">⚙️</span>
+          <div>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <h2 style="font-size:1.05rem; font-weight:800; margin-bottom:0; font-family:var(--font-heading); color:var(--text-main);">
+                Assessment Pass Rate &amp; Section Question Breakdown: <span style="color:var(--brand-lime);">${escapeHtml(cls.name)}</span>
+              </h2>
+              <span class="badge ${isConfigCollapsed ? 'badge-primary' : 'badge-neutral'}" style="font-size:0.72rem; font-weight:700;">
+                🎯 Pass Mark: ${passMark}%
+              </span>
+              <span class="badge badge-neutral" style="font-size:0.72rem;">
+                ✂️ ${baseSections.length} Section${baseSections.length === 1 ? '' : 's'} Configured
+              </span>
+            </div>
+            <p class="form-hint" style="margin-top:0.2rem; margin-bottom:0; font-size:0.8rem;">
+              ${isConfigCollapsed ? 'Settings minimized to save space. Click here or use the button to expand and customize pass percentage, question limits, or timers.' : 'Set the required pass percentage for this cohort and customize how many questions delegates answer or break sections into smaller sequential parts.'}
+            </p>
           </div>
-          <p class="form-hint" style="margin-top:0.25rem; margin-bottom:0;">
-            Set the required pass percentage for this cohort and customize how many questions delegates answer or break sections into smaller sequential parts.
+        </div>
+        <div style="display:flex; align-items:center; gap:0.5rem; flex-shrink:0;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-cfg-collapse" style="font-size:0.75rem; font-weight:700; padding:0.35rem 0.75rem;">
+            ${isConfigCollapsed ? '➕ Expand Settings' : '▲ Minimize Settings'}
+          </button>
+        </div>
+      </div>
+
+      <!-- Collapsible Body Content -->
+      <div id="cfg-body-wrapper" style="display:${isConfigCollapsed ? 'none' : 'block'}; padding:1.25rem; background:var(--surface);">
+        <!-- Pass Rate Control -->
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.25rem; padding:0.85rem 1.15rem; background:var(--surface-subtle); border-radius:var(--radius-md); border:1px solid var(--border); flex-wrap:wrap;">
+          <div>
+            <label for="cfg-pass-rate" style="font-weight:700; font-size:0.92rem; display:block; margin-bottom:0.15rem; color:var(--text-main);">
+              🎯 Required Pass Rate Percentage (%)
+            </label>
+            <span style="font-size:0.78rem; color:var(--text-muted);">
+              Minimum score percentage required to pass this assessment for this cohort.
+            </span>
+          </div>
+          <div style="display:flex; align-items:center; gap:0.4rem;">
+            <input 
+              type="number" 
+              id="cfg-pass-rate" 
+              min="1" 
+              max="100" 
+              class="form-control" 
+              value="${passMark}" 
+              style="width:95px; font-weight:800; font-size:1.15rem; text-align:center; padding:0.35rem 0.5rem;" 
+            />
+            <span style="font-weight:800; font-size:1.15rem; color:var(--text-main);">%</span>
+          </div>
+        </div>
+
+        <!-- Section Question Limiting & Part Breakdown -->
+        <div style="margin-bottom:1.25rem;">
+          <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.25rem; color:var(--text-main);">
+            ✂️ Section Question Limits &amp; Sub-Section Chunking
+          </div>
+          <p class="form-hint" style="margin-bottom:0.85rem;">
+            Limit questions (e.g. only do the first 20 of 50 questions) or split a section into smaller parts (e.g. 50 questions &rarr; Part 1 with 25 questions and Part 2 with 25 questions) so delegates do them in stages and you unlock each part sequentially.
           </p>
-        </div>
-      </div>
 
-      <!-- Pass Rate Control -->
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.25rem; padding:0.85rem 1.15rem; background:var(--surface-subtle); border-radius:var(--radius-md); border:1px solid var(--border); flex-wrap:wrap;">
-        <div>
-          <label for="cfg-pass-rate" style="font-weight:700; font-size:0.92rem; display:block; margin-bottom:0.15rem; color:var(--text-main);">
-            🎯 Required Pass Rate Percentage (%)
-          </label>
-          <span style="font-size:0.78rem; color:var(--text-muted);">
-            Minimum score percentage required to pass this assessment for this cohort.
-          </span>
-        </div>
-        <div style="display:flex; align-items:center; gap:0.4rem;">
-          <input 
-            type="number" 
-            id="cfg-pass-rate" 
-            min="1" 
-            max="100" 
-            class="form-control" 
-            value="${passMark}" 
-            style="width:95px; font-weight:800; font-size:1.15rem; text-align:center; padding:0.35rem 0.5rem;" 
-          />
-          <span style="font-weight:800; font-size:1.15rem; color:var(--text-main);">%</span>
-        </div>
-      </div>
+          ${baseSections.length === 0 ? `
+            <div style="padding:1rem; text-align:center; color:var(--text-muted); font-size:0.85rem; background:var(--surface-subtle); border-radius:var(--radius-sm);">
+              No assessment sections detected for this class.
+            </div>
+          ` : `
+            <div style="display:flex; flex-direction:column; gap:0.75rem;">
+              ${baseSections.map((sec, idx) => {
+                const rule = cfgSections[sec.name] || cfgSections[sec.name.trim()] || {};
+                const limitVal = rule.limit !== null && rule.limit !== undefined ? rule.limit : '';
+                const chunkVal = rule.chunk_size !== null && rule.chunk_size !== undefined ? rule.chunk_size : '';
+                const timerVal = rule.time_limit_minutes !== null && rule.time_limit_minutes !== undefined ? rule.time_limit_minutes : '';
+                return `
+                  <div style="padding:0.9rem 1.15rem; background:var(--surface-subtle); border:1px solid var(--border); border-radius:var(--radius-md);">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.65rem;">
+                      <div>
+                        <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">Assessment Section ${idx + 1}</span>
+                        <div style="font-weight:800; font-size:0.95rem; color:var(--text-main); margin-top:0.1rem;">
+                          ${escapeHtml(sec.name)}
+                        </div>
+                      </div>
+                      <span class="badge badge-neutral" style="font-weight:700; font-size:0.75rem;">
+                        ${sec.question_count} Questions in Bank
+                      </span>
+                    </div>
 
-      <!-- Section Question Limiting & Part Breakdown -->
-      <div style="margin-bottom:1.25rem;">
-        <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.25rem; color:var(--text-main);">
-          ✂️ Section Question Limits &amp; Sub-Section Chunking
-        </div>
-        <p class="form-hint" style="margin-bottom:0.85rem;">
-          Limit questions (e.g. only do the first 20 of 50 questions) or split a section into smaller parts (e.g. 50 questions &rarr; Part 1 with 25 questions and Part 2 with 25 questions) so delegates do them in stages and you unlock each part sequentially.
-        </p>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:1rem; padding-top:0.65rem; border-top:1px dashed var(--border);">
+                      <div>
+                        <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                          Limit Questions (e.g. 20 of ${sec.question_count}):
+                        </label>
+                        <input 
+                          type="number" 
+                          class="form-control input-sec-limit" 
+                          data-sec="${escapeHtml(sec.name)}" 
+                          min="1" 
+                          max="${sec.question_count}" 
+                          value="${limitVal}" 
+                          placeholder="All ${sec.question_count} questions" 
+                          style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                        />
+                        <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                          Delegates answer first N questions only. Leave blank for all.
+                        </span>
+                      </div>
 
-        ${baseSections.length === 0 ? `
-          <div style="padding:1rem; text-align:center; color:var(--text-muted); font-size:0.85rem; background:var(--surface-subtle); border-radius:var(--radius-sm);">
-            No assessment sections detected for this class.
-          </div>
-        ` : `
-          <div style="display:flex; flex-direction:column; gap:0.75rem;">
-            ${baseSections.map((sec, idx) => {
-              const rule = cfgSections[sec.name] || cfgSections[sec.name.trim()] || {};
-              const limitVal = rule.limit !== null && rule.limit !== undefined ? rule.limit : '';
-              const chunkVal = rule.chunk_size !== null && rule.chunk_size !== undefined ? rule.chunk_size : '';
-              const timerVal = rule.time_limit_minutes !== null && rule.time_limit_minutes !== undefined ? rule.time_limit_minutes : '';
-              return `
-                <div style="padding:0.9rem 1.15rem; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);">
-                  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.65rem;">
-                    <div>
-                      <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted);">Assessment Section ${idx + 1}</span>
-                      <div style="font-weight:800; font-size:0.95rem; color:var(--text-main); margin-top:0.1rem;">
-                        ${escapeHtml(sec.name)}
+                      <div>
+                        <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                          Break Down Into Parts (e.g. 25 per part):
+                        </label>
+                        <input 
+                          type="number" 
+                          class="form-control input-sec-chunk" 
+                          data-sec="${escapeHtml(sec.name)}" 
+                          min="1" 
+                          max="${sec.question_count}" 
+                          value="${chunkVal}" 
+                          placeholder="Keep as 1 section" 
+                          style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                        />
+                        <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                          Splits section into sequential unlockable parts.
+                        </span>
+                      </div>
+
+                      <div>
+                        <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
+                          ⏳ Section Timer (Minutes):
+                        </label>
+                        <input 
+                          type="number" 
+                          class="form-control input-sec-timer" 
+                          data-sec="${escapeHtml(sec.name)}" 
+                          min="1" 
+                          max="300" 
+                          value="${timerVal}" 
+                          placeholder="Exam default" 
+                          style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
+                        />
+                        <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
+                          Separate timer for this section. Blank for default.
+                        </span>
                       </div>
                     </div>
-                    <span class="badge badge-neutral" style="font-weight:700; font-size:0.75rem;">
-                      ${sec.question_count} Questions in Bank
-                    </span>
                   </div>
+                `;
+              }).join('')}
+            </div>
+          `}
+        </div>
 
-                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:1rem; padding-top:0.65rem; border-top:1px dashed var(--border);">
-                    <div>
-                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
-                        Limit Questions (e.g. 20 of ${sec.question_count}):
-                      </label>
-                      <input 
-                        type="number" 
-                        class="form-control input-sec-limit" 
-                        data-sec="${escapeHtml(sec.name)}" 
-                        min="1" 
-                        max="${sec.question_count}" 
-                        value="${limitVal}" 
-                        placeholder="All ${sec.question_count} questions" 
-                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
-                      />
-                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
-                        Delegates answer first N questions only. Leave blank for all.
-                      </span>
-                    </div>
-
-                    <div>
-                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
-                        Break Down Into Parts (e.g. 25 per part):
-                      </label>
-                      <input 
-                        type="number" 
-                        class="form-control input-sec-chunk" 
-                        data-sec="${escapeHtml(sec.name)}" 
-                        min="1" 
-                        max="${sec.question_count}" 
-                        value="${chunkVal}" 
-                        placeholder="Keep as 1 section" 
-                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
-                      />
-                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
-                        Splits section into sequential unlockable parts.
-                      </span>
-                    </div>
-
-                    <div>
-                      <label style="font-size:0.8rem; font-weight:700; display:block; margin-bottom:0.25rem; color:var(--text-main);">
-                        ⏳ Section Timer (Minutes):
-                      </label>
-                      <input 
-                        type="number" 
-                        class="form-control input-sec-timer" 
-                        data-sec="${escapeHtml(sec.name)}" 
-                        min="1" 
-                        max="300" 
-                        value="${timerVal}" 
-                        placeholder="Exam default" 
-                        style="font-size:0.85rem; padding:0.35rem 0.6rem;" 
-                      />
-                      <span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:0.2rem;">
-                        Separate timer for this section. Blank for default.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              `;
-            }).join('')}
+        <!-- Action & Save Button -->
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.85rem; flex-wrap:wrap; padding-top:0.75rem; border-top:1px solid var(--border);">
+          <div style="display:flex; align-items:center; gap:0.85rem; flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary" id="btn-save-class-assessment-config" style="font-weight:700; font-size:0.875rem; padding:0.45rem 1.15rem;">
+              💾 Save Assessment &amp; Section Configuration
+            </button>
+            <span id="cfg-status-message" style="display:none; font-size:0.85rem; font-weight:700;"></span>
           </div>
-        `}
-      </div>
-
-      <!-- Action & Save Button -->
-      <div style="display:flex; align-items:center; gap:0.85rem; flex-wrap:wrap; padding-top:0.5rem; border-top:1px solid var(--border);">
-        <button type="button" class="btn btn-primary" id="btn-save-class-assessment-config" style="font-weight:700; font-size:0.875rem; padding:0.45rem 1.15rem;">
-          💾 Save Assessment &amp; Section Configuration
-        </button>
-        <span id="cfg-status-message" style="display:none; font-size:0.85rem; font-weight:700;"></span>
-      </div>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-footer-cfg-collapse" style="font-size:0.75rem; font-weight:700;">
+            ▲ Minimize Settings
+          </button>
+        </div>
       </div>
     `;
 
+    function toggleCollapse(e) {
+      if (e) e.stopPropagation();
+      isConfigCollapsed = !isConfigCollapsed;
+      sessionStorage.setItem('eduqe_inst_cfg_collapsed', isConfigCollapsed ? 'true' : 'false');
+      renderAssessmentConfig();
+    }
+
+    const headerBar = configContainer.querySelector('#cfg-card-header');
+    if (headerBar) {
+      headerBar.onclick = toggleCollapse;
+    }
     const collapseBtn = configContainer.querySelector('#btn-toggle-cfg-collapse');
-    const bodyWrapper = configContainer.querySelector('#cfg-body-wrapper');
-    if (collapseBtn && bodyWrapper) {
-      collapseBtn.onclick = () => {
-        isConfigCollapsed = !isConfigCollapsed;
-        bodyWrapper.style.display = isConfigCollapsed ? 'none' : 'block';
-        collapseBtn.textContent = isConfigCollapsed ? '▼ Expand Settings' : '▲ Collapse Settings';
-      };
+    if (collapseBtn) {
+      collapseBtn.onclick = toggleCollapse;
+    }
+    const footerCollapseBtn = configContainer.querySelector('#btn-footer-cfg-collapse');
+    if (footerCollapseBtn) {
+      footerCollapseBtn.onclick = toggleCollapse;
     }
 
     const saveBtn = configContainer.querySelector('#btn-save-class-assessment-config');
@@ -598,10 +722,10 @@ export function renderInstructorDashboard(container, router) {
       return;
     }
 
-    const sectionsWithStrugglingStudents = sections.filter(sec => sec.students_needing_help && sec.students_needing_help.length > 0);
+    const helpNeededSections = sections.filter(s => s.needs_help);
     if (badgeHelpCount) {
-      if (sectionsWithStrugglingStudents.length > 0) {
-        badgeHelpCount.textContent = `${sectionsWithStrugglingStudents.length} Section(s) Have Learners Needing Help`;
+      if (helpNeededSections.length > 0) {
+        badgeHelpCount.textContent = `${helpNeededSections.length} Section${helpNeededSections.length === 1 ? '' : 's'} Need Review`;
         badgeHelpCount.style.display = 'inline-block';
       } else {
         badgeHelpCount.style.display = 'none';
@@ -609,231 +733,59 @@ export function renderInstructorDashboard(container, router) {
     }
 
     sectionsContainer.innerHTML = `
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:1rem;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
         ${sections.map((sec, idx) => {
-          const secName = sec.name || sec.section_name || `Section ${idx + 1}`;
-          const helpList = sec.students_needing_help || [];
-          const allStudentResults = sec.all_student_results || [];
-          const completedCount = sec.completed_students_count ?? sec.students_completed ?? 0;
-          const inProgressCount = sec.in_progress_students_count ?? sec.students_in_progress ?? 0;
-          const totalEnrolled = sec.total_enrolled ?? (currentData?.summary?.total_enrolled || 0);
-          const totalAttempts = sec.total_attempts_count ?? 0;
-          const totalAnswers = sec.total_answers ?? 0;
-          const correctAnswers = sec.correct_answers ?? 0;
-          const hasAttempts = (completedCount + inProgressCount) > 0 || totalAnswers > 0;
-          const avgPct = sec.avg_percentage !== null && sec.avg_percentage !== undefined ? sec.avg_percentage : 0;
-          const latestAvg = sec.latest_avg_percentage !== null && sec.latest_avg_percentage !== undefined ? sec.latest_avg_percentage : avgPct;
-          const bestAvg = sec.best_avg_percentage !== null && sec.best_avg_percentage !== undefined ? sec.best_avg_percentage : avgPct;
-          const hasHelpNeeded = helpList.length > 0 || Boolean(sec.needs_help || sec.needs_review);
-
+          const passPct = sec.avg_score !== null ? sec.avg_score : 0;
+          const isWeak = sec.needs_help;
+          const statusColor = isWeak ? 'var(--danger)' : 'var(--brand-lime)';
           return `
-            <div style="border:1px solid ${hasHelpNeeded ? 'rgba(220,38,38,0.4)' : 'var(--border)'}; background:${hasHelpNeeded ? 'rgba(220,38,38,0.03)' : 'var(--surface-subtle)'}; border-top:4px solid ${hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)'}; border-radius:var(--radius-md); padding:1rem 1.15rem; display:flex; flex-direction:column; justify-content:space-between; gap:0.85rem;">
-              <div>
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.5rem; margin-bottom:0.5rem;">
-                  <div>
-                    <span style="font-size:0.7rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted);">Sub-Assessment Division ${idx + 1}</span>
-                    <h3 style="font-size:1.05rem; font-weight:800; margin:0.1rem 0 0; color:var(--text-main);">${escapeHtml(secName)}</h3>
-                  </div>
-                  <div style="text-align:right;">
-                    <div style="font-size:1.35rem; font-weight:900; font-family:var(--font-heading); color:${!hasAttempts ? 'var(--text-muted)' : (hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)')};">
-                      ${hasAttempts ? `${avgPct}%` : '-'}
-                    </div>
-                    <div style="font-size:0.7rem; color:var(--text-muted);">
-                      ${hasAttempts ? `${correctAnswers}/${totalAnswers} Correct` : 'Cohort Avg'}
-                    </div>
-                  </div>
-                </div>
-
-                <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-bottom:0.65rem;">
-                  <span class="badge badge-neutral" style="font-size:0.72rem;">${sec.question_count || 0} Question(s)</span>
-                  <span class="badge badge-success" style="font-size:0.72rem;">&#x2713; ${completedCount}/${totalEnrolled} Completed</span>
-                  ${inProgressCount > 0 ? `<span class="badge badge-warning" style="font-size:0.72rem;">&#x23F3; ${inProgressCount} In Progress</span>` : ''}
-                  ${totalAttempts > 0 ? `<span class="badge badge-neutral" style="font-size:0.72rem;">${totalAttempts} Attempt(s) Tracked</span>` : ''}
-                </div>
-
-                ${hasAttempts && bestAvg !== latestAvg ? `
-                  <div style="display:flex; justify-content:space-between; font-size:0.74rem; color:var(--text-muted); margin-bottom:0.4rem;">
-                    <span>Best Attempt Avg: <strong style="color:var(--text-main);">${bestAvg}%</strong></span>
-                    <span>Latest Attempt Avg: <strong style="color:var(--text-main);">${latestAvg}%</strong></span>
-                  </div>
-                ` : ''}
-
-                <div style="height:6px; background:var(--surface); border-radius:var(--radius-full); overflow:hidden; border:1px solid var(--border);">
-                  <div style="height:100%; width:${hasAttempts ? Math.min(100, Math.max(0, avgPct)) : 0}%; background:${hasHelpNeeded ? 'var(--danger)' : 'var(--brand-lime)'}; transition:width 0.3s ease;"></div>
-                </div>
-              </div>
-
-              <!-- Per-Student Tracked Results for this Section -->
-              ${allStudentResults.length > 0 ? `
-                <div style="border-top:1px solid var(--border); padding-top:0.65rem;">
-                  <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:0.4rem;">
-                    Tracked Student Results (${allStudentResults.length})
-                  </div>
-                  <div style="display:flex; flex-direction:column; gap:0.4rem;">
-                    ${allStudentResults.map(st => {
-                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
-                      const attHist = Array.isArray(st.attempt_history) ? st.attempt_history : [];
-                      if (!st.is_completed && !st.is_in_progress) {
-                        return `
-                          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.3rem 0.5rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
-                            <span style="font-weight:600; color:var(--text-main);">${escapeHtml(sName)}</span>
-                            <span class="badge badge-neutral" style="font-size:0.68rem;">Not Started</span>
-                          </div>
-                        `;
-                      }
-                      return `
-                        <div style="display:flex; flex-direction:column; gap:0.25rem; padding:0.4rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid ${st.needs_help ? 'rgba(220,38,38,0.35)' : 'var(--border)'};">
-                          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
-                            <span style="font-weight:700; font-size:0.8rem; color:var(--text-main);">${escapeHtml(sName)}</span>
-                            <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
-                              ${st.is_in_progress ? `&#x23F3; ${st.answered_count}/${st.total_questions} (${st.percentage ?? 0}%)` : `Latest: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
-                              ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : ' &#x2713;'}
-                            </span>
-                          </div>
-                          ${attHist.length > 1 ? `
-                            <div style="display:flex; flex-wrap:wrap; gap:0.3rem; align-items:center; font-size:0.7rem; color:var(--text-muted);">
-                              <span>All Attempts (${st.total_correct_all_attempts}/${st.total_answers_all_attempts} &bull; Avg ${st.avg_percentage}% &bull; Best ${st.best_percentage}%):</span>
-                              ${attHist.map(ah => `
-                                <span style="padding:0.1rem 0.35rem; border-radius:4px; background:var(--surface-subtle); border:1px solid var(--border); font-weight:600;">
-                                  #${ah.attempt_number}: ${ah.correct_count}/${ah.total_questions} (${ah.percentage}%)
-                                </span>
-                              `).join('')}
-                            </div>
-                          ` : ''}
-                        </div>
-                      `;
-                    }).join('')}
-                  </div>
-                </div>
-              ` : ''}
-
-              <div style="border-top:1px dashed var(--border); padding-top:0.65rem;">
-                ${helpList.length > 0 ? `
-                  <div style="font-size:0.75rem; font-weight:700; color:var(--danger); margin-bottom:0.35rem;">
-                    &#x26A0;&#xFE0F; Students Needing Help in ${escapeHtml(secName)} (${helpList.length}):
-                  </div>
-                  <div style="display:flex; flex-wrap:wrap; gap:0.35rem;">
-                    ${helpList.map(st => {
-                      const sName = st.student_name || `${st.first_name || ''} ${st.surname || ''}`.trim() || 'Student';
-                      const pctLabel = st.best_percentage !== undefined && st.best_percentage !== null && st.best_percentage !== st.percentage
-                        ? `Latest: ${st.percentage}% | Best: ${st.best_percentage}%`
-                        : `${st.percentage ?? 0}%`;
-                      return `
-                        <span class="badge badge-danger" style="font-size:0.72rem;" title="Student Number: ${escapeHtml(st.student_number || 'N/A')}">
-                          ${escapeHtml(sName)} (${pctLabel})
-                        </span>
-                      `;
-                    }).join('')}
-                  </div>
-                ` : `
-                  <div style="font-size:0.78rem; color:var(--text-muted); display:flex; align-items:center; gap:0.35rem;">
-                    <span style="color:var(--brand-lime); font-weight:800;">&#x2714;</span>
-                    ${hasAttempts ? 'All participating students meet the pass threshold for this section.' : 'Awaiting student section submissions.'}
-                  </div>
-                `}
-              </div>
-
-              <!-- Cohort Section Access Control & Progressive Unlocking -->
-              <div style="border-top:1px solid var(--border); padding-top:0.65rem; margin-top:0.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-                <div style="display:flex; align-items:center; gap:0.4rem;">
-                  <span class="badge ${sec.is_unlocked ? 'badge-success' : 'badge-warning'}" style="font-size:0.72rem; font-weight:700;">
-                    ${sec.is_unlocked ? '&#x1F513; UNLOCKED FOR COHORT' : '&#x1F512; LOCKED FOR COHORT'}
-                  </span>
-                </div>
+            <div style="border:1px solid var(--border); border-left:4px solid ${statusColor}; border-radius:var(--radius-md); padding:1rem; background:var(--surface);">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem;">
                 <div>
-                  ${activeClassId !== 'all' ? `
-                    ${!sec.is_unlocked ? `
-                      <button type="button" class="btn btn-primary btn-sm btn-cohort-unlock" data-sec="${escapeHtml(secName)}" style="font-weight:700; font-size:0.75rem; padding:0.25rem 0.65rem;">
-                        &#x1F513; Unlock ${escapeHtml(secName)} for Cohort
-                      </button>
-                    ` : (idx > 0 ? `
-                      <button type="button" class="btn btn-secondary btn-sm btn-cohort-relock" data-sec="${escapeHtml(secName)}" style="font-size:0.72rem; padding:0.2rem 0.5rem; color:var(--text-muted);" title="Re-lock this section if needed">
-                        &#x1F512; Re-Lock
-                      </button>
-                    ` : `
-                      <span style="font-size:0.72rem; color:var(--text-muted); font-weight:600;">(Default Unlocked)</span>
-                    `)}
-                  ` : `
-                    <span style="font-size:0.72rem; color:var(--text-muted);">(Select cohort above to manage locks)</span>
-                  `}
+                  <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; color:var(--text-muted);">Section ${idx + 1}</span>
+                  <div style="font-weight:700; font-size:1rem; color:var(--text-main);">${escapeHtml(sec.name)}</div>
                 </div>
+                ${isWeak ? '<span class="badge badge-danger" style="font-size:0.7rem;">Needs Help</span>' : '<span class="badge badge-success" style="font-size:0.7rem;">On Track</span>'}
               </div>
 
+              <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.5rem;">
+                <span style="font-size:1.6rem; font-weight:900; font-family:var(--font-heading); color:${statusColor};">${passPct}%</span>
+                <span style="font-size:0.8rem; color:var(--text-muted);">avg score</span>
+              </div>
+
+              <div style="height:6px; background:var(--surface-subtle); border-radius:var(--radius-full); overflow:hidden; margin-bottom:0.75rem;">
+                <div style="height:100%; width:${passPct}%; background:${statusColor};"></div>
+              </div>
+
+              <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted); padding-top:0.5rem; border-top:1px dashed var(--border);">
+                <span>Completed: ${sec.students_completed} of ${sec.students_attempted || currentData.summary.total_enrolled}</span>
+                <span>Struggling: ${sec.struggling_students ? sec.struggling_students.length : 0} student(s)</span>
+              </div>
             </div>
           `;
         }).join('')}
       </div>
     `;
-
-    // Attach unlock / relock event listeners
-    sectionsContainer.querySelectorAll('.btn-cohort-unlock').forEach(btn => {
-      btn.onclick = async () => {
-        const secToUnlock = btn.dataset.sec;
-        if (!secToUnlock) return;
-        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
-        const nextList = [...new Set([...currentUnlocked, secToUnlock])];
-        btn.disabled = true;
-        btn.textContent = 'Unlocking...';
-        try {
-          const res = await api.setUnlockedSections(activeClassId, nextList);
-          if (currentData && currentData.selected_class) {
-            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
-          }
-          await loadDashboardData();
-        } catch (err) {
-          alert('Failed to unlock section: ' + (err.message || 'Error occurred'));
-          btn.disabled = false;
-          btn.textContent = `🔓 Unlock ${secToUnlock} for Cohort`;
-        }
-      };
-    });
-
-    sectionsContainer.querySelectorAll('.btn-cohort-relock').forEach(btn => {
-      btn.onclick = async () => {
-        const secToLock = btn.dataset.sec;
-        if (!secToLock) return;
-        if (!confirm(`Are you sure you want to lock ${secToLock} for this cohort?`)) return;
-        const currentUnlocked = (currentData?.selected_class?.unlocked_sections) || ['Section 1'];
-        const nextList = currentUnlocked.filter(s => s !== secToLock);
-        btn.disabled = true;
-        btn.textContent = 'Locking...';
-        try {
-          const res = await api.setUnlockedSections(activeClassId, nextList);
-          if (currentData && currentData.selected_class) {
-            currentData.selected_class.unlocked_sections = res?.unlocked_sections || nextList;
-          }
-          await loadDashboardData();
-        } catch (err) {
-          alert('Failed to lock section: ' + (err.message || 'Error occurred'));
-          btn.disabled = false;
-        }
-      };
-    });
   }
 
   function renderStudentRoster() {
-    if (!currentData || !currentData.students) return;
+    if (!studentsTbody || !currentData) return;
+    const students = currentData.students || [];
+    const searchVal = (searchInput?.value || '').trim().toLowerCase();
+    const sectionVal = sectionHelpFilter?.value || '';
+    const statusVal = statusFilter?.value || '';
 
-    const q = (searchInput.value || '').trim().toLowerCase();
-    const statusVal = statusFilter.value;
-    const secHelpVal = sectionHelpFilter ? sectionHelpFilter.value : '';
+    const filtered = students.filter(s => {
+      const nameMatch = !searchVal || 
+        `${s.first_name} ${s.surname}`.toLowerCase().includes(searchVal) ||
+        (s.student_number || '').toLowerCase().includes(searchVal) ||
+        (s.email || '').toLowerCase().includes(searchVal);
 
-    const filtered = currentData.students.filter(s => {
-      const fName = (s.first_name || '').toLowerCase();
-      const sName = (s.surname || '').toLowerCase();
-      const email = (s.email || '').toLowerCase();
-      const sNum = (s.student_number || '').toLowerCase();
-      const uName = (s.username || '').toLowerCase();
-      const matchQ = !q || (
-        fName.includes(q) ||
-        sName.includes(q) ||
-        email.includes(q) ||
-        sNum.includes(q) ||
-        uName.includes(q)
-      );
-      const matchStatus = !statusVal || s.status_label === statusVal;
-      const matchSecHelp = !secHelpVal || (Array.isArray(s.sections_needing_help) && s.sections_needing_help.includes(secHelpVal));
-      return matchQ && matchStatus && matchSecHelp;
+      const sectionMatch = !sectionVal || (Array.isArray(s.sections_needing_help) && s.sections_needing_help.includes(sectionVal));
+
+      const statusMatch = !statusVal || s.status_label === statusVal;
+
+      return nameMatch && sectionMatch && statusMatch;
     });
 
     if (filtered.length === 0) {
@@ -1176,7 +1128,8 @@ export function renderInstructorDashboard(container, router) {
   }
 
   function renderQuestionAnalytics() {
-    if (!currentData || !currentData.questions_analysis) return;
+    const qAnalysisContainer = container.querySelector('#questions-analysis-container');
+    if (!qAnalysisContainer || !currentData || !currentData.questions_analysis) return;
     const questions = currentData.questions_analysis;
     const weakCountBadge = container.querySelector('#badge-weak-count');
     const qSearchFilter = container.querySelector('#q-search-filter');
@@ -1186,7 +1139,7 @@ export function renderInstructorDashboard(container, router) {
     const toggleAllBtn = container.querySelector('#btn-toggle-all-questions');
 
     if (questions.length === 0) {
-      questionsContainer.innerHTML = `
+      qAnalysisContainer.innerHTML = `
         <div style="text-align:center; padding:2rem; color:var(--text-muted);">
           No questions found for the assigned assessment or class.
         </div>
@@ -1215,7 +1168,7 @@ export function renderInstructorDashboard(container, router) {
 
     function updateQuestionList() {
       const currentlyOpenIds = new Set(
-        Array.from(questionsContainer.querySelectorAll('.q-details-drawer'))
+        Array.from(qAnalysisContainer.querySelectorAll('.q-details-drawer'))
           .filter(d => d.style.display === 'block')
           .map(d => d.id.replace('q-details-', ''))
       );
@@ -1248,7 +1201,7 @@ export function renderInstructorDashboard(container, router) {
       }
 
       if (filtered.length === 0) {
-        questionsContainer.innerHTML = `
+        qAnalysisContainer.innerHTML = `
           <div style="text-align:center; padding:2rem; color:var(--text-muted);">
             No questions match the current filter.
           </div>
@@ -1256,7 +1209,7 @@ export function renderInstructorDashboard(container, router) {
         return;
       }
 
-      questionsContainer.innerHTML = `
+      qAnalysisContainer.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:0.85rem;">
           ${filtered.map((q, idx) => {
             const qNum = q.question_number || (idx + 1);
@@ -1390,13 +1343,13 @@ export function renderInstructorDashboard(container, router) {
       `;
 
       // Attach click handlers to headers and toggle buttons
-      questionsContainer.querySelectorAll('.q-card-header, .btn-toggle-q-details').forEach(el => {
+      qAnalysisContainer.querySelectorAll('.q-card-header, .btn-toggle-q-details').forEach(el => {
         el.onclick = (e) => {
           e.stopPropagation();
           const qid = el.dataset.qid;
           if (!qid) return;
-          const drawer = questionsContainer.querySelector(`#q-details-${CSS.escape(qid)}`);
-          const btn = questionsContainer.querySelector(`.btn-toggle-q-details[data-qid="${CSS.escape(qid)}"]`);
+          const drawer = qAnalysisContainer.querySelector(`#q-details-${CSS.escape(qid)}`);
+          const btn = qAnalysisContainer.querySelector(`.btn-toggle-q-details[data-qid="${CSS.escape(qid)}"]`);
           if (!drawer) return;
           const isCurrentlyHidden = drawer.style.display === 'none' || !drawer.style.display;
           drawer.style.display = isCurrentlyHidden ? 'block' : 'none';
@@ -1413,12 +1366,12 @@ export function renderInstructorDashboard(container, router) {
 
     if (toggleAllBtn) {
       toggleAllBtn.onclick = () => {
-        const allDrawers = questionsContainer.querySelectorAll('.q-details-drawer');
+        const allDrawers = qAnalysisContainer.querySelectorAll('.q-details-drawer');
         const anyHidden = Array.from(allDrawers).some(d => d.style.display === 'none' || !d.style.display);
         allDrawers.forEach(d => {
           d.style.display = anyHidden ? 'block' : 'none';
         });
-        questionsContainer.querySelectorAll('.btn-toggle-q-details').forEach(btn => {
+        qAnalysisContainer.querySelectorAll('.btn-toggle-q-details').forEach(btn => {
           btn.textContent = anyHidden ? '▲ Close Details' : '👁 View Answers ▼';
         });
         toggleAllBtn.textContent = anyHidden ? 'Collapse All Details' : 'Expand All Details';
@@ -1429,40 +1382,45 @@ export function renderInstructorDashboard(container, router) {
   }
 
   // Event Handlers
-  classSelect.onchange = () => {
-    activeClassId = classSelect.value;
-    loadDashboardData();
-  };
+  if (classSelect) {
+    classSelect.onchange = () => {
+      activeClassId = classSelect.value;
+      savedSelectedClassId = activeClassId;
+      loadDashboardData();
+    };
+  }
 
-  searchInput.oninput = renderStudentRoster;
+  if (searchInput) searchInput.oninput = renderStudentRoster;
   if (sectionHelpFilter) sectionHelpFilter.onchange = renderStudentRoster;
-  statusFilter.onchange = renderStudentRoster;
-  refreshBtn.onclick = loadDashboardData;
+  if (statusFilter) statusFilter.onchange = renderStudentRoster;
+  if (refreshBtn) refreshBtn.onclick = () => loadDashboardData();
 
   // Export CSV
-  exportBtn.onclick = async () => {
-    if (!activeClassId) return;
-    try {
-      const params = new URLSearchParams({ class_id: activeClassId });
-      if (requestedInstructorId) params.set('instructor_id', requestedInstructorId);
-      const res = await fetch(`/api/instructor/export-class?${params.toString()}`, {
-        headers: authState.token ? { Authorization: `Bearer ${authState.token}` } : {}
-      });
-      if (!res.ok) throw new Error('Failed to export class report');
-      const csvText = await res.text();
-      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `class_progress_${activeClassId}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Failed to export CSV: ' + err.message);
-    }
-  };
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
+      if (!activeClassId) return;
+      try {
+        const params = new URLSearchParams({ class_id: activeClassId });
+        if (requestedInstructorId) params.set('instructor_id', requestedInstructorId);
+        const res = await fetch(`/api/instructor/export-class?${params.toString()}`, {
+          headers: authState.token ? { Authorization: `Bearer ${authState.token}` } : {}
+        });
+        if (!res.ok) throw new Error('Failed to export class report');
+        const csvText = await res.text();
+        const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `class_progress_${activeClassId}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Failed to export CSV: ' + err.message);
+      }
+    };
+  }
 
   // 15-second background auto-refresh loop
   const autoRefreshInterval = setInterval(() => {
