@@ -604,7 +604,6 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     let studentAttempts = [];
     if (isAllCohorts) {
       const classPlaceholders = targetClassIds.map(() => '?').join(',');
-      const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
       studentAttempts = db.all(
         `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
          FROM student_attempts sa
@@ -612,16 +611,18 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
          WHERE sa.user_id = ?
            AND (
              sa.class_id IN (${classPlaceholders})
-             OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders})))
+             OR (
+               sa.class_id IS NULL
+               AND (
+                 sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id IN (${classPlaceholders}))
+                 ${classAssessmentPlaceholders ? `OR sa.assessment_id IN (${classAssessmentPlaceholders})` : ''}
+               )
+             )
            )
-           ${asmCondition}
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        classAssessmentPlaceholders
-          ? [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds, ...classAssessmentIds]
-          : [defaultPassMark, s.id, ...targetClassIds, ...targetClassIds]
+        [defaultPassMark, s.id, ...targetClassIds]
       );
     } else {
-      const asmCondition = classAssessmentPlaceholders ? `AND sa.assessment_id IN (${classAssessmentPlaceholders})` : '';
       studentAttempts = db.all(
         `SELECT sa.*, a.name as assessment_name, COALESCE(a.pass_mark_percentage, ?) as pass_mark_percentage
          FROM student_attempts sa
@@ -630,34 +631,70 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
            AND (
              sa.class_id = ? 
              OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-             OR (sa.class_id IS NULL AND sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?))
+             OR (
+               sa.class_id IS NULL
+               AND (
+                 sa.assessment_id IN (SELECT ac.assessment_id FROM assessment_classes ac WHERE ac.class_id = ?)
+                 ${classAssessmentPlaceholders ? `OR sa.assessment_id IN (${classAssessmentPlaceholders})` : ''}
+               )
+             )
            )
-           ${asmCondition}
          ORDER BY sa.attempt_number ASC, sa.started_at ASC`,
-        classAssessmentPlaceholders
-          ? [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, ...classAssessmentIds]
-          : [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
+        [defaultPassMark, s.id, targetClass.id, targetClass.name, targetClass.course_id, targetClass.id]
       );
+    }
+
+    for (const att of studentAttempts) {
+      if (!att.class_id && targetClass && targetClass.id) {
+        att.class_id = targetClass.id;
+        try { db.run('UPDATE student_attempts SET class_id = ? WHERE id = ?', [targetClass.id, att.id]); } catch (_) {}
+      }
+      try {
+        const metaRow = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`attempt_meta_${att.id}`]);
+        if (metaRow && metaRow.value) {
+          const meta = typeof metaRow.value === 'string' ? JSON.parse(metaRow.value) : metaRow.value;
+          if (meta) {
+            if ((!att.completed_sections || att.completed_sections === '[]') && Array.isArray(meta.completed_sections) && meta.completed_sections.length > 0) {
+              att.completed_sections = JSON.stringify(meta.completed_sections);
+              db.run('UPDATE student_attempts SET completed_sections = ? WHERE id = ?', [att.completed_sections, att.id]);
+            }
+            if ((att.percentage === null || att.percentage === undefined) && meta.percentage !== null && meta.percentage !== undefined) {
+              att.percentage = meta.percentage;
+              db.run('UPDATE student_attempts SET percentage = ? WHERE id = ?', [att.percentage, att.id]);
+            }
+            if ((att.score === null || att.score === undefined) && meta.score !== null && meta.score !== undefined) {
+              att.score = meta.score;
+              db.run('UPDATE student_attempts SET score = ? WHERE id = ?', [att.score, att.id]);
+            }
+          }
+        }
+      } catch (_) {}
     }
 
     const gradedAttempts = studentAttempts.filter(a => ['submitted', 'marked', 'awaiting_review'].includes(a.status));
     const inProgressAttempts = studentAttempts.filter(a => a.status === 'in_progress');
 
+    // Also look for in-progress attempt with submitted sections / active score
+    const inProgressWithScore = inProgressAttempts.filter(a => a.percentage !== null && a.percentage !== undefined);
+    const inProgressScore = inProgressWithScore.length > 0
+      ? Math.round(Number(inProgressWithScore[inProgressWithScore.length - 1].percentage) * 10) / 10
+      : null;
+
     s.attempt_count = studentAttempts.length;
     s.completed_attempt_count = gradedAttempts.length;
     s.best_score = gradedAttempts.length > 0
       ? Math.round(Math.max(...gradedAttempts.map(a => Number(a.percentage) || 0)) * 10) / 10
-      : null;
+      : inProgressScore;
     s.latest_score = gradedAttempts.length > 0
       ? Math.round((Number(gradedAttempts[gradedAttempts.length - 1].percentage) || 0) * 10) / 10
-      : null;
+      : inProgressScore;
     s.avg_score = gradedAttempts.length > 0
       ? Math.round((gradedAttempts.reduce((sum, a) => sum + (Number(a.percentage) || 0), 0) / gradedAttempts.length) * 10) / 10
-      : null;
+      : inProgressScore;
     s.has_passed = gradedAttempts.some(a => a.is_passed === 1) ? 1 : 0;
     s.latest_attempt_at = gradedAttempts.length > 0
       ? gradedAttempts[gradedAttempts.length - 1].submitted_at
-      : (inProgressAttempts.length > 0 ? inProgressAttempts[inProgressAttempts.length - 1].started_at : null);
+      : (inProgressAttempts.length > 0 ? (inProgressAttempts[inProgressAttempts.length - 1].submitted_at || inProgressAttempts[inProgressAttempts.length - 1].started_at) : null);
 
     if (s.attempt_count === 0) {
       s.status_label = 'Not Started';
@@ -689,7 +726,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           `SELECT aa.*, q.question_type, q.answer_options, q.correct_answer, q.points, q.partial_credit, q.negative_marking, q.requires_manual_review,
                   (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = ? AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
            FROM attempt_answers aa
-           JOIN questions q ON q.id = aa.question_id
+           LEFT JOIN questions q ON q.id = aa.question_id
            WHERE aa.attempt_id = ?
            ORDER BY aa.order_index ASC, aa.id ASC`,
           [att.assessment_id, att.id]
@@ -711,6 +748,32 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           }
           if (!bySec.has(secName)) bySec.set(secName, []);
           bySec.get(secName).push(ans);
+        }
+
+        let completedSectionsList = [];
+        try {
+          const parsed = typeof att.completed_sections === 'string' ? JSON.parse(att.completed_sections) : att.completed_sections;
+          if (Array.isArray(parsed)) completedSectionsList = parsed;
+        } catch (e) {
+          completedSectionsList = [];
+        }
+        if (completedSectionsList.length === 0 && att && att.id) {
+          try {
+            const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`completed_sections_attempt_${att.id}`]);
+            if (setting && setting.value) {
+              const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
+              if (Array.isArray(parsed)) completedSectionsList = parsed;
+            }
+          } catch (e) {}
+        }
+        if (completedSectionsList.length === 0 && att && att.id) {
+          try {
+            const metaSetting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`attempt_meta_${att.id}`]);
+            if (metaSetting && metaSetting.value) {
+              const meta = typeof metaSetting.value === 'string' ? JSON.parse(metaSetting.value) : metaSetting.value;
+              if (meta && Array.isArray(meta.completed_sections)) completedSectionsList = meta.completed_sections;
+            }
+          } catch (e) {}
         }
 
         const attemptSectionsSummary = [];
@@ -753,22 +816,6 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             }
           }
 
-          let completedSectionsList = [];
-          try {
-            const parsed = typeof att.completed_sections === 'string' ? JSON.parse(att.completed_sections) : att.completed_sections;
-            if (Array.isArray(parsed)) completedSectionsList = parsed;
-          } catch (e) {
-            completedSectionsList = [];
-          }
-          if (completedSectionsList.length === 0 && att && att.id) {
-            try {
-              const setting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`completed_sections_attempt_${att.id}`]);
-              if (setting && setting.value) {
-                const parsed = typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value;
-                if (Array.isArray(parsed)) completedSectionsList = parsed;
-              }
-            } catch (e) {}
-          }
           const isSecSubmitted = completedSectionsList.includes(secName);
           const configuredCount = sectionQuestionCounts.get(secName) || 0;
           const totalQs = Math.max(secAnswers.length, configuredCount);
@@ -811,6 +858,44 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
             agg.correct_answers += correctCount;
             agg.total_awarded_points += awardedPts;
             agg.total_max_points += maxPts;
+          }
+        }
+
+        // Ensure any section submitted by student is recorded even if individual answers are not in bySec
+        for (const secName of orderedSectionNames) {
+          if (completedSectionsList.includes(secName) && !bySec.has(secName)) {
+            const configuredCount = sectionQuestionCounts.get(secName) || 0;
+            const fallbackPct = att.percentage !== null && att.percentage !== undefined ? Math.round(Number(att.percentage) * 10) / 10 : null;
+            const attSecRecord = {
+              attempt_id: att.id,
+              attempt_number: att.attempt_number,
+              attempt_status: att.status,
+              is_graded: isGraded,
+              is_completed: true,
+              is_submitted: true,
+              is_in_progress: false,
+              section_name: secName,
+              total_questions: configuredCount,
+              answered_count: configuredCount,
+              correct_count: fallbackPct !== null ? Math.round((fallbackPct / 100) * configuredCount) : null,
+              awarded_points: 0,
+              max_points: configuredCount,
+              percentage: fallbackPct,
+              pass_mark: passMark,
+              submitted_at: att.submitted_at || att.started_at
+            };
+            studentSectionAttemptsMap.get(secName).push(attSecRecord);
+            attemptSectionsSummary.push(attSecRecord);
+
+            const agg = ensureSectionInMap(secName);
+            if (agg.question_count === 0 && configuredCount > 0) {
+              agg.question_count = configuredCount;
+            }
+            agg.total_attempts_count++;
+            agg.total_answers += configuredCount;
+            if (fallbackPct !== null) {
+              agg.correct_answers += Math.round((fallbackPct / 100) * configuredCount);
+            }
           }
         }
 

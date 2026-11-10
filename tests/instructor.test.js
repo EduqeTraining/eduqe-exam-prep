@@ -798,4 +798,70 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
     const studentSecNames = studentRecord.section_breakdown.map(s => s.name);
     assert.deepEqual(studentSecNames, ['Section 1', 'Section 2'], 'Student section breakdown must strictly only have Section 1 and Section 2');
   });
+
+  await t.test('14. In-progress attempt with completed section persists score and status without resetting to Not Started on refresh or sync', async () => {
+    const db = getDatabase();
+    const testClassId = 'cls_persist_test_14';
+    const testCourseId = db.get('SELECT id FROM courses LIMIT 1').id;
+    const studentUser = db.get("SELECT id FROM users WHERE role = 'student' LIMIT 1");
+    const testAsm = db.get("SELECT id FROM assessments WHERE status = 'published' LIMIT 1");
+
+    db.run(
+      `INSERT OR REPLACE INTO classes (id, course_id, name, status)
+       VALUES (?, ?, 'Section Persistence Test Class', 'active')`,
+      [testClassId, testCourseId]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO assessment_classes (id, assessment_id, class_id)
+       VALUES ('ac_test_14', ?, ?)`,
+      [testAsm.id, testClassId]
+    );
+
+    db.run(
+      `INSERT OR REPLACE INTO class_enrollments (id, user_id, class_id, status, enrolled_at)
+       VALUES ('ce_test_14', ?, ?, 'active', datetime('now'))`,
+      [studentUser.id, testClassId]
+    );
+
+    const attemptId = 'att_sec_pers_test_14';
+    db.run(
+      `INSERT OR REPLACE INTO student_attempts (id, user_id, assessment_id, class_id, attempt_number, status, started_at, deadline_at, score, max_score, percentage, completed_sections)
+       VALUES (?, ?, ?, ?, 1, 'in_progress', datetime('now'), datetime('now', '+1 hour'), 8, 25, 32.0, ?)`,
+      [attemptId, studentUser.id, testAsm.id, testClassId, JSON.stringify(['Section 1'])]
+    );
+
+    db.run(
+      `INSERT INTO eduque_settings (id, key, value, updated_at)
+       VALUES ('set_compsec_14', ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [`completed_sections_attempt_${attemptId}`, JSON.stringify(['Section 1'])]
+    );
+
+    // Initial check
+    const progressRes1 = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    assert.equal(progressRes1.status, 200);
+
+    const studentRec1 = progressRes1.data.students.find(s => s.id === studentUser.id);
+    assert.ok(studentRec1, 'Student must be found in class roster');
+    assert.equal(studentRec1.attempt_count, 1, 'Attempt count must be 1');
+    assert.equal(studentRec1.status_label, 'In Progress', 'Status must be In Progress');
+    assert.equal(studentRec1.best_score, 32.0, 'Best score must reflect completed section percentage');
+    assert.equal(studentRec1.latest_score, 32.0, 'Latest score must reflect completed section percentage');
+
+    const sec1 = studentRec1.section_breakdown.find(s => s.name === 'Section 1');
+    assert.ok(sec1, 'Section 1 must be present in breakdown');
+    assert.equal(sec1.is_completed, true, 'Section 1 must be marked completed');
+    assert.equal(sec1.percentage, 32.0, 'Section 1 percentage must be 32%');
+
+    // Simulate second refresh / subsequent poll
+    const progressRes2 = await req(`/api/instructor/progress?class_id=${testClassId}`, { token: adminToken });
+    assert.equal(progressRes2.status, 200);
+
+    const studentRec2 = progressRes2.data.students.find(s => s.id === studentUser.id);
+    assert.equal(studentRec2.attempt_count, 1, 'Attempt count must remain 1 after refresh');
+    assert.equal(studentRec2.status_label, 'In Progress', 'Status must remain In Progress across refreshes');
+    assert.equal(studentRec2.best_score, 32.0, 'Best score must not disappear');
+    assert.equal(studentRec2.latest_score, 32.0, 'Latest score must not disappear');
+  });
 });

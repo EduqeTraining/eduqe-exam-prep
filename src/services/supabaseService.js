@@ -90,15 +90,56 @@ function upsertLocalRows(table, rows) {
         });
 
         if (hasId && row.id) {
-          const existing = db.get(`SELECT id FROM "${table}" WHERE id = ?`, [row.id]);
+          const existing = db.get(`SELECT * FROM "${table}" WHERE id = ?`, [row.id]);
           if (existing) {
             const updateCols = matchingCols.filter(c => c !== 'id');
             if (updateCols.length > 0) {
-              const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
-              const updateVals = updateCols.map(c => {
-                const val = row[c];
-                return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
-              });
+              const effectiveUpdateCols = [];
+              const updateVals = [];
+              for (const c of updateCols) {
+                let val = row[c];
+                // CRITICAL MERGE LOGIC FOR STUDENT_ATTEMPTS:
+                // Never clobber existing populated local values (class_id, completed_sections, score, percentage, is_paused)
+                // with null, empty string, or empty arrays from remote Supabase pulls if Supabase didn't have the column or data.
+                if (table === 'student_attempts') {
+                  const existingVal = existing[c];
+                  if (c === 'completed_sections') {
+                    const isRemoteEmpty = val === null || val === undefined || val === '' || val === '[]' || (Array.isArray(val) && val.length === 0);
+                    const isLocalPopulated = existingVal && existingVal !== '[]' && existingVal !== 'null' && (!Array.isArray(existingVal) || existingVal.length > 0);
+                    if (isRemoteEmpty && isLocalPopulated) {
+                      val = existingVal;
+                    }
+                  } else if (c === 'class_id') {
+                    if ((val === null || val === undefined || val === '') && existingVal) {
+                      val = existingVal;
+                    }
+                  } else if (c === 'percentage' || c === 'score') {
+                    if ((val === null || val === undefined) && existingVal !== null && existingVal !== undefined) {
+                      val = existingVal;
+                    }
+                  } else if (c === 'is_paused' || c === 'paused_remaining_seconds') {
+                    if ((val === null || val === undefined || val === 0) && existingVal) {
+                      val = existingVal;
+                    }
+                  }
+                } else if (table === 'attempt_answers') {
+                  const existingVal = existing[c];
+                  if (c === 'is_correct' || c === 'awarded_points' || c === 'marked_status') {
+                    if ((val === null || val === undefined) && existingVal !== null && existingVal !== undefined) {
+                      val = existingVal;
+                    }
+                  } else if (c === 'saved_answer') {
+                    if ((val === null || val === undefined || val === '') && existingVal) {
+                      val = existingVal;
+                    }
+                  }
+                }
+
+                effectiveUpdateCols.push(c);
+                updateVals.push((val !== null && typeof val === 'object') ? JSON.stringify(val) : val);
+              }
+
+              const setClause = effectiveUpdateCols.map(c => `"${c}" = ?`).join(', ');
               db.run(`UPDATE "${table}" SET ${setClause} WHERE id = ?`, [...updateVals, row.id]);
             }
             continue;

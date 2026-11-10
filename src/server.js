@@ -501,7 +501,8 @@ async function handleRequest(req, res) {
           'assessment_classes',
           'questions',
           'assessment_questions',
-          'student_attempts'
+          'student_attempts',
+          'eduque_settings'
         ]);
         const body = await parseBody(req);
         try {
@@ -1429,7 +1430,8 @@ async function handleRequest(req, res) {
           'questions',
           'assessment_questions',
           'student_attempts',
-          'attempt_answers'
+          'attempt_answers',
+          'eduque_settings'
         ]);
         try {
           const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;

@@ -959,6 +959,33 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
       [finalStatus, totalScore, maxScore, overallPercentage, isPassed ? 1 : 0, JSON.stringify(completedSections), attemptId]
     );
 
+    try {
+      const metaKey = `attempt_meta_${attemptId}`;
+      const metaId = `setting-meta-${attemptId}`;
+      const metaPayload = {
+        attempt_id: attemptId,
+        user_id: userId,
+        class_id: targetClassId,
+        assessment_id: attempt.assessment_id,
+        completed_sections: completedSections,
+        percentage: overallPercentage,
+        score: totalScore,
+        max_score: maxScore,
+        status: finalStatus,
+        is_passed: isPassed ? 1 : 0,
+        is_all_completed: true,
+        submitted_at: new Date().toISOString()
+      };
+      db.run(
+        `INSERT INTO eduque_settings (id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        [metaId, metaKey, JSON.stringify(metaPayload)]
+      );
+      const supabaseService = require('./supabaseService');
+      supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
+    } catch (_) {}
+
     logAction({
       userId,
       action: 'SUBMIT_ASSESSMENT_ATTEMPT',
@@ -1010,6 +1037,30 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
       );
       const supabaseService = require('./supabaseService');
       supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
+
+      const metaKey = `attempt_meta_${attemptId}`;
+      const metaId = `setting-meta-${attemptId}`;
+      const metaPayload = {
+        attempt_id: attemptId,
+        user_id: userId,
+        class_id: targetClassId,
+        assessment_id: attempt.assessment_id,
+        completed_sections: completedSections,
+        percentage: runningPct,
+        score: runningScore,
+        max_score: runningMaxScore,
+        status: 'in_progress',
+        is_paused: 1,
+        paused_remaining_seconds: remainingSec,
+        submitted_at: new Date().toISOString()
+      };
+      db.run(
+        `INSERT INTO eduque_settings (id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        [metaId, metaKey, JSON.stringify(metaPayload)]
+      );
+      supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
 
       const timerKey = `attempt_timer_${attemptId}`;
       const timerId = `setting-timer-${attemptId}`;
