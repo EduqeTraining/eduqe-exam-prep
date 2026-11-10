@@ -685,9 +685,11 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     s.best_score = gradedAttempts.length > 0
       ? Math.round(Math.max(...gradedAttempts.map(a => Number(a.percentage) || 0)) * 10) / 10
       : inProgressScore;
-    s.latest_score = gradedAttempts.length > 0
-      ? Math.round((Number(gradedAttempts[gradedAttempts.length - 1].percentage) || 0) * 10) / 10
-      : inProgressScore;
+    s.latest_score = inProgressScore !== null
+      ? inProgressScore
+      : (gradedAttempts.length > 0
+        ? Math.round((Number(gradedAttempts[gradedAttempts.length - 1].percentage) || 0) * 10) / 10
+        : null);
     s.avg_score = gradedAttempts.length > 0
       ? Math.round((gradedAttempts.reduce((sum, a) => sum + (Number(a.percentage) || 0), 0) / gradedAttempts.length) * 10) / 10
       : inProgressScore;
@@ -696,12 +698,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
       ? gradedAttempts[gradedAttempts.length - 1].submitted_at
       : (inProgressAttempts.length > 0 ? (inProgressAttempts[inProgressAttempts.length - 1].submitted_at || inProgressAttempts[inProgressAttempts.length - 1].started_at) : null);
 
+    const latestAttempt = studentAttempts.length > 0 ? studentAttempts[studentAttempts.length - 1] : null;
+
     if (s.attempt_count === 0) {
       s.status_label = 'Not Started';
+    } else if (latestAttempt && latestAttempt.status === 'in_progress') {
+      s.status_label = 'In Progress';
     } else if (s.has_passed === 1) {
       s.status_label = 'Passed';
-    } else if (gradedAttempts.length === 0 && inProgressAttempts.length > 0) {
-      s.status_label = 'In Progress';
     } else {
       s.status_label = 'Failed';
     }
@@ -819,7 +823,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           const isSecSubmitted = completedSectionsList.includes(secName);
           const configuredCount = sectionQuestionCounts.get(secName) || 0;
           const totalQs = Math.max(secAnswers.length, configuredCount);
-          const isSecCompleted = totalQs > 0 && (isGraded || isSecSubmitted || answeredCount >= totalQs);
+          const isSecCompleted = totalQs > 0 && (isGraded ? (isSecSubmitted || answeredCount > 0) : (isSecSubmitted || answeredCount >= totalQs));
           const isSecInProgress = !isSecCompleted && answeredCount > 0;
           const secPct = (isSecCompleted || isSecInProgress) && maxPts > 0
             ? Math.round((awardedPts / maxPts) * 1000) / 10
@@ -926,14 +930,43 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         const completedRecords = secAttemptRecords.filter(r => r.is_completed);
         const inProgressRecords = secAttemptRecords.filter(r => r.is_in_progress);
         const activeOrCompletedRecords = secAttemptRecords.filter(r => r.is_completed || r.is_in_progress);
-        const latestRecord = activeOrCompletedRecords.length > 0
-          ? activeOrCompletedRecords[activeOrCompletedRecords.length - 1]
-          : (secAttemptRecords[secAttemptRecords.length - 1] || null);
+
+        const latestAttemptRecord = secAttemptRecords.length > 0
+          ? secAttemptRecords[secAttemptRecords.length - 1]
+          : null;
+
+        let isCompleted = false;
+        let isInProgress = false;
+        let latestRecord = null;
+
+        if (latestAttempt && latestAttempt.status === 'in_progress') {
+          // Current live attempt takes precedence for live cohort tracking
+          latestRecord = latestAttemptRecord;
+          if (latestAttemptRecord) {
+            if (latestAttemptRecord.is_completed) {
+              isCompleted = true;
+            } else if (latestAttemptRecord.is_in_progress || (latestAttemptRecord.answered_count && latestAttemptRecord.answered_count > 0)) {
+              isInProgress = true;
+            }
+          }
+        } else {
+          // Attempt finished or historical
+          latestRecord = activeOrCompletedRecords.length > 0
+            ? activeOrCompletedRecords[activeOrCompletedRecords.length - 1]
+            : (latestAttemptRecord || null);
+          if (latestRecord) {
+            if (latestRecord.is_completed) {
+              isCompleted = true;
+            } else if (latestRecord.is_in_progress || (latestRecord.answered_count && latestRecord.answered_count > 0)) {
+              isInProgress = true;
+            }
+          }
+        }
 
         const totalQs = latestRecord ? latestRecord.total_questions : configuredQCount;
         const answeredCount = latestRecord ? latestRecord.answered_count : 0;
-        const latestCorrect = latestRecord && (latestRecord.is_completed || latestRecord.is_in_progress) ? latestRecord.correct_count : null;
-        const latestPct = latestRecord && latestRecord.percentage !== null ? latestRecord.percentage : null;
+        const latestCorrect = latestRecord && (isCompleted || isInProgress) ? latestRecord.correct_count : null;
+        const latestPct = latestRecord && (isCompleted || isInProgress) && latestRecord.percentage !== null ? latestRecord.percentage : null;
 
         const bestPct = completedRecords.length > 0
           ? Math.max(...completedRecords.map(r => r.percentage))
@@ -951,9 +984,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           ? Math.round((totalAwardedAllAttempts / totalMaxPtsAllAttempts) * 1000) / 10
           : null;
 
-        const isCompleted = completedRecords.length > 0;
-        const isInProgress = !isCompleted && inProgressRecords.length > 0;
-        const statusStr = isCompleted ? 'Completed' : (isInProgress ? 'In Progress' : (secAttemptRecords.length > 0 ? 'Pending' : 'Not Started'));
+        const statusStr = isCompleted ? 'Completed' : (isInProgress ? 'In Progress' : 'Not Started');
 
         const passMark = (latestRecord && latestRecord.pass_mark) || defaultPassMark;
         // A student needs help in this section if they have completed/started it and their latest score or overall accuracy is below the pass mark

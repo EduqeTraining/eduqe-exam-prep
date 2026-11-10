@@ -820,20 +820,34 @@ export function renderInstructorDashboard(container, router, options = {}) {
                         const attHist = Array.isArray(st.attempt_history) ? st.attempt_history : [];
                         if (!st.is_completed && !st.is_in_progress) {
                           return `
-                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.3rem 0.5rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
-                              <span style="font-weight:600; color:var(--text-main);">${escapeHtml(sName)}</span>
-                              <span class="badge badge-neutral" style="font-size:0.68rem;">Not Started</span>
+                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; padding:0.35rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid var(--border);">
+                              <div style="display:flex; align-items:center; gap:0.45rem;">
+                                <span style="font-weight:700; color:var(--text-main);">${escapeHtml(sName)}</span>
+                                <span class="badge badge-neutral" style="font-size:0.68rem; font-weight:700; padding:0.18rem 0.45rem;">Not Started</span>
+                              </div>
+                              <span style="font-size:0.72rem; color:var(--text-muted);">Awaiting start</span>
                             </div>
                           `;
                         }
                         return `
                           <div style="display:flex; flex-direction:column; gap:0.25rem; padding:0.4rem 0.55rem; background:var(--surface); border-radius:var(--radius-sm); border:1px solid ${st.needs_help ? 'rgba(220,38,38,0.35)' : 'var(--border)'};">
                             <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem;">
-                              <span style="font-weight:700; font-size:0.8rem; color:var(--text-main);">${escapeHtml(sName)}</span>
-                              <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
-                                ${st.is_in_progress ? `&#x23F3; ${st.answered_count}/${st.total_questions} (${st.percentage ?? 0}%)` : `Latest: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
-                                ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : ' &#x2713;'}
-                              </span>
+                              <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+                                <span style="font-weight:700; font-size:0.82rem; color:var(--text-main);">${escapeHtml(sName)}</span>
+                                ${st.is_completed ? `
+                                  <span class="badge badge-success" style="font-size:0.68rem; font-weight:800; padding:0.18rem 0.5rem; background:var(--brand-lime, #62b017); color:#000;">&#x2713; Completed</span>
+                                ` : `
+                                  <span class="badge badge-warning" style="font-size:0.68rem; font-weight:800; padding:0.18rem 0.5rem;">&#x23F3; In Progress</span>
+                                `}
+                              </div>
+                              <div style="display:flex; align-items:center; gap:0.35rem;">
+                                <span class="badge ${st.needs_help ? 'badge-danger' : (st.is_in_progress ? 'badge-warning' : 'badge-success')}" style="font-size:0.7rem;">
+                                  ${st.is_in_progress
+                                    ? `&#x23F3; ${st.answered_count}/${st.total_questions} answered (${st.percentage ?? 0}%)`
+                                    : `Score: ${st.correct_count}/${st.total_questions} (${st.latest_percentage ?? st.percentage ?? 0}%)`}
+                                  ${st.needs_help ? ' &#x26A0;&#xFE0F; Needs Help' : (st.is_completed ? ' &#x2713;' : '')}
+                                </span>
+                              </div>
                             </div>
                             ${attHist.length > 1 ? `
                               <div style="display:flex; flex-wrap:wrap; gap:0.3rem; align-items:center; font-size:0.7rem; color:var(--text-muted);">
@@ -1044,14 +1058,14 @@ export function renderInstructorDashboard(container, router, options = {}) {
                 return `<span class="badge badge-neutral" style="font-size:0.7rem;" title="${escapeHtml(secTitle)}: Ready to start">&#x23F3; ${escapeHtml(secTitle)}: Ready</span>`;
               }
               if (isInProg) {
-                return `<span class="badge badge-warning" style="font-size:0.7rem;" title="Currently working on ${escapeHtml(secTitle)}">&#x23F3; ${escapeHtml(secTitle)}: ${sec.answered_count}/${sec.total_questions} (${sec.percentage ?? 0}%)</span>`;
+                return `<span class="badge badge-warning" style="font-size:0.7rem;" title="Currently working on ${escapeHtml(secTitle)}">&#x23F3; ${escapeHtml(secTitle)}: In Progress (${sec.answered_count}/${sec.total_questions} &bull; ${sec.percentage ?? 0}%)</span>`;
               }
               const pctText = (sec.best_percentage !== null && sec.best_percentage !== undefined && sec.best_percentage !== sec.percentage)
                 ? `${sec.percentage}% (Best: ${sec.best_percentage}%)`
                 : `${sec.percentage ?? 0}% (${sec.correct_count ?? 0}/${sec.total_questions ?? 0})`;
               return `
                 <span class="badge ${sec.needs_help ? 'badge-danger' : 'badge-success'}" style="font-size:0.7rem;" title="${escapeHtml(historyTitle)}">
-                  ${escapeHtml(secTitle)}: ${pctText} ${sec.needs_help ? '&#x26A0;&#xFE0F;' : '&#x2713; (Submitted)'}
+                  &#x2713; ${escapeHtml(secTitle)}: Completed &bull; ${pctText} ${sec.needs_help ? '&#x26A0;&#xFE0F;' : ''}
                 </span>
               `;
             }).join('')}
