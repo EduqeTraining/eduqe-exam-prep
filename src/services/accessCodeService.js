@@ -475,7 +475,7 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
   // 2. If not, check if any published assessment exists for this course
   if (!assignedAssessment && courseId) {
     assignedAssessment = db.get(
-      `SELECT * FROM assessments WHERE course_id = ? AND status = 'published' ORDER BY created_at ASC LIMIT 1`,
+      `SELECT * FROM assessments WHERE course_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT 1`,
       [courseId]
     );
 

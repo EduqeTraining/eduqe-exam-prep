@@ -407,6 +407,24 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     } catch (_) {}
   }
 
+  const configuredSecNames = (classAssessmentConfig?.sections && Object.keys(classAssessmentConfig.sections).length > 0)
+    ? Object.keys(classAssessmentConfig.sections).map(s => s.trim()).filter(Boolean)
+    : [];
+
+  // If instructor configured specific sections for this class, isolate strictly to matching assessments
+  if (!isAllCohorts && configuredSecNames.length > 0) {
+    const matchingAssessments = classAssessments.filter(a => {
+      const aSecs = parseStoredSections(a.sections);
+      return aSecs.some(s => configuredSecNames.includes(s.trim()));
+    });
+    if (matchingAssessments.length > 0) {
+      classAssessments = matchingAssessments;
+    }
+  } else if (!isAllCohorts && classAssessments.length > 1) {
+    // For a single cohort, isolate strictly to the latest assigned assessment
+    classAssessments = [classAssessments[0]];
+  }
+
   const classAssessmentIds = classAssessments.map(a => a.id).filter(Boolean);
   const classAssessmentPlaceholders = classAssessmentIds.length > 0 
     ? classAssessmentIds.map(() => '?').join(',') 
@@ -417,13 +435,26 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const baseOrderedSectionNames = [];
   const questionSectionMap = new Map();
 
-  for (const a of classAssessments) {
-    const secs = parseStoredSections(a.sections);
-    for (const sec of secs) {
-      if (!baseOrderedSectionNames.includes(sec)) {
-        baseOrderedSectionNames.push(sec);
+  if (configuredSecNames.length > 0) {
+    // Authoritatively use the instructor-configured sections
+    for (const cSec of configuredSecNames) {
+      if (!baseOrderedSectionNames.includes(cSec)) {
+        baseOrderedSectionNames.push(cSec);
       }
     }
+  } else {
+    for (const a of classAssessments) {
+      const secs = parseStoredSections(a.sections);
+      for (const sec of secs) {
+        if (!baseOrderedSectionNames.includes(sec)) {
+          baseOrderedSectionNames.push(sec);
+        }
+      }
+    }
+  }
+
+  for (const a of classAssessments) {
+    const secs = parseStoredSections(a.sections);
     const aqRows = db.all(
       `SELECT aq.question_id, aq.pool_id, aq.section_name, qp.random_count
        FROM assessment_questions aq
@@ -438,7 +469,7 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         sName = baseOrderedSectionNames[0] || 'Section 1';
       }
       if (!baseOrderedSectionNames.includes(sName)) {
-        if (secs.length > 0) {
+        if (baseOrderedSectionNames.length > 0) {
           const match = baseOrderedSectionNames.find(b => b.trim().toLowerCase() === sName.toLowerCase());
           sName = match || baseOrderedSectionNames[0] || 'Section 1';
         } else {

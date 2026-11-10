@@ -799,6 +799,8 @@ export function renderInstructorDashboard(container, router, options = {}) {
         statusBadge = '<span class="badge badge-success">&#x2714;&#xFE0F; PASSED</span>';
       } else if (s.status_label === 'Failed') {
         statusBadge = '<span class="badge badge-danger">&#x2718;&#xFE0F; NEEDS RETAKE</span>';
+      } else if (s.status_label === 'In Progress') {
+        statusBadge = '<span class="badge badge-warning">&#x23F3; IN PROGRESS</span>';
       }
 
       const secBreakdown = Array.isArray(s.section_breakdown) ? s.section_breakdown : [];

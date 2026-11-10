@@ -790,6 +790,11 @@ test('Instructor Management, Class Allocation & Instructor Portal API', async (t
 
     const studentRecord = progressRes.data.students.find(s => s.id === studentId);
     assert.ok(studentRecord, 'Student must be listed in roster');
+    assert.equal(studentRecord.attempt_count, 0, 'Student has not started this class assessment, so attempt_count must be 0');
+    assert.equal(studentRecord.status_label, 'Not Started', 'Status must be Not Started');
+    assert.equal(studentRecord.best_score, null, 'Best score must be null');
+    assert.deepEqual(studentRecord.sections_needing_help, [], 'Must not need help in foreign objective');
+
     const studentSecNames = studentRecord.section_breakdown.map(s => s.name);
     assert.deepEqual(studentSecNames, ['Section 1', 'Section 2'], 'Student section breakdown must strictly only have Section 1 and Section 2');
   });
