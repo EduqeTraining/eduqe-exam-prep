@@ -1261,10 +1261,10 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
        JOIN student_attempts sa ON sa.id = aa.attempt_id
        WHERE (
          sa.class_id IN (${classPlaceholders})
-         OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
+         OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id IN (${classPlaceholders})))
        )
          ${asmCondition}
-         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
+         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked'))
        GROUP BY aa.question_id`,
       classAssessmentPlaceholders ? [...targetClassIds, ...targetClassIds, ...classAssessmentIds] : [...targetClassIds, ...targetClassIds]
     );
@@ -1280,10 +1280,10 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
        WHERE (
          sa.class_id = ? 
          OR sa.class_id IN (SELECT id FROM classes WHERE name = ? AND course_id = ?)
-         OR (sa.class_id IS NULL AND sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
+         OR (sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?))
        )
          ${asmCondition}
-         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL)
+         AND (aa.is_correct IS NOT NULL OR aa.saved_answer IS NOT NULL OR aa.marked_status IN ('marked', 'auto_marked', 'manual_marked'))
        GROUP BY aa.question_id`,
       classAssessmentPlaceholders
         ? [targetClass.id, targetClass.name, targetClass.course_id, targetClass.id, ...classAssessmentIds]
@@ -1321,10 +1321,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
   const sortedQuestions = Array.from(questionsMap.values()).sort((a, b) => {
     const aSec = (a.section_name || 'Section 1').trim();
     const bSec = (b.section_name || 'Section 1').trim();
-    const aSecIdx = orderedSectionNames.indexOf(aSec);
-    const bSecIdx = orderedSectionNames.indexOf(bSec);
+    const aSecIdx = orderedSectionNames.findIndex(s => s.trim().toLowerCase() === aSec.toLowerCase());
+    const bSecIdx = orderedSectionNames.findIndex(s => s.trim().toLowerCase() === bSec.toLowerCase());
     const secDiff = (aSecIdx !== -1 ? aSecIdx : 999) - (bSecIdx !== -1 ? bSecIdx : 999);
     if (secDiff !== 0) return secDiff;
+    if (aSecIdx === -1 && bSecIdx === -1) {
+      const comp = aSec.localeCompare(bSec, undefined, { numeric: true, sensitivity: 'base' });
+      if (comp !== 0) return comp;
+    }
     const aOrder = Number(a.order_index ?? 9999);
     const bOrder = Number(b.order_index ?? 9999);
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -1439,9 +1443,14 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
     );
   }
 
+  if (targetClass) {
+    targetClass.section_names = orderedSectionNames;
+  }
+
   return {
     assigned_classes: assignedClasses,
     selected_class: targetClass,
+    ordered_section_names: orderedSectionNames,
     summary: {
       total_enrolled: totalEnrolled,
       students_attempted: attemptedStudents.length,

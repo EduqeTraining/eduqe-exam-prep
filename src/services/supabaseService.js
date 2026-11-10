@@ -1030,6 +1030,7 @@ async function testSupabaseConnection() {
 
 module.exports = {
   getSupabaseConfig,
+  isConfigured: () => getSupabaseConfig().isEnabled,
   supabaseRequest,
   upsertRecord,
   upsertRecords,

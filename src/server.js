@@ -1433,6 +1433,31 @@ async function handleRequest(req, res) {
           'attempt_answers',
           'eduque_settings'
         ]);
+        if (supabaseService.getSupabaseConfig().isEnabled) {
+          try {
+            const db = require('./db').getDatabase();
+            const classIdParam = query.class_id || null;
+            let attIds = [];
+            if (classIdParam && classIdParam !== 'all') {
+              const attRows = db.all(
+                `SELECT sa.id FROM student_attempts sa
+                 WHERE sa.class_id = ? 
+                    OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?)
+                 ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC LIMIT 20`,
+                [classIdParam, classIdParam]
+              );
+              attIds = attRows.map(r => r.id);
+            } else {
+              const attRows = db.all(
+                `SELECT sa.id FROM student_attempts sa ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC LIMIT 20`
+              );
+              attIds = attRows.map(r => r.id);
+            }
+            if (attIds.length > 0) {
+              await Promise.all(attIds.map(id => supabaseService.pullAttemptAnswersForAttempt(id)));
+            }
+          } catch (_) {}
+        }
         try {
           const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
           const progress = instructorService.getInstructorClassProgress(targetInstructorId, query.class_id || null);

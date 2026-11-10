@@ -1497,7 +1497,7 @@ export function renderInstructorDashboard(container, router, options = {}) {
           (q.topic || '').toLowerCase().includes(searchVal) ||
           (q.section_name || '').toLowerCase().includes(searchVal);
 
-        const secMatch = !secVal || q.section_name === secVal;
+        const secMatch = !secVal || (q.section_name || '').trim().toLowerCase() === secVal.trim().toLowerCase();
 
         let statusMatch = true;
         if (statusVal === 'weak') {
@@ -1525,13 +1525,25 @@ export function renderInstructorDashboard(container, router, options = {}) {
       }
 
       // Sort filtered questions strictly in sequential delegate view order: by section then question_number (1 to 25)
+      const sectionOrder = (
+        (currentData?.selected_class?.section_names && currentData.selected_class.section_names.length > 0)
+          ? currentData.selected_class.section_names
+          : (currentData?.ordered_section_names && currentData.ordered_section_names.length > 0)
+            ? currentData.ordered_section_names
+            : (currentData?.sections_analysis || []).map(s => s.name || s.section_name)
+      );
+
       filtered.sort((a, b) => {
         const aSec = (a.section_name || 'Section 1').trim();
         const bSec = (b.section_name || 'Section 1').trim();
-        const aSecIdx = (currentData?.selected_class?.section_names || []).indexOf(aSec);
-        const bSecIdx = (currentData?.selected_class?.section_names || []).indexOf(bSec);
-        const secDiff = (aSecIdx !== -1 ? aSecIdx : 999) - (bSecIdx !== -1 ? bSecIdx : 999);
+        const aIdx = sectionOrder.findIndex(s => s && s.trim().toLowerCase() === aSec.toLowerCase());
+        const bIdx = sectionOrder.findIndex(s => s && s.trim().toLowerCase() === bSec.toLowerCase());
+        const secDiff = (aIdx !== -1 ? aIdx : 999) - (bIdx !== -1 ? bIdx : 999);
         if (secDiff !== 0) return secDiff;
+        if (aIdx === -1 && bIdx === -1) {
+          const comp = aSec.localeCompare(bSec, undefined, { numeric: true, sensitivity: 'base' });
+          if (comp !== 0) return comp;
+        }
         return (a.question_number || 0) - (b.question_number || 0);
       });
 
@@ -1547,10 +1559,11 @@ export function renderInstructorDashboard(container, router, options = {}) {
             const accentBorder = isWeak ? 'var(--danger)' : (isAttempted ? 'var(--brand-lime)' : 'var(--border)');
 
             let sectionHeaderHtml = '';
-            const secName = q.section_name || 'Section 1';
-            if (secName !== lastSection) {
-              lastSection = secName;
-              const countInSec = q.total_questions_in_section || filtered.filter(item => item.section_name === secName).length;
+            const secName = (q.section_name || 'Section 1').trim();
+            const normSec = secName.toLowerCase();
+            if (normSec !== lastSection) {
+              lastSection = normSec;
+              const countInSec = q.total_questions_in_section || filtered.filter(item => (item.section_name || 'Section 1').trim().toLowerCase() === normSec).length;
               sectionHeaderHtml = `
                 <div style="margin:${idx === 0 ? '0 0 0.4rem 0' : '1.25rem 0 0.4rem 0'}; padding:0.65rem 1rem; background:var(--surface-subtle); border:1px solid var(--border); border-left:4px solid var(--brand-lime); border-radius:var(--radius-sm); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
                   <div style="display:flex; align-items:center; gap:0.5rem;">

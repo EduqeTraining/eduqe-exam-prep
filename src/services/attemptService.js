@@ -484,6 +484,14 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
     ]
   );
 
+  try {
+    const supabaseService = require('./supabaseService');
+    const ansRow = db.get('SELECT * FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, questionId]);
+    if (ansRow) {
+      supabaseService.upsertRecord('attempt_answers', ansRow, 'id').catch(() => {});
+    }
+  } catch (_) {}
+
   return { success: true, saved_at: new Date().toISOString() };
 }
 
@@ -609,6 +617,12 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
     entityId: attemptId,
     details: { totalScore, maxScore, percentage, isPassed, status: finalStatus, isAuto }
   });
+
+  try {
+    const supabaseService = require('./supabaseService');
+    supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
+    supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
+  } catch (_) {}
 
   return getAttemptState(attemptId, userId);
 }
@@ -984,6 +998,8 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
       );
       const supabaseService = require('./supabaseService');
       supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
+      supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
+      supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
     } catch (_) {}
 
     logAction({
@@ -1071,6 +1087,8 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
         [timerId, timerKey, JSON.stringify({ is_paused: true, paused_remaining_seconds: remainingSec })]
       );
       supabaseService.syncSettingToSupabase(timerKey).catch(() => {});
+      supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
+      supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
     } catch (e) {}
 
     logAction({
