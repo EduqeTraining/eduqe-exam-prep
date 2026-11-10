@@ -324,4 +324,62 @@ describe('Question Bank, 10-Step Workflow & Question Pools Tests', () => {
     assert.strictEqual(dragDropQ.answer_options.target_title, 'Answer Area');
     assert.strictEqual(dragDropQ.correct_answer.tgt_msg, 'src_queue');
   });
+
+  test('PDF Exam Dump Ingestion: parseExamPdf correctly parses certification dump and imports all questions', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const pdfExamParserService = require('../src/services/pdfExamParserService');
+
+    const samplePdfPath = 'C:/Users/StephanEngelbrecht/.gemini/antigravity/brain/c945c5fe-d74b-4dd1-83e7-6031e3668bd4/.user_uploaded/media_1794315640113_a9d0b7de.pdf';
+    if (!fs.existsSync(samplePdfPath)) {
+      // Skip if file not on this host
+      return;
+    }
+
+    const pdfBuffer = fs.readFileSync(samplePdfPath);
+    const base64 = pdfBuffer.toString('base64');
+
+    const parsed = await pdfExamParserService.parseExamPdf(base64, 'AB-100.pdf');
+
+    assert.ok(parsed);
+    assert.strictEqual(parsed.exam_info.code, 'AB-100');
+    assert.strictEqual(parsed.total_questions, 158);
+    assert.ok(parsed.summary.single_choice > 0);
+    assert.ok(parsed.summary.hotspot > 0);
+    assert.ok(parsed.summary.matching > 0);
+    assert.ok(parsed.summary.case_study > 0);
+
+    // Import questions into test database
+    const course = courseService.createCourse({
+      name: 'Agentic AI Business Solutions Architect',
+      code: 'AB-100',
+      description: 'Exam preparation for Microsoft AB-100'
+    });
+
+    const importResult = questionService.importQuestions(parsed.questions, {
+      courseId: course.id,
+      adminUserId: 'usr_admin_001',
+      adminUsername: 'admin'
+    });
+
+    assert.strictEqual(importResult.total, 158);
+    assert.strictEqual(importResult.imported.length, 158);
+    assert.strictEqual(importResult.errors.length, 0);
+
+    // Verify all 158 questions are in the course question bank as published
+    const inBank = questionService.listQuestions({ course_id: course.id });
+    assert.strictEqual(inBank.length, 158);
+    assert.ok(inBank.every(q => q.status === 'published'));
+  });
+
+  test('PDF Exam Dump Ingestion: parseExamPdf rejects empty or invalid file data', async () => {
+    const pdfExamParserService = require('../src/services/pdfExamParserService');
+
+    await assert.rejects(
+      async () => {
+        await pdfExamParserService.parseExamPdf('', 'test.pdf');
+      },
+      /No PDF file data provided/
+    );
+  });
 });

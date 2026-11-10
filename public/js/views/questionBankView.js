@@ -21,7 +21,10 @@ export function renderQuestionBank(container) {
           <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Create Question
         </button>
-        <button type="button" class="btn btn-secondary" id="btn-import-questions">Import Questions</button>
+        <button type="button" class="btn btn-secondary" id="btn-import-questions" style="font-weight:700; display:flex; align-items:center; gap:0.4rem;">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          Import Questions / PDF
+        </button>
         <button type="button" class="btn btn-secondary" id="btn-publish-all-drafts" style="display:flex; align-items:center; gap:0.4rem; color:var(--success, #16a34a); border-color:rgba(22,163,74,0.4); font-weight:700;">
           <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
           Publish All Drafts
@@ -131,39 +134,152 @@ export function renderQuestionBank(container) {
     </dialog>
 
     <!-- Import Modal -->
-    <dialog id="bank-import-modal">
-      <div class="modal-header">
-        <h3 style="font-size:1.125rem; font-weight:700;">Import Questions Template</h3>
-        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-bank-import">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="form-hint" style="margin-bottom:1rem;">
-          Paste JSON formatted questions array or CSV data. All imported questions will begin in <strong>Published</strong> status by default and be exam-ready.
-        </p>
-        <div class="form-group">
-          <label class="form-label" for="import-course-id">Target Course</label>
-          <select id="import-course-id" class="form-control"></select>
+    <dialog id="bank-import-modal" style="max-width:820px; width:95vw; border-radius:var(--radius-lg); padding:0; border:1px solid var(--border); box-shadow:0 20px 40px rgba(0,0,0,0.18);">
+      <div class="modal-header" style="padding:1.25rem 1.5rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="font-size:1.2rem; font-weight:700; margin:0; display:flex; align-items:center; gap:0.5rem;">
+            <span>📥</span> Import Questions to Bank
+          </h3>
+          <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--text-muted);">
+            Upload official PDF exam dumps or paste structured JSON questions array
+          </p>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="import-json-data">Questions Data (JSON)</label>
-          <textarea id="import-json-data" class="form-control" style="font-family:var(--font-mono); min-height:140px;" placeholder='[ { "question_type": "single_choice", "question": "...", "options": [...], "correct": "..." } ]'></textarea>
-        </div>
-        <div id="import-status"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-bank-import" style="font-size:1.25rem; line-height:1; padding:0.25rem 0.6rem;">&times;</button>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="btn-dismiss-bank-import">Cancel</button>
-        <button type="button" class="btn btn-primary" id="btn-submit-import">Import Valid Questions</button>
+
+      <!-- Tab Switcher -->
+      <div style="display:flex; border-bottom:1px solid var(--border); background:var(--surface-subtle); padding:0.5rem 1.5rem 0; gap:0.5rem;">
+        <button type="button" id="tab-btn-pdf" class="import-tab-btn" style="padding:0.6rem 1.25rem; font-weight:700; font-size:0.9rem; border:none; border-bottom:3px solid var(--brand-blue, #0078d4); background:var(--surface); color:var(--brand-blue, #0078d4); border-radius:var(--radius-md) var(--radius-md) 0 0; cursor:pointer;">
+          📄 Upload Exam PDF Dump
+        </button>
+        <button type="button" id="tab-btn-json" class="import-tab-btn" style="padding:0.6rem 1.25rem; font-weight:600; font-size:0.9rem; border:none; border-bottom:3px solid transparent; background:transparent; color:var(--text-muted); border-radius:var(--radius-md) var(--radius-md) 0 0; cursor:pointer;">
+          📋 Raw JSON Data
+        </button>
+      </div>
+
+      <div class="modal-body" style="padding:1.5rem; max-height:calc(85vh - 160px); overflow-y:auto;">
+        
+        <!-- Tab 1: PDF Upload Panel -->
+        <div id="tab-panel-pdf">
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" for="import-pdf-course-id" style="font-weight:700;">Target Course</label>
+            <select id="import-pdf-course-id" class="form-control"></select>
+            <span class="form-hint">Choose which course these questions belong to, or leave as Global Bank.</span>
+          </div>
+
+          <!-- Dropzone -->
+          <div id="pdf-dropzone" style="border:2px dashed var(--border); border-radius:var(--radius-lg); padding:2rem 1.5rem; text-align:center; background:var(--surface-subtle); cursor:pointer; transition:all 0.2s ease; margin-bottom:1rem;">
+            <input type="file" id="pdf-file-input" accept=".pdf" style="display:none;">
+            <div style="font-size:2.5rem; margin-bottom:0.5rem;">📁</div>
+            <div style="font-weight:700; font-size:1.05rem; color:var(--text-main); margin-bottom:0.25rem;">
+              Click to select or drag & drop Exam Dump PDF
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.75rem;">
+              Supports multi-page certification PDFs (AB-100, AZ-104, AI-102, MS-900, etc.)
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-browse-pdf">Browse Files (.pdf)</button>
+          </div>
+
+          <!-- Selected File Card -->
+          <div id="pdf-file-card" style="display:none; align-items:center; justify-content:space-between; padding:0.75rem 1rem; background:rgba(0,120,212,0.08); border:1px solid rgba(0,120,212,0.3); border-radius:var(--radius-md); margin-bottom:1rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+              <span style="font-size:1.5rem;">📄</span>
+              <div>
+                <div id="pdf-file-name" style="font-weight:700; font-size:0.95rem; color:var(--text-main);">filename.pdf</div>
+                <div id="pdf-file-size" style="font-size:0.8rem; color:var(--text-muted);">0 KB</div>
+              </div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-remove-pdf" style="color:var(--danger); padding:0.25rem 0.5rem;">&times; Remove</button>
+          </div>
+
+          <div class="form-group" style="margin-bottom:1.25rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.9rem;">
+              <input type="checkbox" id="import-pdf-auto-add" style="width:1.1rem; height:1.1rem;">
+              <span>Automatically link imported questions to existing assessments for this course</span>
+            </label>
+          </div>
+
+          <!-- PDF Analysis / Preview Box -->
+          <div id="pdf-preview-box" style="display:none; margin-bottom:1rem; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); overflow:hidden;">
+            <div style="padding:0.75rem 1rem; background:var(--surface-subtle); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <span id="preview-exam-code" class="badge badge-primary" style="font-weight:700; margin-right:0.5rem;">EXAM</span>
+                <strong id="preview-exam-title">Exam Title</strong>
+              </div>
+              <span id="preview-total-badge" class="badge badge-success" style="font-weight:700;">0 Questions Detected</span>
+            </div>
+
+            <!-- Summary Chips -->
+            <div id="preview-summary-chips" style="padding:0.75rem 1rem; display:flex; gap:0.5rem; flex-wrap:wrap; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.02);">
+            </div>
+
+            <!-- Scrollable Preview Table -->
+            <div style="max-height:220px; overflow-y:auto;">
+              <table class="table" style="font-size:0.85rem; margin:0;">
+                <thead>
+                  <tr style="position:sticky; top:0; background:var(--surface); z-index:1;">
+                    <th style="width:50px;">Q#</th>
+                    <th style="width:120px;">Type</th>
+                    <th>Question Snippet</th>
+                    <th style="width:70px; text-align:center;">Options</th>
+                    <th style="width:80px; text-align:center;">Answer</th>
+                  </tr>
+                </thead>
+                <tbody id="pdf-preview-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Status Indicator -->
+          <div id="pdf-import-status" style="margin-bottom:0.75rem;"></div>
+
+          <!-- Actions -->
+          <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="btn-preview-pdf" disabled>
+              🔍 Analyze & Preview
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-submit-pdf-import" disabled>
+              🚀 Import All Questions
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 2: Raw JSON Panel -->
+        <div id="tab-panel-json" style="display:none;">
+          <p class="form-hint" style="margin-bottom:1rem;">
+            Paste JSON formatted questions array or CSV data. All imported questions will begin in <strong>Published</strong> status by default and be exam-ready.
+          </p>
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" for="import-course-id">Target Course</label>
+            <select id="import-course-id" class="form-control"></select>
+          </div>
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label class="form-label" for="import-json-data">Questions Data (JSON)</label>
+            <textarea id="import-json-data" class="form-control" style="font-family:var(--font-mono); min-height:160px;" placeholder='[ { "question_type": "single_choice", "question": "...", "options": [...], "correct": "..." } ]'></textarea>
+          </div>
+          <div id="import-status" style="margin-bottom:0.75rem;"></div>
+          <div style="display:flex; justify-content:flex-end;">
+            <button type="button" class="btn btn-primary" id="btn-submit-import">Import Valid Questions</button>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer" style="padding:1rem 1.5rem; border-top:1px solid var(--border); display:flex; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" id="btn-dismiss-bank-import">Close</button>
       </div>
     </dialog>
   `;
 
-  // Load courses for filter
+  // Load courses for filter and import dropdowns
   api.get('/courses').then(courses => {
     const courseFilter = container.querySelector('#filter-course');
     const importCourse = container.querySelector('#import-course-id');
+    const importPdfCourse = container.querySelector('#import-pdf-course-id');
     const options = courses.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
-    courseFilter.innerHTML += options;
-    importCourse.innerHTML = '<option value="">-- Global / No Course --</option>' + options;
+    if (courseFilter) courseFilter.innerHTML += options;
+    if (importCourse) importCourse.innerHTML = '<option value="">-- Global / No Course --</option>' + options;
+    if (importPdfCourse) importPdfCourse.innerHTML = '<option value="">-- Global / No Course --</option>' + options;
   });
 
   const tbody = container.querySelector('#questions-tbody');
@@ -515,7 +631,7 @@ export function renderQuestionBank(container) {
   container.querySelector('#btn-close-bank-preview').onclick = () => previewModal.close();
   container.querySelector('#btn-dismiss-bank-preview').onclick = () => previewModal.close();
 
-  // Import Dialog
+  // Import Dialog Wiring
   const importModal = container.querySelector('#bank-import-modal');
   container.querySelector('#btn-import-questions').onclick = () => {
     importModal.showModal();
@@ -523,6 +639,206 @@ export function renderQuestionBank(container) {
   container.querySelector('#btn-close-bank-import').onclick = () => importModal.close();
   container.querySelector('#btn-dismiss-bank-import').onclick = () => importModal.close();
 
+  // Tab switching
+  const tabBtnPdf = container.querySelector('#tab-btn-pdf');
+  const tabBtnJson = container.querySelector('#tab-btn-json');
+  const tabPanelPdf = container.querySelector('#tab-panel-pdf');
+  const tabPanelJson = container.querySelector('#tab-panel-json');
+
+  tabBtnPdf.onclick = () => {
+    tabBtnPdf.style.borderBottom = '3px solid var(--brand-blue, #0078d4)';
+    tabBtnPdf.style.background = 'var(--surface)';
+    tabBtnPdf.style.color = 'var(--brand-blue, #0078d4)';
+    tabBtnJson.style.borderBottom = '3px solid transparent';
+    tabBtnJson.style.background = 'transparent';
+    tabBtnJson.style.color = 'var(--text-muted)';
+    tabPanelPdf.style.display = 'block';
+    tabPanelJson.style.display = 'none';
+  };
+
+  tabBtnJson.onclick = () => {
+    tabBtnJson.style.borderBottom = '3px solid var(--brand-blue, #0078d4)';
+    tabBtnJson.style.background = 'var(--surface)';
+    tabBtnJson.style.color = 'var(--brand-blue, #0078d4)';
+    tabBtnPdf.style.borderBottom = '3px solid transparent';
+    tabBtnPdf.style.background = 'transparent';
+    tabBtnPdf.style.color = 'var(--text-muted)';
+    tabPanelJson.style.display = 'block';
+    tabPanelPdf.style.display = 'none';
+  };
+
+  // PDF Dropzone & File Selection
+  const pdfDropzone = container.querySelector('#pdf-dropzone');
+  const pdfFileInput = container.querySelector('#pdf-file-input');
+  const btnBrowsePdf = container.querySelector('#btn-browse-pdf');
+  const pdfFileCard = container.querySelector('#pdf-file-card');
+  const pdfFileName = container.querySelector('#pdf-file-name');
+  const pdfFileSize = container.querySelector('#pdf-file-size');
+  const btnRemovePdf = container.querySelector('#btn-remove-pdf');
+  const btnPreviewPdf = container.querySelector('#btn-preview-pdf');
+  const btnSubmitPdfImport = container.querySelector('#btn-submit-pdf-import');
+  const pdfStatusDiv = container.querySelector('#pdf-import-status');
+  const pdfPreviewBox = container.querySelector('#pdf-preview-box');
+
+  let selectedPdfFile = null;
+
+  function setSelectedFile(file) {
+    if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please select a valid PDF file.');
+      return;
+    }
+    selectedPdfFile = file;
+    pdfFileName.textContent = file.name;
+    pdfFileSize.textContent = (file.size / 1024 / 1024).toFixed(2) + ' MB (' + (file.size / 1024).toFixed(0) + ' KB)';
+    pdfFileCard.style.display = 'flex';
+    pdfDropzone.style.display = 'none';
+    btnPreviewPdf.disabled = false;
+    btnSubmitPdfImport.disabled = false;
+    pdfPreviewBox.style.display = 'none';
+    pdfStatusDiv.innerHTML = '';
+  }
+
+  function clearSelectedFile() {
+    selectedPdfFile = null;
+    pdfFileInput.value = '';
+    pdfFileCard.style.display = 'none';
+    pdfDropzone.style.display = 'block';
+    btnPreviewPdf.disabled = true;
+    btnSubmitPdfImport.disabled = true;
+    pdfPreviewBox.style.display = 'none';
+    pdfStatusDiv.innerHTML = '';
+  }
+
+  btnBrowsePdf.onclick = (e) => {
+    e.stopPropagation();
+    pdfFileInput.click();
+  };
+  pdfDropzone.onclick = () => pdfFileInput.click();
+
+  pdfFileInput.onchange = (e) => {
+    if (e.target.files?.[0]) setSelectedFile(e.target.files[0]);
+  };
+
+  btnRemovePdf.onclick = () => clearSelectedFile();
+
+  // Drag and drop events
+  pdfDropzone.ondragover = (e) => {
+    e.preventDefault();
+    pdfDropzone.style.borderColor = 'var(--brand-blue, #0078d4)';
+    pdfDropzone.style.background = 'rgba(0,120,212,0.06)';
+  };
+  pdfDropzone.ondragleave = () => {
+    pdfDropzone.style.borderColor = 'var(--border)';
+    pdfDropzone.style.background = 'var(--surface-subtle)';
+  };
+  pdfDropzone.ondrop = (e) => {
+    e.preventDefault();
+    pdfDropzone.style.borderColor = 'var(--border)';
+    pdfDropzone.style.background = 'var(--surface-subtle)';
+    if (e.dataTransfer.files?.[0]) setSelectedFile(e.dataTransfer.files[0]);
+  };
+
+  // Convert File to Base64
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Preview Button Click
+  btnPreviewPdf.onclick = async () => {
+    if (!selectedPdfFile) return;
+    try {
+      btnPreviewPdf.disabled = true;
+      btnSubmitPdfImport.disabled = true;
+      pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Analyzing PDF exam dump...</span>';
+
+      const base64Data = await fileToBase64(selectedPdfFile);
+      const res = await api.post('/questions/import-pdf', {
+        file_name: selectedPdfFile.name,
+        file_data: base64Data,
+        preview_only: true
+      });
+
+      // Populate preview box
+      container.querySelector('#preview-exam-code').textContent = res.exam_info.code || 'EXAM';
+      container.querySelector('#preview-exam-title').textContent = (res.exam_info.vendor ? res.exam_info.vendor + ' ' : '') + (res.exam_info.title || res.exam_info.code);
+      container.querySelector('#preview-total-badge').textContent = `${res.total_questions} Questions Detected`;
+
+      // Summary chips
+      const chipsDiv = container.querySelector('#preview-summary-chips');
+      const chipHtml = Object.entries(res.summary || {}).map(([type, count]) => {
+        const typeLabel = type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return `<span class="badge badge-neutral" style="font-size:0.75rem; font-weight:700;">${typeLabel}: ${count}</span>`;
+      }).join('');
+      chipsDiv.innerHTML = chipHtml;
+
+      // Table rows (first 15 sample)
+      const tbody = container.querySelector('#pdf-preview-tbody');
+      const sample = (res.questions || []).slice(0, 15);
+      tbody.innerHTML = sample.map(q => {
+        let optCount = Array.isArray(q.answer_options) ? q.answer_options.length : (q.answer_options?.sources?.length || 'N/A');
+        let ansStr = typeof q.correct_answer === 'object' ? JSON.stringify(q.correct_answer) : String(q.correct_answer || '');
+        if (ansStr.length > 20) ansStr = ansStr.substring(0, 20) + '...';
+        return `
+          <tr>
+            <td style="font-weight:700;">#${q.qnum}</td>
+            <td><span class="badge badge-neutral" style="font-size:0.7rem; font-weight:700;">${q.question_type}</span></td>
+            <td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(q.question_text)}">${escapeHtml(q.question_text)}</td>
+            <td style="text-align:center;">${optCount}</td>
+            <td style="text-align:center; font-family:var(--font-mono); font-weight:700; color:var(--brand-blue);">${escapeHtml(ansStr)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      pdfPreviewBox.style.display = 'block';
+      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:600;">✔ Successfully parsed ${res.total_questions} questions! Showing first 15 in preview.</span>`;
+    } catch (err) {
+      pdfStatusDiv.innerHTML = `<span style="color:var(--danger); font-weight:600;">Preview error: ${err.message}</span>`;
+    } finally {
+      btnPreviewPdf.disabled = false;
+      btnSubmitPdfImport.disabled = false;
+    }
+  };
+
+  // Full PDF Import Button Click
+  btnSubmitPdfImport.onclick = async () => {
+    if (!selectedPdfFile) return;
+    const courseId = container.querySelector('#import-pdf-course-id').value || null;
+    const autoAdd = container.querySelector('#import-pdf-auto-add').checked;
+
+    try {
+      btnPreviewPdf.disabled = true;
+      btnSubmitPdfImport.disabled = true;
+      pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Ingesting and importing all questions into database...</span>';
+
+      const base64Data = await fileToBase64(selectedPdfFile);
+      const res = await api.post('/questions/import-pdf', {
+        file_name: selectedPdfFile.name,
+        file_data: base64Data,
+        course_id: courseId,
+        auto_add_to_assessment: autoAdd,
+        preview_only: false
+      });
+
+      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:700; font-size:0.95rem;">🎉 Successfully imported ${res.imported.length} questions as Published!</span>`;
+      
+      setTimeout(() => {
+        importModal.close();
+        clearSelectedFile();
+        loadQuestions();
+      }, 1500);
+    } catch (err) {
+      pdfStatusDiv.innerHTML = `<span style="color:var(--danger); font-weight:600;">Import error: ${err.message}</span>`;
+      btnPreviewPdf.disabled = false;
+      btnSubmitPdfImport.disabled = false;
+    }
+  };
+
+  // Tab 2 Raw JSON import
   container.querySelector('#btn-submit-import').onclick = async () => {
     const raw = container.querySelector('#import-json-data').value.trim();
     const courseId = container.querySelector('#import-course-id').value || null;

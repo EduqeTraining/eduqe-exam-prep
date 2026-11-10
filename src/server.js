@@ -19,6 +19,7 @@ const auditService = require('./services/auditService');
 const expirationRuleService = require('./services/expirationRuleService');
 const instructorService = require('./services/instructorService');
 const supabaseService = require('./services/supabaseService');
+const pdfExamParserService = require('./services/pdfExamParserService');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '../public');
@@ -75,7 +76,7 @@ function parseBody(req) {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
-      if (body.length > 10 * 1024 * 1024) { // 10MB limit
+      if (body.length > 50 * 1024 * 1024) { // 50MB limit
         reject(new Error('Request payload too large'));
       }
     });
@@ -1675,6 +1676,66 @@ async function handleRequest(req, res) {
         }
 
         return sendJson(res, 200, result);
+      }
+
+      if (req.method === 'POST' && pathname === '/api/questions/import-pdf') {
+        const user = requireAuth(req, res, 'administrator');
+        if (!user) return;
+        const body = await parseBody(req);
+        if (!body.file_data) {
+          return sendJson(res, 400, { error: 'No PDF file data provided.' });
+        }
+
+        try {
+          const parsed = await pdfExamParserService.parseExamPdf(body.file_data, body.file_name || 'exam.pdf');
+
+          // Preview mode: return summary and questions without inserting into DB
+          if (body.preview_only === true) {
+            return sendJson(res, 200, {
+              preview: true,
+              exam_info: parsed.exam_info,
+              total_questions: parsed.total_questions,
+              summary: parsed.summary,
+              questions: parsed.questions
+            });
+          }
+
+          // Full import mode
+          const result = questionService.importQuestions(parsed.questions, {
+            courseId: body.course_id || null,
+            adminUserId: user.id,
+            adminUsername: user.username
+          });
+
+          // Link to existing course assessments if requested
+          if (body.course_id && body.auto_add_to_assessment === true && result.imported?.length > 0) {
+            const courseAssessments = getDatabase().all('SELECT id FROM assessments WHERE course_id = ?', [body.course_id]);
+            for (const assess of courseAssessments) {
+              for (const q of result.imported) {
+                assessmentService.addQuestionToAssessment(assess.id, q.id, {}, user.id, user.username);
+              }
+              if (supabaseService.getSupabaseConfig().isEnabled) {
+                await supabaseService.syncAssessmentToSupabase(assess.id);
+              }
+            }
+          }
+
+          // Sync to Supabase
+          if (supabaseService.getSupabaseConfig().isEnabled && result.imported?.length > 0) {
+            await supabaseService.syncQuestionsToSupabase(result.imported.map(q => q.id));
+          }
+
+          return sendJson(res, 200, {
+            success: true,
+            exam_info: parsed.exam_info,
+            total_questions: parsed.total_questions,
+            summary: parsed.summary,
+            imported: result.imported,
+            errors: result.errors
+          });
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
       }
 
       // -------------------------------------------------------------
