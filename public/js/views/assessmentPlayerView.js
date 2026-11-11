@@ -1615,6 +1615,70 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       const studentMap = (typeof saved === 'object' && saved !== null && !Array.isArray(saved)) ? saved : {};
       const statements = Array.isArray(q.answer_options) ? q.answer_options : [];
 
+      // Check if this hotspot is a dropdown hotspot (options beyond Yes/No)
+      const isDropdownHotspot = statements.some(st => Array.isArray(st.options) && (st.options.length > 2 || !st.options.every(o => ['yes', 'no'].includes(String(o).toLowerCase()))));
+
+      if (isDropdownHotspot) {
+        let correctObj = {};
+        if (typeof q.correct_answer === 'object' && q.correct_answer !== null && !Array.isArray(q.correct_answer)) {
+          correctObj = q.correct_answer;
+        } else if (typeof q.correct_answer === 'string') {
+          try { correctObj = JSON.parse(q.correct_answer); } catch (_) { correctObj = {}; }
+        }
+
+        return `
+          <div class="hotspot-area" style="border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--surface); margin-top:0.75rem;">
+            <div style="padding:0.75rem 1.25rem; background:var(--surface-subtle); border-bottom:1px solid var(--border); font-weight:800; font-family:var(--font-heading); display:flex; justify-content:space-between; align-items:center;">
+              <span>Hot Area: Answer Area</span>
+              <span style="font-size:0.8rem; font-weight:600; color:var(--text-muted);">Select the appropriate option for each requirement</span>
+            </div>
+            <div style="padding:1.25rem; display:flex; flex-direction:column; gap:1.25rem;">
+              ${statements.map((st, sIdx) => {
+                const sId = st.id || ('stmt_' + (sIdx + 1));
+                const sText = st.statement || st.text || st;
+                const currentVal = studentMap[sId] || '';
+                const correctVal = correctObj[sId] || '';
+                const isCorrect = isSecSubmitted && currentVal && String(currentVal).trim().toLowerCase() === String(correctVal).trim().toLowerCase();
+                const isIncorrect = isSecSubmitted && (!isCorrect);
+                const opts = Array.isArray(st.options) ? st.options : ['Yes', 'No'];
+
+                return `
+                  <div class="hotspot-dropdown-card" style="padding:1rem 1.25rem; background:var(--surface); border:1.5px solid ${isSecSubmitted ? (isCorrect ? 'var(--brand-lime)' : 'var(--danger)') : 'var(--border)'}; border-radius:var(--radius-md);">
+                    <div style="font-weight:700; font-size:0.92rem; margin-bottom:0.5rem; color:var(--text-main); display:flex; justify-content:space-between; align-items:center;">
+                      <span>${escapeHtml(sText)}</span>
+                      ${isSecSubmitted ? (isCorrect
+                        ? '<span class="badge badge-success" style="font-size:0.75rem; font-weight:800;">✔ Correct</span>'
+                        : '<span class="badge badge-danger" style="font-size:0.75rem; font-weight:800;">✘ Incorrect</span>')
+                        : ''}
+                    </div>
+                    <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+                      <select 
+                        class="form-control hotspot-select" 
+                        data-stmt="${escapeHtml(sId)}" 
+                        ${isLocked ? 'disabled style="pointer-events:none; opacity:0.85;"' : ''}
+                        style="font-size:0.95rem; font-weight:600; padding:0.55rem 0.85rem; border-color:${isSecSubmitted ? (isCorrect ? 'var(--brand-lime)' : 'var(--danger)') : 'var(--border)'}; width:100%; max-width:540px;">
+                        <option value="">-- Select an option --</option>
+                        ${opts.map(opt => {
+                          const optVal = typeof opt === 'object' && opt !== null ? (opt.id || opt.value || opt.text) : opt;
+                          const optText = typeof opt === 'object' && opt !== null ? (opt.text || opt.label || optVal) : opt;
+                          const isSel = String(currentVal).trim().toLowerCase() === String(optVal).trim().toLowerCase();
+                          return `<option value="${escapeHtml(String(optVal))}" ${isSel ? 'selected' : ''}>${escapeHtml(String(optText))}</option>`;
+                        }).join('')}
+                      </select>
+                    </div>
+                    ${isSecSubmitted && isIncorrect && correctVal ? `
+                      <div style="margin-top:0.5rem; font-size:0.825rem; color:var(--success); font-weight:700;">
+                        ✔ Correct Option: ${escapeHtml(String(correctVal))}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }
+
       return `
         <div class="hotspot-area" style="border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--surface); margin-top:0.75rem;">
           <div style="padding:0.75rem 1.25rem; background:var(--surface-subtle); border-bottom:1px solid var(--border); font-weight:800; font-family:var(--font-heading); display:flex; justify-content:space-between; align-items:center;">
@@ -1926,11 +1990,21 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       };
     });
 
-    // Hotspot statement table
+    // Hotspot statement table & dropdowns
     area.querySelectorAll('.hotspot-radio').forEach(r => {
       r.onchange = () => {
         const map = (typeof q.saved_answer === 'object' && q.saved_answer !== null && !Array.isArray(q.saved_answer)) ? { ...q.saved_answer } : {};
         map[r.dataset.stmt] = r.value;
+        q.saved_answer = map;
+        triggerAutosave(q.id, q.saved_answer, q.is_flagged);
+        renderPalette();
+      };
+    });
+
+    area.querySelectorAll('.hotspot-select').forEach(sel => {
+      sel.onchange = () => {
+        const map = (typeof q.saved_answer === 'object' && q.saved_answer !== null && !Array.isArray(q.saved_answer)) ? { ...q.saved_answer } : {};
+        map[sel.dataset.stmt] = sel.value;
         q.saved_answer = map;
         triggerAutosave(q.id, q.saved_answer, q.is_flagged);
         renderPalette();

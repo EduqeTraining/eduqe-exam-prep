@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sys
 import os
 import re
@@ -10,6 +11,15 @@ try:
 except ImportError:
     import fitz
 
+PATCH_FILE = os.path.join(os.path.dirname(__file__), 'ab100_patches.json')
+AB100_PATCHES = {}
+if os.path.exists(PATCH_FILE):
+    try:
+        with open(PATCH_FILE, 'r', encoding='utf-8') as f:
+            AB100_PATCHES = json.load(f)
+    except Exception:
+        pass
+
 def clean_text(text):
     lines = text.splitlines()
     clean_lines = []
@@ -21,6 +31,17 @@ def clean_text(text):
             continue
         clean_lines.append(line)
     return '\n'.join(clean_lines)
+
+def sanitize_prompt(raw):
+    if not raw:
+        return ''
+    p = raw.strip()
+    p = re.sub(r'^QUESTION\s+\d+\s*', '', p, flags=re.IGNORECASE)
+    p = re.sub(r'^(?:Drag and Drop Question|Hotspot Question)\s*', '', p, flags=re.IGNORECASE)
+    p = re.sub(r'^Case Study\s*\d+[^\n]*\n*', '', p, flags=re.IGNORECASE)
+    p = re.sub(r'\s*To answer,?\s*(?:drag|select)[\s\S]*$', '', p, flags=re.IGNORECASE)
+    p = re.sub(r'\s*NOTE:\s*Each correct selection is worth one point\.?[\s\S]*$', '', p, flags=re.IGNORECASE)
+    return p.strip()
 
 def parse_pdf(pdf_path, output_dir=None):
     doc = fitz.open(pdf_path)
@@ -40,31 +61,24 @@ def parse_pdf(pdf_path, output_dir=None):
     if v_match: exam_info['vendor'] = v_match.group(1).strip()
     
     c_match = re.search(r'Exam Code:\s*([^\n]+)', header_text)
-    if c_match: exam_info['code'] = c_match.group(1).strip()
+    if c_match: exam_info['code'] = c_match.group(1).strip().replace(' ', '')
     
     t_match = re.search(r'Exam Name:\s*([^\n]+)', header_text)
     if t_match: exam_info['title'] = t_match.group(1).strip()
 
     # 2. Extract full clean text with page markers
     full_text = ''
-    page_offsets = []
-    for p in range(len(doc)):
-        p_text = clean_text(doc[p].get_text('text'))
-        start_char = len(full_text)
-        full_text += f'\n<<<PAGE_{p+1}>>>\n' + p_text + '\n'
-        end_char = len(full_text)
-        page_offsets.append({'page': p + 1, 'start': start_char, 'end': end_char})
+    for p_no in range(len(doc)):
+        page = doc[p_no]
+        p_text = clean_text(page.get_text())
+        full_text += f"\n<<<PAGE_{p_no+1}>>>\n" + p_text
 
-    # 3. Split by QUESTION \d+
+    # 3. Identify all QUESTION <num> anchors
     q_matches = list(re.finditer(r'QUESTION\s+(\d+)', full_text))
-    questions = []
-    
-    # Store images dir if output_dir provided
-    img_dir = None
-    if output_dir:
-        img_dir = os.path.join(output_dir, 'uploads', 'questions')
-        os.makedirs(img_dir, exist_ok=True)
+    if not q_matches:
+        raise ValueError("Could not find any 'QUESTION <num>' blocks in the PDF.")
 
+    questions = []
     current_case_study = {
         'title': '',
         'background': ''
@@ -72,7 +86,7 @@ def parse_pdf(pdf_path, output_dir=None):
 
     for i in range(len(q_matches)):
         start = q_matches[i].start()
-        end = q_matches[i+1].start() if i + 1 < len(q_matches) else len(full_text)
+        end = q_matches[i+1].start() if i+1 < len(q_matches) else len(full_text)
         block = full_text[start:end].strip()
         qnum = int(q_matches[i].group(1))
 
@@ -81,13 +95,12 @@ def parse_pdf(pdf_path, output_dir=None):
         if cs_match:
             current_case_study['title'] = f"Case Study {cs_match.group(1)}: {cs_match.group(2).strip()}"
 
-        # Clean page tags out of block
         clean_block = re.sub(r'<<<PAGE_\d+>>>\n?', '', block)
 
-        # Detect question type
-        is_hotspot = bool(re.search(r'Hotspot Question', clean_block[:200], re.IGNORECASE))
-        is_dragdrop = bool(re.search(r'Drag and Drop Question', clean_block[:200], re.IGNORECASE))
-        is_case_study = bool(cs_match) or ('case study' in clean_block[:200].lower())
+        # Detect question type across entire block
+        is_hotspot = bool(re.search(r'\bhotspot\s*question\b', clean_block, re.IGNORECASE))
+        is_dragdrop = bool(re.search(r'\bdrag\s*and\s*drop\s*question\b', clean_block, re.IGNORECASE))
+        is_case_study = bool(cs_match) or bool(re.search(r'\bcase\s*study\b', clean_block, re.IGNORECASE))
 
         # Extract Answer, Explanation, Reference
         ans_match = re.search(r'\nAnswer:\s*([^\n]*)', clean_block)
@@ -103,7 +116,6 @@ def parse_pdf(pdf_path, output_dir=None):
         elif reference and not explanation:
             explanation = 'Reference:\n' + reference
 
-        # Determine question type & extract details
         q_data = {
             'qnum': qnum,
             'topic': exam_info['code'],
@@ -118,39 +130,31 @@ def parse_pdf(pdf_path, output_dir=None):
             'status': 'published'
         }
 
-        # Handle Case Study description
+        # Handle Case Study Scenario Extraction
         if is_case_study:
             q_data['question_type'] = 'case_study'
-            # Look for Background, Problem Statements, Planned Initiatives, Requirements
-            bg_match = re.search(r'(Background[\s\S]*?)(?=\n(?:Which|What|How|You need|Select|Hotspot|Drag and Drop|Case Study|\n[A-F]\.))', clean_block)
+            bg_match = re.search(r'(?:Case\s*Study[\s\S]*?)?(Background|Overview)([\s\S]*?)(?=\n(?:Which|What|How|You need|Select|Hotspot|Drag and Drop|\n[A-F]\.))', clean_block, re.IGNORECASE)
             if bg_match:
-                q_data['question_description'] = f"**{current_case_study.get('title', 'Case Study')}**\n\n" + bg_match.group(1).strip()
+                q_data['question_description'] = f"**{current_case_study.get('title', 'Case Study')}**\n\n{bg_match.group(1).strip()}{bg_match.group(2).strip()}"
             elif current_case_study.get('title'):
                 q_data['question_description'] = f"**{current_case_study['title']}**"
 
-        # Now extract the actual question prompt
-        # The prompt is between the scenario/type and the options or 'Answer:'
         pre_ans = clean_block[:ans_match.start()] if ans_match else clean_block
-        
-        # Check for options A. B. C. D...
         opt_matches = list(re.finditer(r'\n([A-F])\.\s+([^\n]+(?:\n(?![A-F]\.|\nAnswer:)[\t ]+[^\n]+)*)', pre_ans))
 
         if is_hotspot or ('select the appropriate options in the answer area' in pre_ans.lower()):
             q_data['question_type'] = 'hotspot'
-            # Extract prompt before NOTE: or Answer:
             prompt_match = re.search(r'(?:Hotspot Question\s*)?([\s\S]*?)(?=\s*To answer|\s*NOTE:|\s*Answer:)', pre_ans)
             prompt = prompt_match.group(1).strip() if prompt_match else pre_ans.strip()
-            # Remove Case study background from prompt if already in description
             if q_data['question_description']:
                 prompt = re.sub(r'^Case Study[\s\S]*?(?=(?:You need|Which|What|A company|Fabrikam|An organization))', '', prompt, flags=re.IGNORECASE).strip()
-            q_data['question_text'] = prompt or f"Question {qnum}"
+            q_data['question_text'] = sanitize_prompt(prompt) or f"Question {qnum}"
 
-            # Extract Boxes from explanation
             boxes = re.findall(r'Box\s+(\d+):\s*([^\n]+)(?:\n([^\n]+))?', explanation)
             statements = []
             correct_keys = {}
             if boxes:
-                for b_idx, b in enumerate(boxes):
+                for b in boxes:
                     box_num = b[0]
                     correct_val = b[1].strip()
                     desc = b[2].strip() if len(b) > 2 and b[2] else f"Requirement / Area {box_num}"
@@ -158,12 +162,11 @@ def parse_pdf(pdf_path, output_dir=None):
                     statements.append({
                         'id': stmt_id,
                         'statement': f"{desc}: {correct_val}" if 'statement' in desc.lower() else desc,
-                        'options': ['Yes', 'No'] if correct_val.lower() in ['yes', 'no'] else [correct_val, 'Other option']
+                        'options': ['Yes', 'No'] if correct_val.lower() in ['yes', 'no'] else [correct_val]
                     })
-                    correct_keys[stmt_id] = correct_val if correct_val in ['Yes', 'No'] else correct_val
+                    correct_keys[stmt_id] = correct_val
             
             if not statements:
-                # Fallback hotspot statement
                 statements = [
                     {'id': 'stmt_1', 'statement': 'Select appropriate option in Answer Area', 'options': ['Yes', 'No']}
                 ]
@@ -179,14 +182,14 @@ def parse_pdf(pdf_path, output_dir=None):
             prompt = prompt_match.group(1).strip() if prompt_match else pre_ans.strip()
             if q_data['question_description']:
                 prompt = re.sub(r'^Case Study[\s\S]*?(?=(?:You need|Which|What|A company|Fabrikam|An organization))', '', prompt, flags=re.IGNORECASE).strip()
-            q_data['question_text'] = prompt or f"Question {qnum}"
+            q_data['question_text'] = sanitize_prompt(prompt) or f"Question {qnum}"
 
             boxes = re.findall(r'Box\s+(\d+):\s*([^\n]+)(?:\n([^\n]+))?', explanation)
             sources = []
             targets = []
             correct_map = {}
             if boxes:
-                for b_idx, b in enumerate(boxes):
+                for b in boxes:
                     box_num = b[0]
                     src_val = b[1].strip()
                     tgt_desc = b[2].strip() if len(b) > 2 and b[2] else f"Target Slot #{box_num}"
@@ -211,22 +214,17 @@ def parse_pdf(pdf_path, output_dir=None):
             q_data['partial_credit'] = True
 
         elif opt_matches:
-            # Single Choice or Multiple Response
-            # Prompt is text before first option
             prompt_text = pre_ans[:opt_matches[0].start()].strip()
-            # Clean off QUESTION X, Case study header etc.
             prompt_text = re.sub(r'^QUESTION\s+\d+\s*', '', prompt_text)
-            if is_case_study and q_data['question_description']:
-                # The question prompt is usually the last sentence or paragraph
-                # e.g. "Which tool should you recommend..."
-                q_last_match = re.search(r'\n([A-Z][^\n\?\.]*\?)\s*$', prompt_text)
+            if is_case_study:
+                q_last_match = re.search(r'((?:Which|What|How|You need|Select|Where|Why)[\s\S]*?\?)\s*$', prompt_text, re.IGNORECASE)
                 if q_last_match:
                     prompt_text = q_last_match.group(1).strip()
                 else:
                     lines = [ln.strip() for ln in prompt_text.splitlines() if ln.strip()]
                     prompt_text = lines[-1] if lines else prompt_text
 
-            q_data['question_text'] = prompt_text or f"Question {qnum}"
+            q_data['question_text'] = sanitize_prompt(prompt_text) or f"Question {qnum}"
 
             options_list = []
             for om in opt_matches:
@@ -235,7 +233,6 @@ def parse_pdf(pdf_path, output_dir=None):
                 options_list.append({'id': letter, 'text': otext})
             q_data['answer_options'] = options_list
 
-            # Check answer letters
             letters = re.findall(r'[A-F]', ans_text)
             if len(letters) > 1:
                 q_data['question_type'] = 'multiple_response'
@@ -249,8 +246,7 @@ def parse_pdf(pdf_path, output_dir=None):
                 q_data['question_type'] = 'single_choice'
                 q_data['correct_answer'] = options_list[0]['id'] if options_list else 'A'
         else:
-            # Yes/No or simple scenario
-            prompt_text = re.sub(r'^QUESTION\s+\d+\s*', '', pre_ans).strip()
+            prompt_text = sanitize_prompt(pre_ans)
             q_data['question_text'] = prompt_text or f"Question {qnum}"
             if 'yes' in ans_text.lower():
                 q_data['question_type'] = 'yes_no'
@@ -265,9 +261,24 @@ def parse_pdf(pdf_path, output_dir=None):
                 q_data['correct_answer'] = 'A'
                 q_data['answer_options'] = [{'id': 'A', 'text': 'Option A'}, {'id': 'B', 'text': 'Option B'}]
 
+        # Apply Authoritative Patch if present
+        patch = AB100_PATCHES.get(str(qnum)) or AB100_PATCHES.get(qnum)
+        if patch:
+            q_data['question_type'] = patch['question_type']
+            if 'question_text' in patch:
+                q_data['question_text'] = patch['question_text']
+            if 'answer_options' in patch:
+                q_data['answer_options'] = patch['answer_options']
+            if 'correct_answer' in patch:
+                q_data['correct_answer'] = patch['correct_answer']
+            if 'question_description' in patch:
+                q_data['question_description'] = patch['question_description']
+            q_data['partial_credit'] = True
+
+        q_data['question_text'] = sanitize_prompt(q_data['question_text'])
+
         questions.append(q_data)
 
-    # 4. Compute Summary
     type_counts = {}
     for q in questions:
         t = q['question_type']
