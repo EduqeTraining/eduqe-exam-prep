@@ -2,6 +2,7 @@
 
 import { api } from '../api.js';
 import { renderQuestionEditor } from './questionEditorView.js';
+import { parseExamPdfInBrowser } from '../examPdfParser.js';
 
 export function renderQuestionBank(container) {
   let selectedQuestionIds = new Set();
@@ -738,30 +739,22 @@ export function renderQuestionBank(container) {
     if (e.dataTransfer.files?.[0]) setSelectedFile(e.dataTransfer.files[0]);
   };
 
-  // Convert File to Base64
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
+  let cachedParsedQuestions = null;
 
-  // Preview Button Click
+  // Preview Button Click - In-Browser Client Parsing (Bypasses Vercel 4.5MB 413 limits)
   btnPreviewPdf.onclick = async () => {
     if (!selectedPdfFile) return;
     try {
       btnPreviewPdf.disabled = true;
       btnSubmitPdfImport.disabled = true;
-      pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Analyzing PDF exam dump...</span>';
+      pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Reading PDF in browser...</span>';
 
-      const base64Data = await fileToBase64(selectedPdfFile);
-      const res = await api.post('/questions/import-pdf', {
-        file_name: selectedPdfFile.name,
-        file_data: base64Data,
-        preview_only: true
+      const arrayBuffer = await selectedPdfFile.arrayBuffer();
+      const res = await parseExamPdfInBrowser(arrayBuffer, (pct, msg) => {
+        pdfStatusDiv.innerHTML = `<span style="color:var(--brand-blue); font-weight:600;">[${pct}%] ${escapeHtml(msg)}</span>`;
       });
+
+      cachedParsedQuestions = res;
 
       // Populate preview box
       container.querySelector('#preview-exam-code').textContent = res.exam_info.code || 'EXAM';
@@ -795,7 +788,7 @@ export function renderQuestionBank(container) {
       }).join('');
 
       pdfPreviewBox.style.display = 'block';
-      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:600;">✔ Successfully parsed ${res.total_questions} questions! Showing first 15 in preview.</span>`;
+      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:600;">✔ Successfully analyzed ${res.total_questions} questions! Showing preview below.</span>`;
     } catch (err) {
       pdfStatusDiv.innerHTML = `<span style="color:var(--danger); font-weight:600;">Preview error: ${err.message}</span>`;
     } finally {
@@ -804,7 +797,7 @@ export function renderQuestionBank(container) {
     }
   };
 
-  // Full PDF Import Button Click
+  // Full PDF Import Button Click - Ingests in lightweight batches (bypasses any serverless 4.5MB limit)
   btnSubmitPdfImport.onclick = async () => {
     if (!selectedPdfFile) return;
     const courseId = container.querySelector('#import-pdf-course-id').value || null;
@@ -813,24 +806,48 @@ export function renderQuestionBank(container) {
     try {
       btnPreviewPdf.disabled = true;
       btnSubmitPdfImport.disabled = true;
-      pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Ingesting and importing all questions into database...</span>';
 
-      const base64Data = await fileToBase64(selectedPdfFile);
-      const res = await api.post('/questions/import-pdf', {
-        file_name: selectedPdfFile.name,
-        file_data: base64Data,
-        course_id: courseId,
-        auto_add_to_assessment: autoAdd,
-        preview_only: false
-      });
+      let parsed = cachedParsedQuestions;
+      if (!parsed) {
+        pdfStatusDiv.innerHTML = '<span style="color:var(--brand-blue); display:flex; align-items:center; gap:0.5rem;"><span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--brand-blue); border-radius:50%; animation:spin 0.8s linear infinite;"></span> Parsing PDF questions...</span>';
+        const arrayBuffer = await selectedPdfFile.arrayBuffer();
+        parsed = await parseExamPdfInBrowser(arrayBuffer, (pct, msg) => {
+          pdfStatusDiv.innerHTML = `<span style="color:var(--brand-blue); font-weight:600;">[${pct}%] ${escapeHtml(msg)}</span>`;
+        });
+        cachedParsedQuestions = parsed;
+      }
 
-      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:700; font-size:0.95rem;">🎉 Successfully imported ${res.imported.length} questions as Published!</span>`;
-      
+      const allQuestions = parsed.questions || [];
+      if (allQuestions.length === 0) {
+        throw new Error('No questions detected in this PDF to import.');
+      }
+
+      // Batch import in chunks of 50 to guarantee low payload and 100% stability on Vercel
+      const BATCH_SIZE = 50;
+      let totalImported = 0;
+      const totalBatches = Math.ceil(allQuestions.length / BATCH_SIZE);
+
+      for (let b = 0; b < totalBatches; b++) {
+        const batch = allQuestions.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+        pdfStatusDiv.innerHTML = `<span style="color:var(--brand-blue); font-weight:600;">Importing batch ${b + 1} of ${totalBatches} (${batch.length} questions)...</span>`;
+
+        const res = await api.post('/questions/import', {
+          course_id: courseId,
+          auto_add_to_assessment: autoAdd,
+          questions: batch
+        });
+
+        totalImported += (res.imported?.length || 0);
+      }
+
+      pdfStatusDiv.innerHTML = `<span style="color:var(--success); font-weight:700; font-size:0.95rem;">🎉 Successfully imported all ${totalImported} questions as Published!</span>`;
+
       setTimeout(() => {
         importModal.close();
         clearSelectedFile();
         loadQuestions();
       }, 1500);
+
     } catch (err) {
       pdfStatusDiv.innerHTML = `<span style="color:var(--danger); font-weight:600;">Import error: ${err.message}</span>`;
       btnPreviewPdf.disabled = false;

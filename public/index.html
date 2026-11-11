@@ -95,6 +95,14 @@
   <!-- Global Toast Notifications Container -->
   <div id="toast-container" class="toast-container"></div>
 
+  <!-- PDF Engine for In-Browser Exam Dump Parsing (bypasses serverless payload limits) -->
+  <script src="./js/vendor/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = './js/vendor/pdf.worker.min.js';
+    }
+  </script>
+
   <!-- Application Bootstrap -->
   <script type="module" src="./js/app.js"></script>
 </body>
