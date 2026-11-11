@@ -124,6 +124,9 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
               <button type="button" class="btn btn-secondary" id="btn-add-section" title="Add another sub-assessment section">
                 + Add Section
               </button>
+              <button type="button" class="btn btn-secondary" id="btn-auto-split-sections" title="Auto-distribute questions into equal unique sections" style="font-weight:700; color:var(--brand-blue, #0078d4); border-color:rgba(0,120,212,0.4);">
+                ⚡ Auto-Split Sections &amp; Questions
+              </button>
               <button type="button" class="btn btn-secondary" id="btn-add-all-course-questions" title="Add all questions from this course's Question Bank across sections">
                 + Add All Course Questions
               </button>
@@ -311,6 +314,87 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
         <button type="button" class="btn btn-secondary btn-sm" id="btn-close-inline-creator">&times;</button>
       </div>
       <div class="modal-body" id="inline-creator-container"></div>
+    </dialog>
+
+    <!-- Auto-Split Sections & Questions Modal -->
+    <dialog id="modal-auto-split-sections" style="max-width:640px; width:95vw; border-radius:var(--radius-lg); padding:0; border:1px solid var(--border); box-shadow:0 20px 40px rgba(0,0,0,0.2);">
+      <div class="modal-header" style="padding:1.25rem 1.5rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="font-size:1.2rem; font-weight:800; margin:0; display:flex; align-items:center; gap:0.5rem;">
+            <span>⚡</span> Auto-Split Sections &amp; Questions
+          </h3>
+          <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--text-muted);">
+            Create custom sub-assessment sections with unique, evenly distributed questions
+          </p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-split-modal" style="font-size:1.25rem; line-height:1; padding:0.25rem 0.6rem;">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding:1.5rem; display:flex; flex-direction:column; gap:1.15rem; max-height:calc(85vh - 160px); overflow-y:auto;">
+        <!-- Course info card -->
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:0.85rem 1rem; background:var(--surface-subtle); border-radius:var(--radius-md); border:1px solid var(--border);">
+          <div>
+            <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Selected Course Question Bank</div>
+            <div id="split-course-name" style="font-weight:800; font-size:1rem; color:var(--text-main);">Loading course...</div>
+          </div>
+          <span class="badge badge-success" id="split-available-badge" style="font-size:0.85rem; font-weight:700; padding:0.4rem 0.8rem;">
+            0 Questions Available
+          </span>
+        </div>
+
+        <!-- Configuration Inputs -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" for="split-num-sections" style="font-weight:700;">Number of Sections</label>
+            <input type="number" id="split-num-sections" class="form-control" value="4" min="1" max="20" required style="font-weight:700; font-size:1.05rem;">
+            <span class="form-hint">e.g. 4 sections</span>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" for="split-questions-per-sec" style="font-weight:700;">Questions per Section</label>
+            <input type="number" id="split-questions-per-sec" class="form-control" value="40" min="1" max="500" required style="font-weight:700; font-size:1.05rem;">
+            <span class="form-hint">e.g. 40 questions</span>
+          </div>
+        </div>
+
+        <!-- Section Naming Pattern -->
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label" for="split-section-prefix" style="font-weight:700;">Section Name Prefix</label>
+          <input type="text" id="split-section-prefix" class="form-control" value="Section" placeholder="e.g. Section, Part, Division" style="font-weight:600;">
+          <span class="form-hint">Creates sections named "Section 1", "Section 2", "Section 3", etc.</span>
+        </div>
+
+        <!-- Checkbox Options -->
+        <div style="display:flex; flex-direction:column; gap:0.5rem; background:rgba(0,120,212,0.03); padding:0.75rem 1rem; border-radius:var(--radius-md); border:1px solid rgba(0,120,212,0.15);">
+          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.875rem;">
+            <input type="checkbox" id="split-shuffle-questions" checked style="width:1.1rem; height:1.1rem; accent-color:var(--brand-magenta);">
+            <span><strong>Randomize order</strong> before distributing (avoids grouping similar questions together)</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.875rem;">
+            <input type="checkbox" id="split-replace-existing" checked style="width:1.1rem; height:1.1rem; accent-color:var(--brand-magenta);">
+            <span>Replace currently configured sections and questions in this assessment</span>
+          </label>
+        </div>
+
+        <!-- Calculation & Status Notice Box -->
+        <div id="split-status-box" style="margin-top:0.25rem;"></div>
+
+        <!-- Distribution Breakdown Preview Card -->
+        <div id="split-breakdown-card" style="border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); overflow:hidden;">
+          <div style="padding:0.6rem 0.9rem; background:var(--surface-subtle); border-bottom:1px solid var(--border); font-weight:700; font-size:0.85rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+            <span>Projected Section Distribution</span>
+            <span id="split-breakdown-total" style="color:var(--brand-blue); font-weight:700;">0 Total Questions</span>
+          </div>
+          <div id="split-breakdown-list" style="padding:0.6rem 0.9rem; display:flex; flex-direction:column; gap:0.35rem; font-size:0.875rem;"></div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer" style="padding:1.15rem 1.5rem; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-split">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-confirm-split" style="font-weight:700;">
+          ⚡ Generate &amp; Populate Sections
+        </button>
+      </div>
     </dialog>
   `;
 
@@ -715,6 +799,287 @@ export function renderAssessmentBuilder(container, { assessmentId = null, onSave
     renderBuilderItems();
     if (addedCount === 0) {
       alert(`All ${questions.length} question(s) for this course are already added to this assessment.`);
+    }
+  };
+
+  // Auto-Split Sections & Questions Modal Wiring
+  const splitModal = container.querySelector('#modal-auto-split-sections');
+  const btnAutoSplit = container.querySelector('#btn-auto-split-sections');
+  const btnCloseSplitModal = container.querySelector('#btn-close-split-modal');
+  const btnCancelSplit = container.querySelector('#btn-cancel-split');
+  const btnConfirmSplit = container.querySelector('#btn-confirm-split');
+  const splitCourseName = container.querySelector('#split-course-name');
+  const splitAvailableBadge = container.querySelector('#split-available-badge');
+  const splitNumSectionsInput = container.querySelector('#split-num-sections');
+  const splitQuestionsPerSecInput = container.querySelector('#split-questions-per-sec');
+  const splitSectionPrefixInput = container.querySelector('#split-section-prefix');
+  const splitShuffleCheckbox = container.querySelector('#split-shuffle-questions');
+  const splitReplaceCheckbox = container.querySelector('#split-replace-existing');
+  const splitStatusBox = container.querySelector('#split-status-box');
+  const splitBreakdownCard = container.querySelector('#split-breakdown-card');
+  const splitBreakdownTotal = container.querySelector('#split-breakdown-total');
+  const splitBreakdownList = container.querySelector('#split-breakdown-list');
+
+  let fetchedCourseQuestions = [];
+  let isEvenSplitMode = false;
+
+  function updateSplitCalculation() {
+    const numSec = Math.max(1, parseInt(splitNumSectionsInput.value, 10) || 1);
+    const perSec = Math.max(1, parseInt(splitQuestionsPerSecInput.value, 10) || 1);
+    const prefix = splitSectionPrefixInput.value.trim() || 'Section';
+    const totalAvail = fetchedCourseQuestions.length;
+    const requestedTotal = numSec * perSec;
+
+    splitBreakdownList.innerHTML = '';
+
+    if (totalAvail === 0) {
+      splitStatusBox.innerHTML = `
+        <div style="padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(220,38,38,0.08); border:1px solid var(--danger); color:var(--danger); font-size:0.875rem; font-weight:600;">
+          ❌ No questions found in the Question Bank for this course. Please import or create questions first.
+        </div>
+      `;
+      splitBreakdownCard.style.display = 'none';
+      btnConfirmSplit.disabled = true;
+      return;
+    }
+
+    btnConfirmSplit.disabled = false;
+
+    // Check if requested exceeds available
+    if (requestedTotal > totalAvail && !isEvenSplitMode) {
+      const base = Math.floor(totalAvail / numSec);
+      const rem = totalAvail % numSec;
+      const previewAllocations = [];
+      for (let s = 0; s < numSec; s++) {
+        previewAllocations.push(base + (s < rem ? 1 : 0));
+      }
+
+      const evenSplitPreviewText = previewAllocations
+        .map((count, idx) => `${prefix} ${idx + 1}: ${count} questions`)
+        .join(', ');
+
+      splitStatusBox.innerHTML = `
+        <div style="padding:0.85rem 1rem; border-radius:var(--radius-md); background:rgba(245,158,11,0.08); border:1.5px solid #f59e0b; display:flex; flex-direction:column; gap:0.5rem;">
+          <div style="display:flex; align-items:center; gap:0.4rem; font-weight:800; color:#b45309; font-size:0.95rem;">
+            <span>⚠️</span> Not Enough Questions Available
+          </div>
+          <div style="font-size:0.875rem; color:var(--text-main); line-height:1.45;">
+            You requested <strong>${numSec} sections &times; ${perSec} questions (${requestedTotal} total)</strong>, but there are only <strong>${totalAvail} unique questions</strong> available in this course.
+          </div>
+          <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.4;">
+            Each section must have different questions (no duplicates). We can <strong>evenly split all ${totalAvail} available questions</strong> across the ${numSec} sections:
+            <div style="font-weight:700; color:var(--text-main); margin-top:0.35rem; background:rgba(0,0,0,0.03); padding:0.4rem 0.6rem; border-radius:4px;">
+              ${evenSplitPreviewText}
+            </div>
+          </div>
+          <div style="margin-top:0.25rem;">
+            <button type="button" class="btn btn-sm btn-secondary" id="btn-apply-even-split" style="font-weight:700; color:var(--brand-blue, #0078d4); border-color:var(--brand-blue, #0078d4);">
+              ✔ Apply Even Split (${totalAvail} Total Questions)
+            </button>
+          </div>
+        </div>
+      `;
+
+      const btnApplyEvenSplit = splitStatusBox.querySelector('#btn-apply-even-split');
+      if (btnApplyEvenSplit) {
+        btnApplyEvenSplit.onclick = () => {
+          isEvenSplitMode = true;
+          splitQuestionsPerSecInput.value = base;
+          updateSplitCalculation();
+        };
+      }
+
+      splitBreakdownCard.style.display = 'block';
+      splitBreakdownTotal.textContent = `Shortfall: ${requestedTotal - totalAvail} missing`;
+      splitBreakdownTotal.style.color = 'var(--danger)';
+
+      let rowsHtml = '';
+      for (let s = 0; s < numSec; s++) {
+        rowsHtml += `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:0.2rem 0; border-bottom:1px dashed var(--border);">
+            <span><strong>${prefix} ${s + 1}</strong>: Requested ${perSec} questions</span>
+            <span class="badge badge-warning">Needs ${perSec} unique</span>
+          </div>
+        `;
+      }
+      splitBreakdownList.innerHTML = rowsHtml;
+
+    } else {
+      let allocations = [];
+      let totalAssigned = 0;
+
+      if (isEvenSplitMode) {
+        const base = Math.floor(totalAvail / numSec);
+        const rem = totalAvail % numSec;
+        for (let s = 0; s < numSec; s++) {
+          allocations.push(base + (s < rem ? 1 : 0));
+        }
+        totalAssigned = totalAvail;
+
+        splitStatusBox.innerHTML = `
+          <div style="padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(0,120,212,0.08); border:1px solid rgba(0,120,212,0.3); display:flex; flex-direction:column; gap:0.25rem;">
+            <div style="font-weight:700; color:var(--brand-blue); font-size:0.9rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>⚡</span> Even Split Mode Active
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-main);">
+              Evenly distributing all <strong>${totalAvail} available questions</strong> across <strong>${numSec} sections</strong> (0 questions omitted).
+            </div>
+          </div>
+        `;
+      } else {
+        allocations = Array(numSec).fill(perSec);
+        totalAssigned = requestedTotal;
+
+        splitStatusBox.innerHTML = `
+          <div style="padding:0.75rem 1rem; border-radius:var(--radius-md); background:rgba(22,163,74,0.08); border:1px solid var(--success); display:flex; flex-direction:column; gap:0.25rem;">
+            <div style="font-weight:700; color:var(--success); font-size:0.9rem; display:flex; align-items:center; gap:0.4rem;">
+              <span>✔</span> Sufficient Questions Available
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-main);">
+              <strong>${requestedTotal} unique questions</strong> will be assigned across <strong>${numSec} sections</strong> (${perSec} per section).
+              <span style="color:var(--text-muted);">(${totalAvail - requestedTotal} questions remain unassigned in bank)</span>
+            </div>
+          </div>
+        `;
+      }
+
+      splitBreakdownCard.style.display = 'block';
+      splitBreakdownTotal.textContent = `${totalAssigned} Total Questions`;
+      splitBreakdownTotal.style.color = 'var(--brand-blue)';
+
+      let rowsHtml = '';
+      for (let s = 0; s < numSec; s++) {
+        rowsHtml += `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:0.2rem 0; border-bottom:1px dashed var(--border);">
+            <span><strong>${prefix} ${s + 1}</strong></span>
+            <span class="badge badge-neutral" style="font-weight:700;">${allocations[s]} Question${allocations[s] === 1 ? '' : 's'}</span>
+          </div>
+        `;
+      }
+      splitBreakdownList.innerHTML = rowsHtml;
+    }
+  }
+
+  btnAutoSplit.onclick = async () => {
+    const courseId = courseSelect.value || null;
+    if (!courseId) {
+      alert('Please select a Course first.');
+      courseSelect.focus();
+      return;
+    }
+
+    const selectedOption = courseSelect.options[courseSelect.selectedIndex];
+    const courseLabel = selectedOption ? selectedOption.textContent : 'Selected Course';
+    splitCourseName.textContent = courseLabel;
+    splitAvailableBadge.textContent = 'Loading questions...';
+    splitStatusBox.innerHTML = '<span style="color:var(--text-muted)">Fetching course question bank...</span>';
+
+    splitModal.showModal();
+
+    try {
+      const questions = await api.get(`/questions?course_id=${courseId}`);
+      const seen = new Set();
+      fetchedCourseQuestions = (questions || []).filter(q => {
+        if (!q || !q.id || seen.has(q.id)) return false;
+        seen.add(q.id);
+        return true;
+      });
+
+      splitAvailableBadge.textContent = `${fetchedCourseQuestions.length} Questions Available`;
+      isEvenSplitMode = false;
+      updateSplitCalculation();
+    } catch (err) {
+      splitStatusBox.innerHTML = `<span style="color:var(--danger); font-weight:600;">Failed to load questions: ${err.message}</span>`;
+    }
+  };
+
+  splitNumSectionsInput.oninput = () => {
+    isEvenSplitMode = false;
+    updateSplitCalculation();
+  };
+  splitQuestionsPerSecInput.oninput = () => {
+    isEvenSplitMode = false;
+    updateSplitCalculation();
+  };
+  splitSectionPrefixInput.oninput = () => updateSplitCalculation();
+
+  btnCloseSplitModal.onclick = () => splitModal.close();
+  btnCancelSplit.onclick = () => splitModal.close();
+
+  btnConfirmSplit.onclick = async () => {
+    const numSec = Math.max(1, parseInt(splitNumSectionsInput.value, 10) || 1);
+    const perSec = Math.max(1, parseInt(splitQuestionsPerSecInput.value, 10) || 1);
+    const prefix = splitSectionPrefixInput.value.trim() || 'Section';
+    const totalAvail = fetchedCourseQuestions.length;
+    const requestedTotal = numSec * perSec;
+
+    if (totalAvail === 0) {
+      alert('No questions available to distribute.');
+      return;
+    }
+
+    let allocations = [];
+    if (isEvenSplitMode || requestedTotal > totalAvail) {
+      const base = Math.floor(totalAvail / numSec);
+      const rem = totalAvail % numSec;
+      for (let s = 0; s < numSec; s++) {
+        allocations.push(base + (s < rem ? 1 : 0));
+      }
+    } else {
+      allocations = Array(numSec).fill(perSec);
+    }
+
+    const totalToAssign = allocations.reduce((a, b) => a + b, 0);
+    if (totalToAssign === 0) {
+      alert('Calculated questions to assign is 0.');
+      return;
+    }
+
+    const newSections = [];
+    for (let s = 1; s <= numSec; s++) {
+      newSections.push(`${prefix} ${s}`);
+    }
+
+    let pool = [...fetchedCourseQuestions];
+    if (splitShuffleCheckbox.checked) {
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    if (splitReplaceCheckbox.checked) {
+      currentSections = newSections;
+      currentItems = [];
+    } else {
+      for (const sName of newSections) {
+        if (!currentSections.includes(sName)) {
+          currentSections.push(sName);
+        }
+      }
+    }
+
+    let offset = 0;
+    for (let s = 0; s < numSec; s++) {
+      const secName = newSections[s];
+      const count = allocations[s];
+      const secQuestions = pool.slice(offset, offset + count);
+      offset += count;
+
+      for (const q of secQuestions) {
+        await addQuestionItem(q, secName);
+      }
+    }
+
+    activeTargetSection = currentSections[0] || 'Section 1';
+    renderBuilderItems();
+    syncModalSectionSelect();
+    splitModal.close();
+
+    const saveStatus = container.querySelector('#save-assessment-status');
+    if (saveStatus) {
+      const summaryText = allocations.map((cnt, i) => `${prefix} ${i + 1}: ${cnt}`).join(', ');
+      saveStatus.innerHTML = `<span style="color:var(--success); font-weight:700;">🎉 Configured ${numSec} sections with ${totalToAssign} unique questions (${summaryText})! Click "${isEditing ? 'Save Assessment Changes' : 'Create Assessment'}" to save.</span>`;
     }
   };
 

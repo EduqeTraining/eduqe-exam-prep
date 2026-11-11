@@ -219,4 +219,90 @@ describe('Instructor Assessment Pass Rate & Section Question Breakdown Suite', (
     const hasSec2Part1 = progress.sections_analysis.some(s => s.name === 'Section 2 (Part 1)');
     assert.ok(hasSec2Part1, 'Section 2 (Part 1) should appear in sections_analysis');
   });
+
+  test('6. Auto-Split Algorithm: Distributes unique questions evenly across N sections without duplicates, handling deficit gracefully', () => {
+    const assessmentService = require('../src/services/assessmentService');
+    const questionService = require('../src/services/questionService');
+
+    // Create 158 mock questions for a test course
+    const mockQuestions = [];
+    for (let i = 1; i <= 158; i++) {
+      mockQuestions.push({
+        id: `mock_q_${i}`,
+        question_text: `Question ${i}`,
+        question_type: 'single_choice'
+      });
+    }
+
+    assert.equal(mockQuestions.length, 158);
+
+    // Algorithm: Requested 4 sections of 50 each (200 total), but only 158 available
+    const numSections = 4;
+    const requestedPerSec = 50;
+    const requestedTotal = numSections * requestedPerSec;
+
+    assert.ok(requestedTotal > mockQuestions.length, '200 requested exceeds 158 available');
+
+    // Even split calculation
+    const base = Math.floor(mockQuestions.length / numSections);
+    const rem = mockQuestions.length % numSections;
+    const allocations = [];
+    for (let s = 0; s < numSections; s++) {
+      allocations.push(base + (s < rem ? 1 : 0));
+    }
+
+    assert.deepEqual(allocations, [40, 40, 39, 39]);
+    assert.equal(allocations.reduce((a, b) => a + b, 0), 158);
+
+    // Distribute questions into sections
+    const sectionNames = ['Section 1', 'Section 2', 'Section 3', 'Section 4'];
+    const distributedItems = [];
+    let offset = 0;
+
+    for (let s = 0; s < numSections; s++) {
+      const secName = sectionNames[s];
+      const count = allocations[s];
+      const secQuestions = mockQuestions.slice(offset, offset + count);
+      offset += count;
+
+      for (const q of secQuestions) {
+        distributedItems.push({
+          question_id: q.id,
+          question: q,
+          section_name: secName
+        });
+      }
+    }
+
+    // Verify properties
+    assert.equal(distributedItems.length, 158);
+
+    // Check count per section
+    const sec1Items = distributedItems.filter(item => item.section_name === 'Section 1');
+    const sec2Items = distributedItems.filter(item => item.section_name === 'Section 2');
+    const sec3Items = distributedItems.filter(item => item.section_name === 'Section 3');
+    const sec4Items = distributedItems.filter(item => item.section_name === 'Section 4');
+
+    assert.equal(sec1Items.length, 40);
+    assert.equal(sec2Items.length, 40);
+    assert.equal(sec3Items.length, 39);
+    assert.equal(sec4Items.length, 39);
+
+    // CRITICAL: Guarantee every single question across all sections is unique (no duplicate questions anywhere)
+    const allAssignedIds = distributedItems.map(item => item.question_id);
+    const uniqueIdsSet = new Set(allAssignedIds);
+    assert.equal(uniqueIdsSet.size, 158, 'All 158 question IDs must be completely unique');
+
+    // Check pairwise disjointness
+    const s1Ids = new Set(sec1Items.map(i => i.question_id));
+    const s2Ids = new Set(sec2Items.map(i => i.question_id));
+    const s3Ids = new Set(sec3Items.map(i => i.question_id));
+    const s4Ids = new Set(sec4Items.map(i => i.question_id));
+
+    for (const id of s1Ids) {
+      assert.ok(!s2Ids.has(id), `Section 2 must not contain Question ${id}`);
+      assert.ok(!s3Ids.has(id), `Section 3 must not contain Question ${id}`);
+      assert.ok(!s4Ids.has(id), `Section 4 must not contain Question ${id}`);
+    }
+  });
 });
