@@ -506,6 +506,9 @@ async function handleRequest(req, res) {
           'eduque_settings'
         ]);
         const body = await parseBody(req);
+        if (body.assessment_id) {
+          await supabaseService.ensureAssessmentQuestionsHydrated(body.assessment_id);
+        }
         try {
           const attemptState = attemptService.startAttempt({
             userId: user.id,
@@ -531,6 +534,7 @@ async function handleRequest(req, res) {
         if (!user) return;
         const assessmentId = activeAttemptMatch[1];
         await supabaseService.ensureActiveAttemptForUserHydrated(user.id, assessmentId);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessmentId);
         try {
           const active = attemptService.getActiveAttemptForUser(user.id, assessmentId);
           if (active) {
@@ -1802,7 +1806,7 @@ async function handleRequest(req, res) {
       // 9. ASSESSMENTS & ASSESSMENT BUILDER
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/assessments') {
-        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions', 'questions']);
         const assessments = assessmentService.listAssessments({
           course_id: query.course_id || '',
           status: query.status || '',
@@ -1814,7 +1818,8 @@ async function handleRequest(req, res) {
 
       const assessIdMatch = pathname.match(/^\/api\/assessments\/([^\/]+)$/);
       if (req.method === 'GET' && assessIdMatch) {
-        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions', 'questions']);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessIdMatch[1]);
         const a = assessmentService.getAssessment(assessIdMatch[1]);
         if (!a) return sendJson(res, 404, { error: 'Assessment not found' });
         return sendJson(res, 200, a);

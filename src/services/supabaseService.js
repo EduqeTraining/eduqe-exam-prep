@@ -185,7 +185,19 @@ async function pullTable(table) {
 
   const pullPromise = (async () => {
     try {
-      const rows = await supabaseRequest(`${table}?select=*&limit=10000`, { method: 'GET' });
+      let rows = [];
+      let offset = 0;
+      const pageSize = 1000;
+
+      // Paginate through Supabase PostgREST (which caps at 1000 rows per request by default)
+      while (true) {
+        const batch = await supabaseRequest(`${table}?select=*&limit=${pageSize}&offset=${offset}`, { method: 'GET' });
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        rows.push(...batch);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      }
+
       if (!Array.isArray(rows)) return 0;
 
       if (rows.length === 0) {
@@ -676,6 +688,98 @@ async function pullAttemptAnswersForAttempt(attemptId) {
 }
 
 /**
+ * Ensures all questions assigned to an assessment (and its pools)
+ * are fully synchronized from Supabase into local SQLite with full text and options.
+ */
+async function ensureAssessmentQuestionsHydrated(assessmentId) {
+  if (!assessmentId) return;
+  const config = getSupabaseConfig();
+  if (!config.isEnabled) return;
+  const db = getDatabase();
+
+  // 1. Ensure assessment_questions for this assessment are present in local SQLite
+  let aqRows = db.all('SELECT id, question_id, pool_id FROM assessment_questions WHERE assessment_id = ?', [assessmentId]);
+  if (!aqRows || aqRows.length === 0) {
+    try {
+      let offset = 0;
+      let allAq = [];
+      while (true) {
+        const remoteAqs = await supabaseRequest(
+          `assessment_questions?assessment_id=eq.${encodeURIComponent(assessmentId)}&select=*&limit=1000&offset=${offset}`,
+          { method: 'GET' }
+        );
+        if (!Array.isArray(remoteAqs) || remoteAqs.length === 0) break;
+        allAq.push(...remoteAqs);
+        if (remoteAqs.length < 1000) break;
+        offset += 1000;
+      }
+      if (allAq.length > 0) {
+        upsertLocalRows('assessment_questions', allAq);
+        aqRows = db.all('SELECT id, question_id, pool_id FROM assessment_questions WHERE assessment_id = ?', [assessmentId]);
+      }
+    } catch (e) {
+      console.warn(`[ensureAssessmentQuestionsHydrated] Error pulling assessment_questions for ${assessmentId}:`, e.message);
+    }
+  }
+
+  // 2. Find any question in this assessment missing from local SQLite (or missing text)
+  const missing = db.all(
+    `SELECT aq.question_id FROM assessment_questions aq
+     LEFT JOIN questions q ON q.id = aq.question_id
+     WHERE aq.assessment_id = ? AND aq.question_id IS NOT NULL AND (q.id IS NULL OR q.question_text IS NULL OR q.question_text = '')`,
+    [assessmentId]
+  );
+
+  const missingIds = [...new Set((missing || []).map(m => m.question_id).filter(Boolean))];
+  if (missingIds.length > 0) {
+    const chunkSize = 50;
+    for (let i = 0; i < missingIds.length; i += chunkSize) {
+      const chunk = missingIds.slice(i, i + chunkSize);
+      try {
+        const idFilter = chunk.map(id => encodeURIComponent(id)).join(',');
+        const qRows = await supabaseRequest(`questions?id=in.(${idFilter})&select=*`, { method: 'GET' });
+        if (Array.isArray(qRows) && qRows.length > 0) {
+          upsertLocalRows('questions', qRows);
+        }
+      } catch (err) {
+        console.warn(`[ensureAssessmentQuestionsHydrated] Error fetching questions chunk:`, err.message);
+      }
+    }
+  }
+
+  // 3. Hydrate any question pools referenced in this assessment
+  const poolIds = [...new Set((aqRows || []).map(r => r.pool_id).filter(Boolean))];
+  for (const poolId of poolIds) {
+    try {
+      const qpiRows = db.all('SELECT question_id FROM question_pool_items WHERE pool_id = ?', [poolId]);
+      if (!qpiRows || qpiRows.length === 0) {
+        const remoteQpi = await supabaseRequest(`question_pool_items?pool_id=eq.${encodeURIComponent(poolId)}&select=*`, { method: 'GET' });
+        if (Array.isArray(remoteQpi) && remoteQpi.length > 0) {
+          upsertLocalRows('question_pool_items', remoteQpi);
+        }
+      }
+      const missingPoolQ = db.all(
+        `SELECT qpi.question_id FROM question_pool_items qpi
+         LEFT JOIN questions q ON q.id = qpi.question_id
+         WHERE qpi.pool_id = ? AND qpi.question_id IS NOT NULL AND (q.id IS NULL OR q.question_text IS NULL OR q.question_text = '')`,
+        [poolId]
+      );
+      const mIds = [...new Set((missingPoolQ || []).map(m => m.question_id).filter(Boolean))];
+      if (mIds.length > 0) {
+        for (let i = 0; i < mIds.length; i += 50) {
+          const chunk = mIds.slice(i, i + 50);
+          const idFilter = chunk.map(id => encodeURIComponent(id)).join(',');
+          const qRows = await supabaseRequest(`questions?id=in.(${idFilter})&select=*`, { method: 'GET' });
+          if (Array.isArray(qRows) && qRows.length > 0) {
+            upsertLocalRows('questions', qRows);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+}
+
+/**
  * Targeted Serverless Hydration for a specific student attempt.
  * Ensures the attempt, its assessment, questions, classes, answers, and settings
  * are fully synchronized into local SQLite regardless of microVM cache state.
@@ -760,6 +864,9 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null, assessmentId
         }
       } catch (err) {}
     }
+
+    // Ensure all referenced questions (and pool questions) exist in local SQLite
+    await ensureAssessmentQuestionsHydrated(assessmentId);
   }
 
   // 3. Ensure referenced class exists in local SQLite
@@ -1063,6 +1170,7 @@ module.exports = {
   invalidateTableCache,
   testSupabaseConnection,
   upsertLocalRows,
+  ensureAssessmentQuestionsHydrated,
   ensureAttemptFullyHydrated,
   ensureActiveAttemptForUserHydrated
 };
