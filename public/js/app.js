@@ -65,6 +65,7 @@ class Router {
   }
 
   async handleRoute() {
+    authState.clearAllIntervals();
     const { path, params } = this.getRouteData();
     if (!authState.isAuthenticated()) {
       showLoginView(path === 'register' || path === 'signup' ? 'register' : 'login');
@@ -343,6 +344,7 @@ function updateNavigationUI(currentPath) {
 
 // Authentication & Student Registration View (Motivated by https://eduqe.co.za/)
 function showLoginView(activeTab = 'login') {
+  authState.clearAllIntervals();
   appShell.style.display = 'none';
   loginContainer.style.display = 'flex';
 
@@ -960,6 +962,10 @@ async function initApp() {
 
   // Listen for session expiration
   window.addEventListener('auth:expired', () => {
+    authState.clearAllIntervals();
+    if (loginContainer.style.display === 'flex' && appShell.style.display === 'none') {
+      return;
+    }
     showLoginView('login');
   });
 

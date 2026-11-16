@@ -1,6 +1,6 @@
 // Student Assessment Player & Exam Interface (Sections 22, 23, 24, 25, 26, 27)
 
-import { api } from '../api.js';
+import { api, authState } from '../api.js';
 
 export function renderAssessmentPlayer(container, { assessmentId = null, classId = null, attemptId = null, forceRestart = false, onExit = null } = {}) {
   let currentAttempt = null;
@@ -633,7 +633,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     }
 
     updateClock();
-    timerInterval = setInterval(updateClock, 1000);
+    timerInterval = authState.registerInterval(setInterval(() => {
+      if (!authState.isAuthenticated() || !document.body.contains(viewContainer)) {
+        clearInterval(timerInterval);
+        return;
+      }
+      updateClock();
+    }, 1000));
   }
 
   function updateFlagButton(isFlagged) {
@@ -879,7 +885,12 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       renderLiveExamInterface();
     };
 
-    lockedModalPoller = setInterval(async () => {
+    lockedModalPoller = authState.registerInterval(setInterval(async () => {
+      if (!authState.isAuthenticated() || !document.body.contains(viewContainer)) {
+        clearInterval(lockedModalPoller);
+        lockedModalPoller = null;
+        return;
+      }
       try {
         const status = await api.getAttemptUnlockStatus(currentAttempt.id);
         const unlockedList = status.unlocked_sections || ['Section 1'];
@@ -911,7 +922,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       } catch (e) {
         // Continue silently
       }
-    }, 3000);
+    }, 3000));
   }
 
   function handleNextNavigation() {
@@ -2421,7 +2432,12 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     };
 
     // Start unlock polling
-    sectionUnlockPoller = setInterval(async () => {
+    sectionUnlockPoller = authState.registerInterval(setInterval(async () => {
+      if (!authState.isAuthenticated() || !document.body.contains(viewContainer)) {
+        clearInterval(sectionUnlockPoller);
+        sectionUnlockPoller = null;
+        return;
+      }
       try {
         const status = await api.getAttemptUnlockStatus(currentAttempt.id);
         const unlockedList = status.unlocked_sections || ['Section 1'];
@@ -2455,7 +2471,17 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       } catch (e) {
         // Silently continue polling
       }
-    }, 4000);
+    }, 4000));
+  }
+
+  function collectAllCurrentAnswers() {
+    const allAnswers = {};
+    for (const q of (currentAttempt?.questions || [])) {
+      if (q && q.id && q.saved_answer !== undefined) {
+        allAnswers[q.id] = q.saved_answer;
+      }
+    }
+    return allAnswers;
   }
 
   // Open End / Final Submission Review Confirmation (Section 25)
@@ -2530,10 +2556,24 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
       }
 
       clearInterval(timerInterval);
+      const payload = {
+        answers: collectAllCurrentAnswers(),
+        assessment_id: currentAttempt.assessment_id,
+        class_id: currentAttempt.class_id
+      };
       try {
-        currentAttempt = await api.post(`/student/attempts/${currentAttempt.id}/submit`);
+        try {
+          currentAttempt = await api.post(`/student/attempts/${currentAttempt.id}/submit`, payload);
+        } catch (firstErr) {
+          await new Promise(r => setTimeout(r, 1000));
+          currentAttempt = await api.post(`/student/attempts/${currentAttempt.id}/submit`, payload);
+        }
         renderResultsScreen();
       } catch (err) {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'End / Submit Assessment';
+        }
         alert(err.message);
       }
     };
@@ -2582,8 +2622,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   }
 
   async function handleAutoSubmit() {
+    const payload = {
+      answers: collectAllCurrentAnswers(),
+      assessment_id: currentAttempt?.assessment_id,
+      class_id: currentAttempt?.class_id
+    };
     try {
-      currentAttempt = await api.post(`/student/attempts/${currentAttempt.id}/submit`);
+      currentAttempt = await api.post(`/student/attempts/${currentAttempt.id}/submit`, payload);
       renderResultsScreen();
     } catch (err) {
       initPlayer();

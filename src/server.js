@@ -381,20 +381,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
 
-        await supabaseService.ensureTablesFresh([
-          'users',
-          'courses',
-          'course_access_codes',
-          'classes',
-          'class_enrollments',
-          'assessments',
-          'assessment_classes',
-          'questions',
-          'assessment_questions',
-          'student_attempts',
-          'attempt_answers',
-          'eduque_settings'
-        ]);
+        await supabaseService.ensureStudentDashboardHydrated(user.id);
 
         // Enforce rule: Purge questions and previous results for any expired certifications
         expirationRuleService.checkAndPurgeExpiredEnrollments({ userId: user.id });
@@ -440,7 +427,9 @@ async function handleRequest(req, res) {
                   const isUnlimited = maxLimit <= 0;
                   const canRetake = isUnlimited || completedCount < maxLimit;
 
-                  const qCount = fullAssessment.question_count ||
+                  const aqCountRow = db.get('SELECT COUNT(*) as c FROM assessment_questions WHERE assessment_id = ?', [fullAssessment.id]);
+                  const qCount = (aqCountRow?.c || 0) ||
+                    fullAssessment.question_count ||
                     (fullAssessment.items ? fullAssessment.items.length : 0) ||
                     (fullAssessment.questions ? fullAssessment.questions.length : 0) ||
                     (ensured?.questions ? ensured.questions.length : 0) ||
@@ -494,6 +483,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         await supabaseService.ensureTablesFresh([
+          'users',
           'courses',
           'classes',
           'course_access_codes',
@@ -519,8 +509,10 @@ async function handleRequest(req, res) {
           });
           const attemptId = attemptState?.id || attemptState?.attempt?.id;
           if (attemptId) {
-            await supabaseService.syncAttemptToSupabase(attemptId);
-            await supabaseService.pullAttemptAnswersForAttempt(attemptId);
+            await Promise.all([
+              supabaseService.syncAttemptToSupabase(attemptId),
+              supabaseService.syncAttemptAnswersToSupabase(attemptId)
+            ]);
           }
           return sendJson(res, 200, attemptState);
         } catch (err) {
@@ -583,9 +575,20 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = autosaveMatch[1];
-        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
-        const targetAttemptId = hydrated?.attemptId || attemptId;
         const body = await parseBody(req);
+        const db = getDatabase();
+
+        // Fast targeted check: only pull attempt/question if missing on this container
+        let localAtt = db.get('SELECT id, assessment_id, class_id FROM student_attempts WHERE id = ?', [attemptId]);
+        let targetAttemptId = attemptId;
+        if (!localAtt) {
+          const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+          targetAttemptId = hydrated?.attemptId || attemptId;
+          localAtt = db.get('SELECT id, assessment_id, class_id FROM student_attempts WHERE id = ?', [targetAttemptId]);
+        } else if (body.question_id && !db.get('SELECT id FROM questions WHERE id = ?', [body.question_id])) {
+          await supabaseService.ensureAssessmentQuestionsHydrated(localAtt.assessment_id);
+        }
+
         try {
           const result = attemptService.autosaveAnswer({
             attemptId: targetAttemptId,
@@ -594,7 +597,11 @@ async function handleRequest(req, res) {
             savedAnswer: body.saved_answer,
             isFlagged: body.is_flagged
           });
-          await supabaseService.syncAttemptAnswersToSupabase(targetAttemptId);
+          // Sync only the single modified answer row (fast ~50ms instead of re-uploading all 150 answers)
+          const ansRow = db.get('SELECT * FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [targetAttemptId, body.question_id]);
+          if (ansRow) {
+            await supabaseService.upsertRecord('attempt_answers', ansRow, 'id');
+          }
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -606,15 +613,23 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         const attemptId = submitMatch[1];
-        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+        const body = await parseBody(req);
+        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id, body?.assessment_id || null, body?.class_id || null);
         const targetAttemptId = hydrated?.attemptId || attemptId;
         try {
           const result = attemptService.submitAttempt({
             attemptId: targetAttemptId,
             userId: user.id,
-            isAuto: false
+            isAuto: false,
+            answers: body?.answers || null,
+            assessmentId: body?.assessment_id || null,
+            classId: body?.class_id || null
           });
-          await supabaseService.syncAttemptToSupabase(targetAttemptId);
+          await Promise.all([
+            supabaseService.syncAttemptToSupabase(targetAttemptId),
+            supabaseService.syncAttemptAnswersToSupabase(targetAttemptId),
+            supabaseService.syncSettingToSupabase(`attempt_meta_${targetAttemptId}`)
+          ]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -639,7 +654,10 @@ async function handleRequest(req, res) {
           });
           const restartAttemptId = result?.id || result?.attempt?.id;
           if (restartAttemptId) {
-            await supabaseService.syncAttemptToSupabase(restartAttemptId);
+            await Promise.all([
+              supabaseService.syncAttemptToSupabase(restartAttemptId),
+              supabaseService.syncAttemptAnswersToSupabase(restartAttemptId)
+            ]);
           }
           return sendJson(res, 200, result);
         } catch (err) {
@@ -664,8 +682,13 @@ async function handleRequest(req, res) {
             assessmentId: body.assessment_id,
             classId: body.class_id
           });
-          await supabaseService.syncAttemptToSupabase(targetAttemptId);
-          await supabaseService.syncAttemptAnswersToSupabase(targetAttemptId);
+          await Promise.all([
+            supabaseService.syncAttemptToSupabase(targetAttemptId),
+            supabaseService.syncAttemptAnswersToSupabase(targetAttemptId),
+            supabaseService.syncSettingToSupabase(`completed_sections_attempt_${targetAttemptId}`),
+            supabaseService.syncSettingToSupabase(`attempt_meta_${targetAttemptId}`),
+            supabaseService.syncSettingToSupabase(`attempt_timer_${targetAttemptId}`)
+          ]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -686,7 +709,10 @@ async function handleRequest(req, res) {
             userId: user.id,
             sectionName: body?.section_name || null
           });
-          await supabaseService.syncAttemptToSupabase(targetAttemptId);
+          await Promise.all([
+            supabaseService.syncAttemptToSupabase(targetAttemptId),
+            supabaseService.syncSettingToSupabase(`attempt_timer_${targetAttemptId}`)
+          ]);
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -698,17 +724,60 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const attemptId = unlockStatusMatch[1];
-        const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
-        const targetAttemptId = hydrated?.attemptId || attemptId;
+        const db = getDatabase();
+
+        let att = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
+        if (!att) {
+          const hydrated = await supabaseService.ensureAttemptFullyHydrated(attemptId, user.id);
+          att = hydrated?.attempt || db.get('SELECT * FROM student_attempts WHERE id = ?', [hydrated?.attemptId || attemptId]);
+        }
+
+        const targetAttemptId = att?.id || attemptId;
+        let classId = att?.class_id;
+        if (!classId && att?.user_id && att?.assessment_id) {
+          const enr = db.get(
+            `SELECT ce.class_id FROM class_enrollments ce
+             JOIN classes cl ON cl.id = ce.class_id
+             JOIN assessments a ON a.course_id = cl.course_id
+             WHERE ce.user_id = ? AND a.id = ? AND ce.status = 'active' LIMIT 1`,
+            [att.user_id, att.assessment_id]
+          );
+          if (enr) classId = enr.class_id;
+        }
+
+        // Pull only the lightweight unlock setting from Supabase
+        if (supabaseService.getSupabaseConfig().isEnabled) {
+          try {
+            const keys = [`completed_sections_attempt_${targetAttemptId}`];
+            if (classId) keys.push(`cohort_unlocked_sections_${classId}`);
+            const inFilter = `in.(${keys.map(k => `"${k}"`).join(',')})`;
+            const sRows = await supabaseService.supabaseRequest(`eduque_settings?key=${inFilter}&select=*`, { method: 'GET' });
+            if (Array.isArray(sRows) && sRows.length > 0) {
+              supabaseService.upsertLocalRows('eduque_settings', sRows);
+            }
+          } catch (_) {}
+        }
+
         try {
-          const state = attemptService.getAttemptState(targetAttemptId, user.id);
+          const unlockedSections = classService.getUnlockedSectionsForClass(classId);
+          let completedSections = [];
+          try {
+            completedSections = JSON.parse(att?.completed_sections || '[]');
+          } catch (_) {}
+          const compSetting = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`completed_sections_attempt_${targetAttemptId}`]);
+          if (compSetting?.value) {
+            try {
+              const parsed = JSON.parse(compSetting.value);
+              if (Array.isArray(parsed) && parsed.length > completedSections.length) completedSections = parsed;
+            } catch (_) {}
+          }
           return sendJson(res, 200, {
             attempt_id: targetAttemptId,
-            unlocked_sections: state?.unlocked_sections || ['Section 1'],
-            completed_sections: state?.completed_sections || [],
-            active_section_name: state?.active_section_name || 'Section 1',
-            is_active_section_unlocked: Boolean(state?.is_active_section_unlocked),
-            status: state?.status
+            unlocked_sections: unlockedSections || ['Section 1'],
+            completed_sections: completedSections,
+            active_section_name: unlockedSections[unlockedSections.length - 1] || 'Section 1',
+            is_active_section_unlocked: true,
+            status: att?.status || 'in_progress'
           });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1356,7 +1425,10 @@ async function handleRequest(req, res) {
             throw new Error('Either unlocked_sections array or section_name is required.');
           }
 
-          await supabaseService.syncClassToSupabase(classId);
+          await Promise.all([
+            supabaseService.syncClassToSupabase(classId),
+            supabaseService.syncSettingToSupabase(`cohort_unlocked_sections_${classId}`)
+          ]);
           return sendJson(res, 200, { success: true, class_id: classId, unlocked_sections: updatedList });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1367,6 +1439,14 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const classId = classUnlockedSecMatch[1];
+        if (supabaseService.getSupabaseConfig().isEnabled) {
+          try {
+            const sRows = await supabaseService.supabaseRequest(`eduque_settings?key=eq.${encodeURIComponent(`cohort_unlocked_sections_${classId}`)}&select=*`, { method: 'GET' });
+            if (Array.isArray(sRows) && sRows.length > 0) {
+              supabaseService.upsertLocalRows('eduque_settings', sRows);
+            }
+          } catch (_) {}
+        }
         const unlocked = classService.getUnlockedSectionsForClass(classId);
         return sendJson(res, 200, { class_id: classId, unlocked_sections: unlocked });
       }
@@ -1383,6 +1463,7 @@ async function handleRequest(req, res) {
         const body = await parseBody(req);
         try {
           const updated = classService.saveClassAssessmentConfig(classId, body, user.id, user.username);
+          await supabaseService.syncSettingToSupabase(`class_assessment_config_${classId}`);
           return sendJson(res, 200, { success: true, class_id: classId, config: updated });
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1393,6 +1474,14 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res);
         if (!user) return;
         const classId = classAssConfigMatch[1];
+        if (supabaseService.getSupabaseConfig().isEnabled) {
+          try {
+            const sRows = await supabaseService.supabaseRequest(`eduque_settings?key=eq.${encodeURIComponent(`class_assessment_config_${classId}`)}&select=*`, { method: 'GET' });
+            if (Array.isArray(sRows) && sRows.length > 0) {
+              supabaseService.upsertLocalRows('eduque_settings', sRows);
+            }
+          } catch (_) {}
+        }
         const config = classService.getClassAssessmentConfig(classId);
         return sendJson(res, 200, { class_id: classId, config });
       }
@@ -1409,7 +1498,8 @@ async function handleRequest(req, res) {
           'course_access_codes',
           'class_enrollments',
           'assessments',
-          'assessment_classes'
+          'assessment_classes',
+          'eduque_settings'
         ]);
         const classes = (user.role === 'administrator')
           ? classService.listClasses()
@@ -1424,47 +1514,9 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor or administrator portal only.' });
         }
-        await supabaseService.ensureTablesFresh([
-          'courses',
-          'users',
-          'classes',
-          'course_access_codes',
-          'class_enrollments',
-          'assessments',
-          'assessment_classes',
-          'questions',
-          'assessment_questions',
-          'student_attempts',
-          'attempt_answers',
-          'eduque_settings'
-        ]);
-        if (supabaseService.getSupabaseConfig().isEnabled) {
-          try {
-            const db = require('./db').getDatabase();
-            const classIdParam = query.class_id || null;
-            let attIds = [];
-            if (classIdParam && classIdParam !== 'all') {
-              const attRows = db.all(
-                `SELECT sa.id FROM student_attempts sa
-                 WHERE sa.class_id = ? 
-                    OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?)
-                 ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC LIMIT 20`,
-                [classIdParam, classIdParam]
-              );
-              attIds = attRows.map(r => r.id);
-            } else {
-              const attRows = db.all(
-                `SELECT sa.id FROM student_attempts sa ORDER BY COALESCE(sa.submitted_at, sa.started_at) DESC LIMIT 20`
-              );
-              attIds = attRows.map(r => r.id);
-            }
-            if (attIds.length > 0) {
-              await Promise.all(attIds.map(id => supabaseService.pullAttemptAnswersForAttempt(id)));
-            }
-          } catch (_) {}
-        }
+        const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
+        await supabaseService.ensureClassProgressHydrated(query.class_id || null, targetInstructorId);
         try {
-          const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
           const progress = instructorService.getInstructorClassProgress(targetInstructorId, query.class_id || null);
           return sendJson(res, 200, progress);
         } catch (err) {
@@ -1479,8 +1531,9 @@ async function handleRequest(req, res) {
         if (user.role !== 'instructor' && user.role !== 'administrator') {
           return sendJson(res, 403, { error: 'Access denied: Instructor portal only.' });
         }
+        const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
+        await supabaseService.ensureClassProgressHydrated(query.class_id || null, targetInstructorId);
         try {
-          const targetInstructorId = user.role === 'administrator' ? (query.instructor_id || null) : user.id;
           const csv = instructorService.exportClassReport(targetInstructorId, query.class_id || null);
           res.writeHead(200, {
             'Content-Type': 'text/csv; charset=utf-8',
@@ -1996,7 +2049,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/dashboard') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
-        await supabaseService.ensureTablesFresh(['users', 'courses', 'classes', 'student_attempts']);
+        await supabaseService.ensureTablesFresh([
+          'users', 'courses', 'classes', 'class_enrollments', 'assessments', 'questions', 'student_attempts'
+        ]);
         const metrics = reportService.getDashboardMetrics();
         return sendJson(res, 200, metrics);
       }
@@ -2004,6 +2059,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/assessments') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'courses', 'assessments', 'assessment_questions', 'student_attempts'
+        ]);
         const data = reportService.getAssessmentReport(query.assessment_id || null);
         return sendJson(res, 200, data);
       }
@@ -2011,6 +2069,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/courses') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'courses', 'classes', 'class_enrollments', 'assessments', 'student_attempts'
+        ]);
         const data = reportService.getCourseReport(query.course_id || null);
         return sendJson(res, 200, data);
       }
@@ -2018,6 +2079,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/classes') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'courses', 'classes', 'class_enrollments', 'assessments', 'assessment_classes', 'student_attempts'
+        ]);
         const data = reportService.getClassReport(query.class_id || null);
         return sendJson(res, 200, data);
       }
@@ -2025,6 +2089,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/students') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'users', 'courses', 'classes', 'class_enrollments', 'assessments', 'student_attempts'
+        ]);
         const data = reportService.getStudentReport(query.user_id || null);
         return sendJson(res, 200, data);
       }
@@ -2032,6 +2099,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/topics') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'courses', 'questions', 'student_attempts', 'attempt_answers'
+        ]);
         const data = reportService.getTopicReport();
         return sendJson(res, 200, data);
       }
@@ -2039,6 +2109,9 @@ async function handleRequest(req, res) {
       if (req.method === 'GET' && pathname === '/api/reports/export') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh([
+          'users', 'courses', 'classes', 'class_enrollments', 'assessments', 'questions', 'student_attempts'
+        ]);
         const reportType = query.type || 'dashboard';
 
         let data = [];

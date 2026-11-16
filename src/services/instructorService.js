@@ -726,15 +726,24 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
         const passMark = att.pass_mark_percentage || defaultPassMark;
         const isGraded = ['submitted', 'marked', 'awaiting_review'].includes(att.status);
 
-        const ansRows = db.all(
+        const rawAnsRows = db.all(
           `SELECT aa.*, q.question_type, q.answer_options, q.correct_answer, q.points, q.partial_credit, q.negative_marking, q.requires_manual_review,
                   (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = ? AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
            FROM attempt_answers aa
            LEFT JOIN questions q ON q.id = aa.question_id
            WHERE aa.attempt_id = ?
-           ORDER BY aa.order_index ASC, aa.id ASC`,
+           ORDER BY (aa.saved_answer IS NOT NULL AND aa.saved_answer != '') DESC, aa.order_index ASC, aa.id ASC`,
           [att.assessment_id, att.id]
         );
+        const seenAnsQ = new Set();
+        const ansRows = [];
+        for (const r of rawAnsRows) {
+          if (!seenAnsQ.has(r.question_id)) {
+            seenAnsQ.add(r.question_id);
+            ansRows.push(r);
+          }
+        }
+        ansRows.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 
         const bySec = new Map();
         for (const ans of ansRows) {
@@ -903,6 +912,19 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           }
         }
 
+        const activeSecs = attemptSectionsSummary.filter(sec => sec.is_completed || sec.is_in_progress);
+        const totalAnsweredInAtt = attemptSectionsSummary.reduce((sum, sec) => sum + (Number(sec.answered_count) || 0), 0);
+        att._total_answered = totalAnsweredInAtt;
+        if (!isGraded && activeSecs.length > 0 && (!att.percentage || Number(att.percentage) === 0)) {
+          const liveAwarded = activeSecs.reduce((sum, sec) => sum + (Number(sec.awarded_points) || 0), 0);
+          const liveMax = activeSecs.reduce((sum, sec) => sum + (Number(sec.max_points) || 0), 0);
+          if (liveMax > 0) {
+            att.percentage = Math.round((liveAwarded / liveMax) * 1000) / 10;
+            att.score = liveAwarded;
+            att.max_score = liveMax;
+          }
+        }
+
         s.attempt_history.push({
           attempt_id: att.id,
           attempt_number: att.attempt_number,
@@ -916,6 +938,23 @@ function getInstructorClassProgress(instructorId, requestedClassId = null) {
           submitted_at: att.submitted_at,
           sections: attemptSectionsSummary
         });
+      }
+
+      // Recompute student's best_score, latest_score, and avg_score using live evaluated attempt scores
+      const activeInProgressWithAnswers = inProgressAttempts.filter(a => (a._total_answered || 0) > 0 || (Number(a.percentage) || 0) > 0);
+      const latestInProgressScore = activeInProgressWithAnswers.length > 0
+        ? Math.round((Number(activeInProgressWithAnswers[activeInProgressWithAnswers.length - 1].percentage) || 0) * 10) / 10
+        : (gradedAttempts.length === 0 && inProgressAttempts.length > 0 ? 0 : null);
+
+      const allScoredAttempts = [...gradedAttempts, ...activeInProgressWithAnswers];
+      if (allScoredAttempts.length > 0) {
+        s.best_score = Math.round(Math.max(...allScoredAttempts.map(a => Number(a.percentage) || 0)) * 10) / 10;
+        s.avg_score = Math.round((allScoredAttempts.reduce((sum, a) => sum + (Number(a.percentage) || 0), 0) / allScoredAttempts.length) * 10) / 10;
+      }
+      if (latestInProgressScore !== null) {
+        s.latest_score = latestInProgressScore;
+      } else if (gradedAttempts.length > 0) {
+        s.latest_score = Math.round((Number(gradedAttempts[gradedAttempts.length - 1].percentage) || 0) * 10) / 10;
       }
 
       // Now summarize each section for this student across all their attempts

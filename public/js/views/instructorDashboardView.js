@@ -1906,14 +1906,23 @@ export function renderInstructorDashboard(container, router, options = {}) {
     };
   }
 
+  const viewAnchorEl = container.querySelector('#btn-refresh-instructor-dash') || container.firstElementChild;
+  let isBackgroundRefreshing = false;
+
   // 15-second background auto-refresh loop
-  const autoRefreshInterval = setInterval(() => {
-    if (document.body.contains(container)) {
-      loadDashboardData(true);
-    } else {
+  const autoRefreshInterval = authState.registerInterval(setInterval(async () => {
+    if (!authState.isAuthenticated() || !viewAnchorEl || !document.body.contains(viewAnchorEl)) {
       clearInterval(autoRefreshInterval);
+      return;
     }
-  }, 15000);
+    if (isBackgroundRefreshing) return;
+    isBackgroundRefreshing = true;
+    try {
+      await loadDashboardData(true);
+    } finally {
+      isBackgroundRefreshing = false;
+    }
+  }, 15000));
 
   // Initial Load
   loadDashboardData();

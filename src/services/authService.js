@@ -2,8 +2,8 @@ const { getDatabase } = require('../db');
 const { hashPassword, verifyPassword, generateToken, createSignedToken, verifySignedToken, generateId } = require('../utils/crypto');
 const { logAction } = require('./auditService');
 
-const MAX_FAILED_ATTEMPTS = 5;
-const MAX_IP_FAILED_ATTEMPTS = 30;
+const MAX_FAILED_ATTEMPTS = 10;
+const MAX_IP_FAILED_ATTEMPTS = 500;
 const THROTTLE_WINDOW_MINUTES = 5;
 const SESSION_DURATION_HOURS = 24;
 
@@ -203,8 +203,23 @@ function validateSession(token) {
     }
 
     // If user is not yet in this serverless container's ephemeral DB,
-    // authenticate using the cryptographically verified signed payload
+    // authenticate using the cryptographically verified signed payload and seed local user row
     if (payload.role) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO users (id, username, email, password_hash, role, first_name, surname, student_number, account_status, must_change_password)
+           VALUES (?, ?, ?, 'stateless_auth', ?, ?, ?, ?, 'active', 0)`,
+          [
+            payload.userId,
+            payload.username || `user_${String(payload.userId).slice(0, 8)}`,
+            payload.email || `${payload.userId}@eduqe.local`,
+            payload.role,
+            payload.first_name || 'User',
+            payload.surname || '',
+            payload.student_number || null
+          ]
+        );
+      } catch (_) {}
       return {
         id: payload.userId,
         username: payload.username,

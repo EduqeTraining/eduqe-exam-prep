@@ -46,14 +46,37 @@ async function supabaseRequest(tableOrPath, { method = 'GET', body = null, heade
 // -------------------------------------------------------------
 
 const tableLastSync = new Map();
+const tableLastSyncIso = new Map();
+const classAnswersLastSync = new Map();
 const inFlightPulls = new Map();
-const SYNC_CACHE_TTL_MS = 30000; // 30 seconds cache window (mutations immediately invalidate cache)
+const unsupportedRemoteColumns = new Map();
+const SYNC_CACHE_TTL_MS = 30000; // 30 seconds default cache window
+
+const TABLE_TTL_OVERRIDES = {
+  questions: 300000,            // 5 minutes (invalidated on question mutations)
+  question_versions: 300000,
+  question_pools: 300000,
+  question_pool_items: 300000,
+  courses: 120000,              // 2 minutes
+  assessments: 60000,           // 1 minute
+  assessment_questions: 60000,
+  assessment_classes: 60000,
+  attempt_answers: 30000
+};
+
+function getTableTtl(table, defaultTtl = SYNC_CACHE_TTL_MS) {
+  if (defaultTtl !== SYNC_CACHE_TTL_MS) return defaultTtl;
+  return TABLE_TTL_OVERRIDES[table] || defaultTtl;
+}
 
 function invalidateTableCache(tableName = null) {
   if (tableName) {
     tableLastSync.delete(tableName);
+    tableLastSyncIso.delete(tableName);
   } else {
     tableLastSync.clear();
+    tableLastSyncIso.clear();
+    classAnswersLastSync.clear();
   }
 }
 
@@ -67,8 +90,17 @@ function upsertLocalRows(table, rows) {
   const hasKey = tableCols.some(c => c.name === 'key');
   const localColSet = new Set(tableCols.map(c => c.name));
 
-  const remoteCols = Object.keys(rows[0]);
-  const matchingCols = remoteCols.filter(c => localColSet.has(c));
+  // Collect union of all matching columns across rows
+  const remoteColSet = new Set();
+  const sampleLimit = Math.min(rows.length, 20);
+  for (let i = 0; i < sampleLimit; i++) {
+    if (rows[i] && typeof rows[i] === 'object') {
+      for (const k of Object.keys(rows[i])) {
+        if (localColSet.has(k)) remoteColSet.add(k);
+      }
+    }
+  }
+  const matchingCols = Array.from(remoteColSet);
   if (matchingCols.length === 0) return 0;
 
   const placeholders = matchingCols.map(() => '?').join(', ');
@@ -79,91 +111,70 @@ function upsertLocalRows(table, rows) {
   } catch (e) {}
 
   try {
+    // Build high-speed prepared statement for bulk execution inside a single SQLite transaction
+    let sql = `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`;
+
+    if (hasId && matchingCols.includes('id') && (table === 'student_attempts' || table === 'attempt_answers')) {
+      const updateCols = matchingCols.filter(c => c !== 'id');
+      if (updateCols.length > 0) {
+        const setClauses = updateCols.map(c => {
+          if (table === 'student_attempts') {
+            if (c === 'completed_sections') {
+              return `"completed_sections" = CASE WHEN (excluded."completed_sections" IS NULL OR excluded."completed_sections" = '' OR excluded."completed_sections" = '[]') AND ("${table}"."completed_sections" IS NOT NULL AND "${table}"."completed_sections" != '' AND "${table}"."completed_sections" != '[]' AND "${table}"."completed_sections" != 'null') THEN "${table}"."completed_sections" ELSE excluded."completed_sections" END`;
+            }
+            if (c === 'class_id') {
+              return `"class_id" = CASE WHEN (excluded."class_id" IS NULL OR excluded."class_id" = '') AND "${table}"."class_id" IS NOT NULL THEN "${table}"."class_id" ELSE excluded."class_id" END`;
+            }
+            if (c === 'percentage' || c === 'score') {
+              return `"${c}" = CASE WHEN (excluded."${c}" IS NULL OR excluded."${c}" = 0) AND "${table}"."${c}" IS NOT NULL AND "${table}"."${c}" > 0 THEN "${table}"."${c}" ELSE COALESCE(excluded."${c}", "${table}"."${c}") END`;
+            }
+            if (c === 'is_paused' || c === 'paused_remaining_seconds') {
+              return `"${c}" = CASE WHEN (excluded."${c}" IS NULL OR excluded."${c}" = 0) AND "${table}"."${c}" IS NOT NULL AND "${table}"."${c}" != 0 THEN "${table}"."${c}" ELSE excluded."${c}" END`;
+            }
+          } else if (table === 'attempt_answers') {
+            if (c === 'is_correct' || c === 'awarded_points' || c === 'marked_status') {
+              return `"${c}" = COALESCE(excluded."${c}", "${table}"."${c}")`;
+            }
+            if (c === 'saved_answer') {
+              return `"saved_answer" = CASE WHEN (excluded."saved_answer" IS NULL OR excluded."saved_answer" = '') AND "${table}"."saved_answer" IS NOT NULL AND "${table}"."saved_answer" != '' THEN "${table}"."saved_answer" ELSE excluded."saved_answer" END`;
+            }
+          }
+          return `"${c}" = excluded."${c}"`;
+        });
+        sql = `INSERT INTO "${table}" (${colNames}) VALUES (${placeholders}) ON CONFLICT("id") DO UPDATE SET ${setClauses.join(', ')}`;
+      }
+    } else if (hasKey && matchingCols.includes('key') && table === 'eduque_settings') {
+      const updateCols = matchingCols.filter(c => c !== 'key');
+      if (updateCols.length > 0) {
+        const setClauses = updateCols.map(c => `"${c}" = excluded."${c}"`);
+        sql = `INSERT INTO "${table}" (${colNames}) VALUES (${placeholders}) ON CONFLICT("key") DO UPDATE SET ${setClauses.join(', ')}`;
+      }
+    }
+
+    const stmt = db.prepare(sql);
+    const fallbackStmt = sql.startsWith('INSERT INTO')
+      ? db.prepare(`INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`)
+      : null;
+
     db.transaction(() => {
       for (const row of rows) {
+        if (!row) continue;
         const vals = matchingCols.map(c => {
           const val = row[c];
+          if (val === undefined) return null;
           if (val !== null && typeof val === 'object') {
             return JSON.stringify(val);
           }
           return val;
         });
 
-        if (hasId && row.id) {
-          const existing = db.get(`SELECT * FROM "${table}" WHERE id = ?`, [row.id]);
-          if (existing) {
-            const updateCols = matchingCols.filter(c => c !== 'id');
-            if (updateCols.length > 0) {
-              const effectiveUpdateCols = [];
-              const updateVals = [];
-              for (const c of updateCols) {
-                let val = row[c];
-                // CRITICAL MERGE LOGIC FOR STUDENT_ATTEMPTS:
-                // Never clobber existing populated local values (class_id, completed_sections, score, percentage, is_paused)
-                // with null, empty string, or empty arrays from remote Supabase pulls if Supabase didn't have the column or data.
-                if (table === 'student_attempts') {
-                  const existingVal = existing[c];
-                  if (c === 'completed_sections') {
-                    const isRemoteEmpty = val === null || val === undefined || val === '' || val === '[]' || (Array.isArray(val) && val.length === 0);
-                    const isLocalPopulated = existingVal && existingVal !== '[]' && existingVal !== 'null' && (!Array.isArray(existingVal) || existingVal.length > 0);
-                    if (isRemoteEmpty && isLocalPopulated) {
-                      val = existingVal;
-                    }
-                  } else if (c === 'class_id') {
-                    if ((val === null || val === undefined || val === '') && existingVal) {
-                      val = existingVal;
-                    }
-                  } else if (c === 'percentage' || c === 'score') {
-                    if ((val === null || val === undefined) && existingVal !== null && existingVal !== undefined) {
-                      val = existingVal;
-                    }
-                  } else if (c === 'is_paused' || c === 'paused_remaining_seconds') {
-                    if ((val === null || val === undefined || val === 0) && existingVal) {
-                      val = existingVal;
-                    }
-                  }
-                } else if (table === 'attempt_answers') {
-                  const existingVal = existing[c];
-                  if (c === 'is_correct' || c === 'awarded_points' || c === 'marked_status') {
-                    if ((val === null || val === undefined) && existingVal !== null && existingVal !== undefined) {
-                      val = existingVal;
-                    }
-                  } else if (c === 'saved_answer') {
-                    if ((val === null || val === undefined || val === '') && existingVal) {
-                      val = existingVal;
-                    }
-                  }
-                }
-
-                effectiveUpdateCols.push(c);
-                updateVals.push((val !== null && typeof val === 'object') ? JSON.stringify(val) : val);
-              }
-
-              const setClause = effectiveUpdateCols.map(c => `"${c}" = ?`).join(', ');
-              db.run(`UPDATE "${table}" SET ${setClause} WHERE id = ?`, [...updateVals, row.id]);
-            }
-            continue;
-          }
-        } else if (hasKey && row.key) {
-          const existing = db.get(`SELECT key FROM "${table}" WHERE key = ?`, [row.key]);
-          if (existing) {
-            const updateCols = matchingCols.filter(c => c !== 'key');
-            if (updateCols.length > 0) {
-              const setClause = updateCols.map(c => `"${c}" = ?`).join(', ');
-              const updateVals = updateCols.map(c => {
-                const val = row[c];
-                return (val !== null && typeof val === 'object') ? JSON.stringify(val) : val;
-              });
-              db.run(`UPDATE "${table}" SET ${setClause} WHERE key = ?`, [...updateVals, row.key]);
-            }
-            continue;
+        try {
+          stmt.run(...vals);
+        } catch (rowErr) {
+          if (fallbackStmt) {
+            try { fallbackStmt.run(...vals); } catch (_) {}
           }
         }
-
-        db.run(
-          `INSERT OR REPLACE INTO "${table}" (${colNames}) VALUES (${placeholders})`,
-          vals
-        );
       }
     });
   } finally {
@@ -174,7 +185,7 @@ function upsertLocalRows(table, rows) {
   return rows.length;
 }
 
-async function pullTable(table) {
+async function pullTable(table, { forceFull = false } = {}) {
   const config = getSupabaseConfig();
   if (!config.isEnabled) return 0;
 
@@ -186,19 +197,55 @@ async function pullTable(table) {
   const pullPromise = (async () => {
     try {
       let rows = [];
-      let offset = 0;
       const pageSize = 1000;
 
-      // Paginate through Supabase PostgREST (which caps at 1000 rows per request by default)
-      while (true) {
-        const batch = await supabaseRequest(`${table}?select=*&limit=${pageSize}&offset=${offset}`, { method: 'GET' });
-        if (!Array.isArray(batch) || batch.length === 0) break;
-        rows.push(...batch);
-        if (batch.length < pageSize) break;
-        offset += pageSize;
+      // Incremental delta sync for attempt_answers after initial full pull
+      const lastIso = !forceFull ? tableLastSyncIso.get(table) : null;
+      if (table === 'attempt_answers' && lastIso) {
+        const deltaRows = await supabaseRequest(
+          `attempt_answers?saved_at=gte.${encodeURIComponent(lastIso)}&select=*&limit=2000`,
+          { method: 'GET' }
+        );
+        if (Array.isArray(deltaRows) && deltaRows.length > 0) {
+          upsertLocalRows('attempt_answers', deltaRows);
+        }
+        tableLastSync.set(table, Date.now());
+        tableLastSyncIso.set(table, new Date(Date.now() - 60000).toISOString());
+        return Array.isArray(deltaRows) ? deltaRows.length : 0;
       }
 
-      if (!Array.isArray(rows)) return 0;
+      // First page fetch
+      const firstBatch = await supabaseRequest(`${table}?select=*&limit=${pageSize}&offset=0`, { method: 'GET' });
+      if (!Array.isArray(firstBatch)) return 0;
+      rows.push(...firstBatch);
+
+      // If more pages exist, fetch in parallel chunks of 4 pages (4,000 rows per wave) for high speed
+      if (firstBatch.length === pageSize) {
+        let waveOffset = pageSize;
+        const parallelPages = 4;
+        while (true) {
+          const offsets = [];
+          for (let p = 0; p < parallelPages; p++) {
+            offsets.push(waveOffset + (p * pageSize));
+          }
+          const waveResults = await Promise.all(
+            offsets.map(off =>
+              supabaseRequest(`${table}?select=*&limit=${pageSize}&offset=${off}`, { method: 'GET' }).catch(() => [])
+            )
+          );
+          let reachedEnd = false;
+          for (const batch of waveResults) {
+            if (Array.isArray(batch) && batch.length > 0) {
+              rows.push(...batch);
+              if (batch.length < pageSize) reachedEnd = true;
+            } else {
+              reachedEnd = true;
+            }
+          }
+          if (reachedEnd) break;
+          waveOffset += parallelPages * pageSize;
+        }
+      }
 
       if (rows.length === 0) {
         // If remote table has 0 rows, preserve existing local cache rows to prevent
@@ -235,6 +282,7 @@ async function pullTable(table) {
 
       const count = upsertLocalRows(table, rows);
       tableLastSync.set(table, Date.now());
+      tableLastSyncIso.set(table, new Date(Date.now() - 60000).toISOString());
       return count;
     } catch (err) {
       console.warn(`[Supabase Pull Warning] Error pulling table ${table}:`, err.message);
@@ -252,9 +300,10 @@ async function ensureTableFresh(table, maxAgeMs = SYNC_CACHE_TTL_MS) {
   const config = getSupabaseConfig();
   if (!config.isEnabled) return;
 
+  const effectiveTtl = getTableTtl(table, maxAgeMs);
   const now = Date.now();
   const lastSync = tableLastSync.get(table) || 0;
-  if (now - lastSync < maxAgeMs) {
+  if (now - lastSync < effectiveTtl) {
     return;
   }
   await pullTable(table);
@@ -266,8 +315,9 @@ async function ensureTablesFresh(tables = [], maxAgeMs = SYNC_CACHE_TTL_MS) {
 
   const now = Date.now();
   const needed = [...new Set(tables)].filter(table => {
+    const effectiveTtl = getTableTtl(table, maxAgeMs);
     const lastSync = tableLastSync.get(table) || 0;
-    return (now - lastSync) >= maxAgeMs;
+    return (now - lastSync) >= effectiveTtl;
   });
 
   if (needed.length === 0) return;
@@ -280,10 +330,26 @@ async function ensureTablesFresh(tables = [], maxAgeMs = SYNC_CACHE_TTL_MS) {
 // GENERIC UPSERT / DELETE HELPERS
 // -------------------------------------------------------------
 
+function stripUnsupportedColumns(tableName, obj) {
+  const unsupported = unsupportedRemoteColumns.get(tableName);
+  if (!unsupported || unsupported.size === 0) return obj;
+  for (const col of unsupported) {
+    delete obj[col];
+  }
+  return obj;
+}
+
+function recordUnsupportedColumn(tableName, colName) {
+  if (!colName) return;
+  if (!unsupportedRemoteColumns.has(tableName)) {
+    unsupportedRemoteColumns.set(tableName, new Set());
+  }
+  unsupportedRemoteColumns.get(tableName).add(colName);
+}
+
 async function upsertRecord(tableName, record, conflictColumns = null) {
   const config = getSupabaseConfig();
   if (!config.isEnabled || !record) return null;
-  invalidateTableCache(tableName);
 
   let conflictParam = conflictColumns || 'id';
   if (!conflictColumns) {
@@ -293,17 +359,16 @@ async function upsertRecord(tableName, record, conflictColumns = null) {
     else if (tableName === 'eduque_settings') conflictParam = 'key';
   }
 
-  const curRecord = { ...record };
-  for (let attempt = 0; attempt < 12; attempt++) {
+  const curRecord = stripUnsupportedColumns(tableName, { ...record });
+  for (let attempt = 0; attempt < 8; attempt++) {
     try {
       const res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
         method: 'POST',
         headers: {
-          'Prefer': 'resolution=merge-duplicates,return=representation'
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         body: curRecord
       });
-      invalidateTableCache(tableName);
       return res;
     } catch (err) {
       // If error is about a missing column in Supabase schema cache (e.g. is_paused, paused_remaining_seconds, completed_sections):
@@ -311,6 +376,7 @@ async function upsertRecord(tableName, record, conflictColumns = null) {
         const colMatch = err.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || err.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
         const colToOmit = colMatch ? colMatch[1] : null;
         if (colToOmit && curRecord[colToOmit] !== undefined) {
+          recordUnsupportedColumn(tableName, colToOmit);
           delete curRecord[colToOmit];
           continue;
         }
@@ -331,9 +397,6 @@ async function upsertRecords(tableName, records, conflictColumns = null) {
   if (!config.isEnabled || !records) return null;
   const rawList = Array.isArray(records) ? records : [records];
   if (rawList.length === 0) return [];
-  const items = rawList.map(r => ({ ...r }));
-
-  invalidateTableCache(tableName);
 
   let conflictParam = conflictColumns || 'id';
   if (!conflictColumns) {
@@ -343,35 +406,42 @@ async function upsertRecords(tableName, records, conflictColumns = null) {
     else if (tableName === 'eduque_settings') conflictParam = 'key';
   }
 
-  for (let attempt = 0; attempt < 12; attempt++) {
-    try {
-      const res = await supabaseRequest(`${tableName}?on_conflict=${conflictParam}`, {
-        method: 'POST',
-        headers: {
-          'Prefer': 'resolution=merge-duplicates,return=representation'
-        },
-        body: items
-      });
-      invalidateTableCache(tableName);
-      return res;
-    } catch (err) {
-      if (err && err.message && /column.*does not exist|Could not find the.*column/i.test(err.message)) {
-        const colMatch = err.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || err.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
-        const colToOmit = colMatch ? colMatch[1] : null;
-        if (colToOmit) {
-          items.forEach(it => { delete it[colToOmit]; });
+  // Chunk large arrays into batches of 200 so payloads never time out
+  const batchSize = 200;
+  for (let i = 0; i < rawList.length; i += batchSize) {
+    const chunk = rawList.slice(i, i + batchSize).map(r => stripUnsupportedColumns(tableName, { ...r }));
+    let curConflict = conflictParam;
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        await supabaseRequest(`${tableName}?on_conflict=${curConflict}`, {
+          method: 'POST',
+          headers: {
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
+          },
+          body: chunk
+        });
+        break;
+      } catch (err) {
+        if (err && err.message && /column.*does not exist|Could not find the.*column/i.test(err.message)) {
+          const colMatch = err.message.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || err.message.match(/column\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
+          const colToOmit = colMatch ? colMatch[1] : null;
+          if (colToOmit) {
+            recordUnsupportedColumn(tableName, colToOmit);
+            chunk.forEach(it => { delete it[colToOmit]; });
+            continue;
+          }
+        }
+        if (curConflict !== 'id') {
+          curConflict = 'id';
           continue;
         }
+        console.warn(`[Supabase Bulk Sync Warning] Could not sync batch to ${tableName}:`, err.message);
+        break;
       }
-      if (conflictParam !== 'id') {
-        conflictParam = 'id';
-        continue;
-      }
-      console.warn(`[Supabase Bulk Sync Warning] Could not sync batch to ${tableName}:`, err.message);
-      return null;
     }
   }
-  return null;
+  return [];
 }
 
 async function deleteRecord(tableName, id) {
@@ -907,13 +977,105 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null, assessmentId
   // 4. Pull all latest attempt answers from Supabase
   await pullAttemptAnswersForAttempt(attemptId);
 
+  // 4b. Self-heal & backfill any missing attempt_answers rows from assessment_questions
+  // (e.g., if startAttempt ran on another serverless instance before initial attempt_answers synced)
+  if (assessmentId && attempt) {
+    try {
+      const aqRows = db.all(
+        `SELECT aq.question_id, aq.section_name, aq.order_index, aq.points_override, q.points, q.version
+         FROM assessment_questions aq
+         LEFT JOIN questions q ON q.id = aq.question_id
+         WHERE aq.assessment_id = ? AND aq.question_id IS NOT NULL
+         ORDER BY aq.order_index ASC, aq.id ASC`,
+        [assessmentId]
+      );
+
+      if (aqRows && aqRows.length > 0) {
+        // Deduplicate any duplicate (attempt_id, question_id) rows keeping the one with saved_answer
+        const existingAnsRows = db.all(
+          `SELECT id, question_id, saved_answer, order_index FROM attempt_answers WHERE attempt_id = ? ORDER BY (saved_answer IS NOT NULL AND saved_answer != '') DESC, saved_at DESC`,
+          [attemptId]
+        );
+        const seenQ = new Set();
+        const dupIds = [];
+        for (const r of existingAnsRows) {
+          if (seenQ.has(r.question_id)) {
+            dupIds.push(r.id);
+          } else {
+            seenQ.add(r.question_id);
+          }
+        }
+        if (dupIds.length > 0) {
+          for (let i = 0; i < dupIds.length; i += 100) {
+            const c = dupIds.slice(i, i + 100);
+            db.run(`DELETE FROM attempt_answers WHERE id IN (${c.map(() => '?').join(',')})`, c);
+          }
+        }
+
+        // Check if class config restricts question limits per section
+        let hasCustomLimit = false;
+        if (classId) {
+          try {
+            const cfgRow = db.get('SELECT value FROM eduque_settings WHERE key = ?', [`class_assessment_config_${classId}`]);
+            if (cfgRow && cfgRow.value) {
+              const cfg = typeof cfgRow.value === 'string' ? JSON.parse(cfgRow.value) : cfgRow.value;
+              if (cfg && cfg.sections && Object.values(cfg.sections).some(s => s && (Number(s.limit) > 0 || Number(s.chunk_size) > 0))) {
+                hasCustomLimit = true;
+              }
+            }
+          } catch (_) {}
+        }
+
+        // If no custom limit is shrinking the question set (or if 0 answers exist), backfill any missing questions
+        if (!hasCustomLimit || seenQ.size === 0) {
+          const missingAq = aqRows.filter(aq => !seenQ.has(aq.question_id));
+          if (missingAq.length > 0) {
+            try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+            const insertStmt = db.prepare(
+              `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+               VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`
+            );
+            const newRowsForRemote = [];
+            db.transaction(() => {
+              missingAq.forEach((aq, idx) => {
+                const detId = `aa_${attemptId}_${aq.question_id}`;
+                const secName = (aq.section_name && aq.section_name !== 'General') ? aq.section_name : 'Section 1';
+                const ordIdx = aq.order_index !== null && aq.order_index !== undefined ? aq.order_index : (seenQ.size + idx);
+                const maxPts = aq.points_override !== null && aq.points_override !== undefined ? aq.points_override : (aq.points || 1);
+                insertStmt.run(detId, attemptId, aq.question_id, aq.version || 1, secName, ordIdx, maxPts);
+                newRowsForRemote.push({
+                  id: detId,
+                  attempt_id: attemptId,
+                  question_id: aq.question_id,
+                  question_version: aq.version || 1,
+                  section_name: secName,
+                  order_index: ordIdx,
+                  saved_answer: null,
+                  is_flagged: 0,
+                  max_points: maxPts,
+                  marked_status: 'pending'
+                });
+              });
+            });
+            try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+            if (newRowsForRemote.length > 0) {
+              await upsertRecords('attempt_answers', newRowsForRemote, 'id');
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[ensureAttemptFullyHydrated] Backfill check warning:`, err.message);
+    }
+  }
+
   // 5. Ensure all questions referenced in attempt_answers exist in the questions table
   try {
     const missingQRows = db.all(
       `SELECT DISTINCT aa.question_id
        FROM attempt_answers aa
        LEFT JOIN questions q ON q.id = aa.question_id
-       WHERE aa.attempt_id = ? AND q.id IS NULL`,
+       WHERE aa.attempt_id = ? AND (q.id IS NULL OR q.question_text IS NULL OR q.question_text = '')`,
       [attemptId]
     );
     if (missingQRows && missingQRows.length > 0) {
@@ -933,10 +1095,12 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null, assessmentId
   try {
     const settingKeys = [
       `attempt_timer_${attemptId}`,
-      `completed_sections_attempt_${attemptId}`
+      `completed_sections_attempt_${attemptId}`,
+      `attempt_meta_${attemptId}`
     ];
     if (classId) {
       settingKeys.push(`cohort_unlocked_sections_${classId}`);
+      settingKeys.push(`class_assessment_config_${classId}`);
     }
     const inFilter = `in.(${settingKeys.map(k => `"${k}"`).join(',')})`;
     const sRows = await supabaseRequest(`eduque_settings?key=${inFilter}&select=*`, { method: 'GET' });
@@ -946,6 +1110,119 @@ async function ensureAttemptFullyHydrated(attemptId, userId = null, assessmentId
   } catch (err) {}
 
   return { attempt, attemptId };
+}
+
+/**
+ * Fast, targeted hydration for a Student Dashboard load.
+ * Avoids pulling all 16,500+ global attempt_answers across the entire platform.
+ */
+async function ensureStudentDashboardHydrated(userId) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled || !userId) return;
+
+  await ensureTablesFresh([
+    'courses',
+    'classes',
+    'course_access_codes',
+    'assessments',
+    'assessment_classes',
+    'assessment_questions',
+    'eduque_settings'
+  ]);
+
+  // Pull this specific student's user row, enrollments, and attempts in parallel
+  try {
+    const [uRows, eRows, aRows] = await Promise.all([
+      supabaseRequest(`users?id=eq.${encodeURIComponent(userId)}&select=*`, { method: 'GET' }).catch(() => []),
+      supabaseRequest(`class_enrollments?user_id=eq.${encodeURIComponent(userId)}&select=*`, { method: 'GET' }).catch(() => []),
+      supabaseRequest(`student_attempts?user_id=eq.${encodeURIComponent(userId)}&select=*`, { method: 'GET' }).catch(() => [])
+    ]);
+    if (Array.isArray(uRows) && uRows.length > 0) upsertLocalRows('users', uRows);
+    if (Array.isArray(eRows) && eRows.length > 0) upsertLocalRows('class_enrollments', eRows);
+    if (Array.isArray(aRows) && aRows.length > 0) upsertLocalRows('student_attempts', aRows);
+  } catch (e) {}
+}
+
+/**
+ * Fast, targeted hydration for Instructor Cohort Progress.
+ * Pulls attempt_answers only for the attempts belonging to the target class(es) rather than all historical answers.
+ */
+async function ensureClassProgressHydrated(classId = null, instructorId = null) {
+  const config = getSupabaseConfig();
+  if (!config.isEnabled) return;
+
+  await ensureTablesFresh([
+    'courses',
+    'users',
+    'classes',
+    'course_access_codes',
+    'class_enrollments',
+    'assessments',
+    'assessment_classes',
+    'questions',
+    'assessment_questions',
+    'student_attempts',
+    'eduque_settings'
+  ]);
+
+  const cacheKey = `${classId || 'all'}_${instructorId || 'admin'}`;
+  const now = Date.now();
+  const lastClassSync = classAnswersLastSync.get(cacheKey) || 0;
+  if (now - lastClassSync < 12000) {
+    return;
+  }
+
+  try {
+    const db = getDatabase();
+    let attRows = [];
+    if (classId && classId !== 'all') {
+      attRows = db.all(
+        `SELECT DISTINCT sa.id FROM student_attempts sa
+         WHERE sa.class_id = ?
+            OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce WHERE ce.class_id = ?)`,
+        [classId, classId]
+      );
+    } else if (instructorId) {
+      attRows = db.all(
+        `SELECT DISTINCT sa.id FROM student_attempts sa
+         WHERE sa.class_id IN (SELECT id FROM classes WHERE instructor_id = ?)
+            OR sa.user_id IN (SELECT ce.user_id FROM class_enrollments ce JOIN classes cl ON cl.id = ce.class_id WHERE cl.instructor_id = ?)`,
+        [instructorId, instructorId]
+      );
+    } else {
+      attRows = db.all(
+        `SELECT id FROM student_attempts ORDER BY COALESCE(submitted_at, started_at) DESC LIMIT 120`
+      );
+    }
+
+    const attIds = attRows.map(r => r.id).filter(Boolean);
+    if (attIds.length > 0) {
+      const chunkSize = 35;
+      const chunks = [];
+      for (let i = 0; i < attIds.length; i += chunkSize) {
+        chunks.push(attIds.slice(i, i + chunkSize));
+      }
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          const inFilter = `in.(${chunk.map(id => `"${id}"`).join(',')})`;
+          let offset = 0;
+          while (true) {
+            const rows = await supabaseRequest(
+              `attempt_answers?attempt_id=${inFilter}&select=*&limit=1000&offset=${offset}`,
+              { method: 'GET' }
+            ).catch(() => []);
+            if (!Array.isArray(rows) || rows.length === 0) break;
+            upsertLocalRows('attempt_answers', rows);
+            if (rows.length < 1000) break;
+            offset += 1000;
+          }
+        })
+      );
+    }
+    classAnswersLastSync.set(cacheKey, Date.now());
+  } catch (e) {
+    console.warn('[ensureClassProgressHydrated] Warning:', e.message);
+  }
 }
 
 /**
@@ -1024,7 +1301,7 @@ async function pushAllToSupabase() {
       await supabaseRequest(`${table}?on_conflict=id`, {
         method: 'POST',
         headers: {
-          'Prefer': 'resolution=merge-duplicates,return=representation'
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         body: batch
       });
@@ -1071,7 +1348,7 @@ async function pullFromSupabase() {
 }
 
 // -------------------------------------------------------------
-// CONTAINER STARTUP SYNC
+// CONTAINER STARTUP SYNC (FAST PARALLEL CORE HYDRATION)
 // -------------------------------------------------------------
 
 async function syncOnStartup() {
@@ -1083,25 +1360,26 @@ async function syncOnStartup() {
     if (!remoteUsers || remoteUsers.length === 0) {
       console.log('[Supabase Startup] Remote tables are empty. Pushing platform seed data to Supabase...');
       await pushAllToSupabase();
-    } else {
-      console.log('[Supabase Startup] Hydrating local database from Supabase...');
-      await pullFromSupabase();
+      return;
     }
 
-    // Ensure all draft questions are published and synchronized
+    // Pull lightweight core metadata tables in parallel (< 400ms total) so cold starts never block login or API calls
+    const fastCoreTables = [
+      'users',
+      'courses',
+      'classes',
+      'course_access_codes',
+      'class_enrollments',
+      'assessments',
+      'assessment_classes',
+      'assessment_questions',
+      'eduque_settings'
+    ];
+    await Promise.all(fastCoreTables.map(t => pullTable(t).catch(() => 0)));
+
+    // Ensure local draft questions are marked published
     const db = getDatabase();
     db.run("UPDATE questions SET status = 'published' WHERE status = 'draft';");
-
-    try {
-      const allLocalQuestions = db.all("SELECT * FROM questions");
-      if (allLocalQuestions && allLocalQuestions.length > 0) {
-        await upsertRecords('questions', allLocalQuestions, 'id');
-      }
-      await supabaseRequest('questions?status=eq.draft', {
-        method: 'PATCH',
-        body: { status: 'published' }
-      });
-    } catch (_) {}
   } catch (err) {
     console.warn('[Supabase Startup Warning]:', err.message);
   }
@@ -1172,5 +1450,7 @@ module.exports = {
   upsertLocalRows,
   ensureAssessmentQuestionsHydrated,
   ensureAttemptFullyHydrated,
-  ensureActiveAttemptForUserHydrated
+  ensureActiveAttemptForUserHydrated,
+  ensureStudentDashboardHydrated,
+  ensureClassProgressHydrated
 };

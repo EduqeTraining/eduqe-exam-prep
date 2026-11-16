@@ -30,9 +30,26 @@ export const authState = {
   clearSession() {
     this.token = null;
     this.user = null;
+    this.clearAllIntervals();
     localStorage.removeItem('eduqe_token');
     localStorage.removeItem('eduque_token');
     localStorage.removeItem('eduqe_user');
+  },
+
+  _activeIntervals: new Set(),
+
+  registerInterval(intervalId) {
+    if (intervalId) {
+      this._activeIntervals.add(intervalId);
+    }
+    return intervalId;
+  },
+
+  clearAllIntervals() {
+    for (const id of this._activeIntervals) {
+      clearInterval(id);
+    }
+    this._activeIntervals.clear();
   },
 
   isAuthenticated() {
@@ -58,8 +75,9 @@ export async function apiRequest(endpoint, { method = 'GET', body = null, header
     ...headers
   };
 
-  if (authState.token) {
-    reqHeaders['Authorization'] = `Bearer ${authState.token}`;
+  const requestToken = authState.token;
+  if (requestToken) {
+    reqHeaders['Authorization'] = `Bearer ${requestToken}`;
   }
 
   const options = {
@@ -74,9 +92,16 @@ export async function apiRequest(endpoint, { method = 'GET', body = null, header
   const response = await fetch(`${API_BASE}${endpoint}`, options);
 
   if (response.status === 401) {
-    authState.clearSession();
-    window.dispatchEvent(new CustomEvent('auth:expired'));
-    throw new Error('Your session has expired. Please sign in again.');
+    const isAuthRoute = endpoint === '/auth/login' || endpoint === '/auth/register' || endpoint === '/auth/logout';
+    // Only clear session if the current token has not already been replaced by a newer login
+    if (!isAuthRoute && authState.token === requestToken) {
+      authState.clearSession();
+      window.dispatchEvent(new CustomEvent('auth:expired'));
+    }
+    const err = new Error('Your session has expired. Please sign in again.');
+    err.status = 401;
+    err.isUnauthorized = true;
+    throw err;
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -93,7 +118,9 @@ export async function apiRequest(endpoint, { method = 'GET', body = null, header
 
   if (!response.ok) {
     const errorMsg = data?.error || data?.message || `HTTP error ${response.status}`;
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg);
+    err.status = response.status;
+    throw err;
   }
 
   return data;
@@ -125,6 +152,7 @@ export const api = {
   },
 
   async logout() {
+    authState.clearAllIntervals();
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
     } finally {
@@ -137,10 +165,15 @@ export const api = {
     try {
       const res = await apiRequest('/auth/me');
       authState.user = res.user;
+      if (res.user) localStorage.setItem('eduqe_user', JSON.stringify(res.user));
       return res.user;
     } catch (e) {
-      authState.clearSession();
-      return null;
+      // Only wipe session on an actual 401 unauthorized response, never on a transient 5xx/network hiccup
+      if (e && (e.isUnauthorized || e.status === 401)) {
+        authState.clearSession();
+        return null;
+      }
+      return authState.user || null;
     }
   },
 

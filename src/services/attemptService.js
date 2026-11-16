@@ -320,12 +320,12 @@ function startAttempt({ userId, assessmentId, classId, forceNew = false, submitE
     [attemptId, assessmentId, userId, targetClassId, newAttemptNumber, deadlineDate, JSON.stringify([])]
   );
 
-  // Initialize attempt answers with section_name and order_index
+  // Initialize attempt answers with deterministic IDs, section_name and order_index
   resolvedQuestions.forEach((q, idx) => {
-    const answerId = generateId();
+    const answerId = `aa_${attemptId}_${q.id}`;
     const secName = (q.section_name && q.section_name !== 'General') ? q.section_name : (assessment.section_names?.[0] || 'Section 1');
     db.run(
-      `INSERT INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+      `INSERT OR REPLACE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
        VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`,
       [answerId, attemptId, q.id, q.version || 1, secName, idx, q.points || 1]
     );
@@ -371,7 +371,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   }
 
   // Check section lock and completion status FIRST before doing anything else
-  const answerRow = db.get(
+  let answerRow = db.get(
     `SELECT aa.section_name,
             (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = sa.assessment_id AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
      FROM attempt_answers aa
@@ -379,6 +379,32 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
      WHERE aa.attempt_id = ? AND aa.question_id = ?`,
     [attemptId, questionId]
   );
+
+  // Self-heal if attempt_answers row wasn't synced to this container yet, but belongs to the assessment
+  if (!answerRow && attempt.assessment_id) {
+    const aqCheck = db.get(
+      `SELECT aq.section_name, aq.order_index, aq.points_override, q.points, q.version
+       FROM assessment_questions aq
+       LEFT JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id = ? AND aq.question_id = ?
+       LIMIT 1`,
+      [attempt.assessment_id, questionId]
+    );
+    if (aqCheck) {
+      const detId = `aa_${attemptId}_${questionId}`;
+      const sec = (aqCheck.section_name && aqCheck.section_name !== 'General') ? aqCheck.section_name : 'Section 1';
+      const pts = aqCheck.points_override !== null && aqCheck.points_override !== undefined ? aqCheck.points_override : (aqCheck.points || 1);
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`,
+          [detId, attemptId, questionId, aqCheck.version || 1, sec, aqCheck.order_index || 0, pts]
+        );
+        answerRow = { section_name: sec, aq_section_name: sec };
+      } catch (_) {}
+    }
+  }
+
   if (!answerRow) {
     throw new Error('Question not found in this attempt.');
   }
@@ -495,7 +521,7 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
   return { success: true, saved_at: new Date().toISOString() };
 }
 
-function submitAttempt({ attemptId, userId, isAuto = false }) {
+function submitAttempt({ attemptId, userId, isAuto = false, answers: clientAnswers = null, assessmentId = null, classId = null }) {
   const db = getDatabase();
   let attempt = db.get(
     `SELECT sa.*, a.pass_mark_percentage, a.result_visibility, a.explanation_visibility
@@ -514,15 +540,36 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
         result_visibility: 'immediate',
         explanation_visibility: 'immediate'
       };
+    } else if (userId) {
+      const userActive = (assessmentId
+        ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId, assessmentId])
+        : null)
+        || db.get("SELECT * FROM student_attempts WHERE user_id = ? AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1", [userId])
+        || (assessmentId
+          ? db.get("SELECT * FROM student_attempts WHERE user_id = ? AND assessment_id = ? ORDER BY started_at DESC LIMIT 1", [userId, assessmentId])
+          : null)
+        || db.get("SELECT * FROM student_attempts WHERE user_id = ? ORDER BY started_at DESC LIMIT 1", [userId]);
+      if (userActive) {
+        attemptId = userActive.id;
+        const assRow = db.get('SELECT pass_mark_percentage, result_visibility, explanation_visibility FROM assessments WHERE id = ?', [userActive.assessment_id]);
+        attempt = {
+          ...userActive,
+          pass_mark_percentage: assRow?.pass_mark_percentage ?? 70,
+          result_visibility: assRow?.result_visibility ?? 'immediate',
+          explanation_visibility: assRow?.explanation_visibility ?? 'immediate'
+        };
+      } else {
+        throw new Error('Attempt not found.');
+      }
     } else {
       throw new Error('Attempt not found.');
     }
   }
   attempt.pass_mark_percentage = attempt.pass_mark_percentage ?? 70;
-  if (attempt.class_id) {
+  if (attempt.class_id || classId) {
     try {
       const { getClassAssessmentConfig } = require('./classService');
-      const classConfig = getClassAssessmentConfig(attempt.class_id, attempt.assessment_id);
+      const classConfig = getClassAssessmentConfig(attempt.class_id || classId, attempt.assessment_id);
       if (classConfig && classConfig.pass_mark_percentage) {
         attempt.pass_mark_percentage = classConfig.pass_mark_percentage;
       }
@@ -534,20 +581,87 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
   if (attempt.user_id !== userId) {
     throw new Error('Unauthorized attempt access.');
   }
+
+  // Persist any client-supplied answers before grading so no answers are ever lost
+  if (clientAnswers && typeof clientAnswers === 'object') {
+    try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+    for (const [qId, ansVal] of Object.entries(clientAnswers)) {
+      if (ansVal !== undefined) {
+        const answerJson = (ansVal !== null && typeof ansVal === 'object') ? JSON.stringify(ansVal) : (ansVal !== null ? String(ansVal) : null);
+        const existingAns = db.get('SELECT id FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, qId]);
+        if (existingAns) {
+          db.run(
+            `UPDATE attempt_answers SET saved_answer = ?, saved_at = datetime('now') WHERE attempt_id = ? AND question_id = ?`,
+            [answerJson, attemptId, qId]
+          );
+        } else {
+          const aqSec = db.get('SELECT section_name, order_index, points_override FROM assessment_questions WHERE assessment_id = ? AND question_id = ? LIMIT 1', [attempt.assessment_id, qId]);
+          db.run(
+            `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, saved_answer, section_name, order_index, max_points, saved_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            [`aa_${attemptId}_${qId}`, attemptId, qId, answerJson, (aqSec?.section_name || 'Section 1').trim(), aqSec?.order_index || 0, aqSec?.points_override || 1]
+          );
+        }
+      }
+    }
+    try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+  }
+
   if (attempt.status !== 'in_progress') {
     return getAttemptState(attemptId, userId);
   }
 
   // Fetch all answers and corresponding questions
-  const answers = db.all(
+  let rawAnswers = db.all(
     `SELECT aa.*, q.question_type, q.question_text, q.question_description,
             q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
             q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
      FROM attempt_answers aa
      LEFT JOIN questions q ON q.id = aa.question_id
-     WHERE aa.attempt_id = ?`,
+     WHERE aa.attempt_id = ?
+     ORDER BY (aa.saved_answer IS NOT NULL AND aa.saved_answer != '') DESC, aa.order_index ASC`,
     [attemptId]
   );
+
+  // If attempt_answers was empty on this container, backfill from assessment_questions
+  if (rawAnswers.length === 0 && attempt.assessment_id) {
+    const aqRows = db.all(
+      `SELECT aq.question_id, aq.section_name, aq.order_index, aq.points_override, q.points, q.version
+       FROM assessment_questions aq
+       LEFT JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id = ? AND aq.question_id IS NOT NULL
+       ORDER BY aq.order_index ASC`,
+      [attempt.assessment_id]
+    );
+    try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+    for (const aq of aqRows) {
+      db.run(
+        `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`,
+        [`aa_${attemptId}_${aq.question_id}`, attemptId, aq.question_id, aq.version || 1, (aq.section_name || 'Section 1').trim(), aq.order_index || 0, aq.points_override ?? aq.points ?? 1]
+      );
+    }
+    try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+    rawAnswers = db.all(
+      `SELECT aa.*, q.question_type, q.question_text, q.question_description,
+              q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
+              q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
+       FROM attempt_answers aa
+       LEFT JOIN questions q ON q.id = aa.question_id
+       WHERE aa.attempt_id = ?`,
+      [attemptId]
+    );
+  }
+
+  // Deduplicate by question_id
+  const seenQ = new Set();
+  const answers = [];
+  for (const r of rawAnswers) {
+    if (!seenQ.has(r.question_id)) {
+      seenQ.add(r.question_id);
+      answers.push(r);
+    }
+  }
 
   let totalScore = 0;
   let maxScore = 0;
@@ -610,6 +724,35 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
     [finalStatus, totalScore, maxScore, percentage, isPassed ? 1 : 0, JSON.stringify(allDistinctSections), attemptId]
   );
 
+  try {
+    const metaKey = `attempt_meta_${attemptId}`;
+    const metaId = `setting-meta-${attemptId}`;
+    const metaPayload = {
+      attempt_id: attemptId,
+      user_id: userId,
+      class_id: attempt.class_id || classId,
+      assessment_id: attempt.assessment_id,
+      completed_sections: allDistinctSections,
+      percentage,
+      score: totalScore,
+      max_score: maxScore,
+      status: finalStatus,
+      is_passed: isPassed ? 1 : 0,
+      is_all_completed: true,
+      submitted_at: new Date().toISOString()
+    };
+    db.run(
+      `INSERT INTO eduque_settings (id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [metaId, metaKey, JSON.stringify(metaPayload)]
+    );
+    const supabaseService = require('./supabaseService');
+    supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
+    supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
+    supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
+  } catch (_) {}
+
   logAction({
     userId,
     action: isAuto ? 'AUTO_SUBMIT_ASSESSMENT_ATTEMPT' : 'SUBMIT_ASSESSMENT_ATTEMPT',
@@ -617,12 +760,6 @@ function submitAttempt({ attemptId, userId, isAuto = false }) {
     entityId: attemptId,
     details: { totalScore, maxScore, percentage, isPassed, status: finalStatus, isAuto }
   });
-
-  try {
-    const supabaseService = require('./supabaseService');
-    supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
-    supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
-  } catch (_) {}
 
   return getAttemptState(attemptId, userId);
 }
@@ -847,26 +984,71 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
   }
 
   // Fetch all answers in this section
-  let answers = db.all(
+  let rawSecAnswers = db.all(
     `SELECT aa.*, q.question_type, q.question_text, q.question_description,
             q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
             q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
      FROM attempt_answers aa
      LEFT JOIN questions q ON q.id = aa.question_id
-     WHERE aa.attempt_id = ? AND TRIM(aa.section_name) = ?`,
+     WHERE aa.attempt_id = ? AND TRIM(aa.section_name) = ?
+     ORDER BY (aa.saved_answer IS NOT NULL AND aa.saved_answer != '') DESC, aa.order_index ASC`,
     [attemptId, secName]
   );
 
-  if (answers.length === 0) {
-    answers = db.all(
+  if (rawSecAnswers.length === 0) {
+    rawSecAnswers = db.all(
       `SELECT aa.*, q.question_type, q.question_text, q.question_description,
               q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
               q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
        FROM attempt_answers aa
        LEFT JOIN questions q ON q.id = aa.question_id
-       WHERE aa.attempt_id = ? AND LOWER(TRIM(aa.section_name)) = LOWER(?)`,
+       WHERE aa.attempt_id = ? AND LOWER(TRIM(aa.section_name)) = LOWER(?)
+       ORDER BY (aa.saved_answer IS NOT NULL AND aa.saved_answer != '') DESC, aa.order_index ASC`,
       [attemptId, secName]
     );
+  }
+
+  // Self-heal: if attempt_answers for this section was not yet populated on this container, backfill from assessment_questions
+  if (rawSecAnswers.length === 0 && attempt.assessment_id) {
+    const aqRows = db.all(
+      `SELECT aq.question_id, aq.section_name, aq.order_index, aq.points_override, q.points, q.version
+       FROM assessment_questions aq
+       LEFT JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id = ? AND aq.question_id IS NOT NULL
+         AND (LOWER(TRIM(aq.section_name)) = LOWER(?) OR ((aq.section_name IS NULL OR aq.section_name = 'General') AND LOWER(?) = 'section 1'))
+       ORDER BY aq.order_index ASC`,
+      [attempt.assessment_id, secName, secName]
+    );
+    if (aqRows.length > 0) {
+      try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+      for (const aq of aqRows) {
+        db.run(
+          `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`,
+          [`aa_${attemptId}_${aq.question_id}`, attemptId, aq.question_id, aq.version || 1, secName, aq.order_index || 0, aq.points_override ?? aq.points ?? 1]
+        );
+      }
+      try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+      rawSecAnswers = db.all(
+        `SELECT aa.*, q.question_type, q.question_text, q.question_description,
+                q.answer_options, q.correct_answer, q.answer_explanation, q.explanation_visibility,
+                q.points, q.partial_credit, q.negative_marking, q.requires_manual_review
+         FROM attempt_answers aa
+         LEFT JOIN questions q ON q.id = aa.question_id
+         WHERE aa.attempt_id = ? AND LOWER(TRIM(aa.section_name)) = LOWER(?)`,
+        [attemptId, secName]
+      );
+    }
+  }
+
+  // Deduplicate by question_id
+  const seenSecQ = new Set();
+  const answers = [];
+  for (const r of rawSecAnswers) {
+    if (!seenSecQ.has(r.question_id)) {
+      seenSecQ.add(r.question_id);
+      answers.push(r);
+    }
   }
 
   if (answers.length === 0) {
@@ -1224,7 +1406,7 @@ function getAttemptState(attemptId, userId) {
     }
   }
 
-  const rawAnswers = db.all(
+  let rawAnswersWithDups = db.all(
     `SELECT aa.*, q.question_type, q.question_text, q.question_description,
             q.answer_options, q.correct_answer, q.answer_explanation,
             q.topic, q.difficulty, q.partial_credit,
@@ -1232,9 +1414,54 @@ function getAttemptState(attemptId, userId) {
      FROM attempt_answers aa
      LEFT JOIN questions q ON q.id = aa.question_id
      WHERE aa.attempt_id = ?
-     ORDER BY aa.order_index ASC, aa.id ASC`,
+     ORDER BY (aa.saved_answer IS NOT NULL AND aa.saved_answer != '') DESC, aa.order_index ASC, aa.id ASC`,
     [attempt.assessment_id, attemptId]
   );
+
+  // Self-heal if attempt_answers was not yet initialized on this container
+  if (rawAnswersWithDups.length === 0 && attempt.assessment_id) {
+    const aqRows = db.all(
+      `SELECT aq.question_id, aq.section_name, aq.order_index, aq.points_override, q.points, q.version
+       FROM assessment_questions aq
+       LEFT JOIN questions q ON q.id = aq.question_id
+       WHERE aq.assessment_id = ? AND aq.question_id IS NOT NULL
+       ORDER BY aq.order_index ASC, aq.id ASC`,
+      [attempt.assessment_id]
+    );
+    if (aqRows.length > 0) {
+      try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
+      for (const aq of aqRows) {
+        db.run(
+          `INSERT OR IGNORE INTO attempt_answers (id, attempt_id, question_id, question_version, section_name, order_index, saved_answer, is_flagged, max_points, marked_status)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, 'pending')`,
+          [`aa_${attemptId}_${aq.question_id}`, attemptId, aq.question_id, aq.version || 1, (aq.section_name || 'Section 1').trim(), aq.order_index || 0, aq.points_override ?? aq.points ?? 1]
+        );
+      }
+      try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+      rawAnswersWithDups = db.all(
+        `SELECT aa.*, q.question_type, q.question_text, q.question_description,
+                q.answer_options, q.correct_answer, q.answer_explanation,
+                q.topic, q.difficulty, q.partial_credit,
+                (SELECT aq.section_name FROM assessment_questions aq WHERE aq.assessment_id = ? AND aq.question_id = aa.question_id LIMIT 1) as aq_section_name
+         FROM attempt_answers aa
+         LEFT JOIN questions q ON q.id = aa.question_id
+         WHERE aa.attempt_id = ?
+         ORDER BY aa.order_index ASC, aa.id ASC`,
+        [attempt.assessment_id, attemptId]
+      );
+    }
+  }
+
+  // Deduplicate by question_id (preferring rows with saved_answer) and restore order_index sorting
+  const seenStateQ = new Set();
+  const rawAnswers = [];
+  for (const r of rawAnswersWithDups) {
+    if (!seenStateQ.has(r.question_id)) {
+      seenStateQ.add(r.question_id);
+      rawAnswers.push(r);
+    }
+  }
+  rawAnswers.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 
   const configuredSections = parseStoredSections(attempt.assessment_sections);
   const isInProgress = attempt.status === 'in_progress';

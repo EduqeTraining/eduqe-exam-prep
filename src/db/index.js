@@ -167,6 +167,12 @@ function initDatabase(dbPath) {
   const wrapper = {
     raw: db,
     dbPath,
+    prepare(sql) {
+      return db.prepare(sql);
+    },
+    exec(sql) {
+      return db.exec(sql);
+    },
     get(sql, params = []) {
       const stmt = db.prepare(sql);
       return stmt.get(...params);
