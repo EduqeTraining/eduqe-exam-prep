@@ -416,7 +416,7 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
   }
 
   // Ensure an assessment exists and is assigned to this class with available questions
-  const { assessment: availableAssessment, questions: availableQuestions } = ensureClassAssessment(
+  const { assessment: availableAssessment, questions: availableQuestions, isNew: isNewAssessment } = ensureClassAssessment(
     db,
     course.id,
     assignedClass.id,
@@ -429,6 +429,7 @@ function redeemCourseCode({ userId, rawCode, targetClassId = null }) {
 
   return {
     success: true,
+    isNewAssessment: Boolean(isNewAssessment),
     course: {
       id: course.id,
       name: course.name,
@@ -503,6 +504,12 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
        ORDER BY aq.order_index ASC`,
       [assignedAssessment.id]
     );
+    // Never mutate or inject fallback questions into an already-existing assessment
+    return {
+      assessment: assignedAssessment,
+      questions,
+      isNew: false
+    };
   }
 
   if (questions.length === 0 && courseId) {
@@ -516,7 +523,7 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
   }
 
   if (questions.length === 0) {
-    // Check for general published questions in question bank
+    // Fallback only when creating a default assessment in an empty/demo environment
     questions = db.all(
       `SELECT id, question_text, question_type, topic, difficulty, points 
        FROM questions 
@@ -563,22 +570,6 @@ function ensureClassAssessment(db, courseId, classId, courseName, adminUserId = 
     });
 
     assignedAssessment = db.get('SELECT * FROM assessments WHERE id = ?', [assessId]);
-  } else if (questions.length > 0) {
-    // Ensure questions are in this assessment
-    questions.forEach((q, idx) => {
-      const hasQ = db.get(
-        'SELECT id FROM assessment_questions WHERE assessment_id = ? AND question_id = ?',
-        [assignedAssessment.id, q.id]
-      );
-      if (!hasQ) {
-        const aqId = generateId();
-        db.run(
-          `INSERT INTO assessment_questions (id, assessment_id, question_id, order_index, points_override)
-           VALUES (?, ?, ?, ?, ?)`,
-          [aqId, assignedAssessment.id, q.id, idx + 1, q.points || 1]
-        );
-      }
-    });
   }
 
   return {

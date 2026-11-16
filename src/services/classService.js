@@ -712,11 +712,6 @@ function setUnlockedSectionsForClass(classId, unlockedSections, adminUserId = nu
     );
   } catch (e) {}
 
-  try {
-    const supabaseService = require('./supabaseService');
-    supabaseService.syncSettingToSupabase(`cohort_unlocked_sections_${classId}`).catch(() => {});
-  } catch (e) {}
-
   logAction({
     userId: adminUserId,
     username: adminUsername,
@@ -800,11 +795,6 @@ function saveClassAssessmentConfig(classId, config = {}, adminUserId = null, adm
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       [settingId, settingKey, jsonStr]
     );
-  } catch (e) {}
-
-  try {
-    const supabaseService = require('./supabaseService');
-    supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
   } catch (e) {}
 
   logAction({

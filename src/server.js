@@ -274,7 +274,6 @@ async function handleRequest(req, res) {
           'class_enrollments',
           'assessments',
           'assessment_classes',
-          'questions',
           'assessment_questions'
         ]);
         const body = await parseBody(req);
@@ -296,7 +295,7 @@ async function handleRequest(req, res) {
               if (result.redeemedCourse.enrollment.granted_by_code_id) {
                 await supabaseService.syncAccessCodeToSupabase(result.redeemedCourse.enrollment.granted_by_code_id);
               }
-              if (result.redeemedCourse.assessment && result.redeemedCourse.assessment.id) {
+              if (result.redeemedCourse.isNewAssessment && result.redeemedCourse.assessment && result.redeemedCourse.assessment.id) {
                 await supabaseService.syncAssessmentToSupabase(result.redeemedCourse.assessment.id);
               }
             }
@@ -350,7 +349,10 @@ async function handleRequest(req, res) {
           'courses',
           'classes',
           'course_access_codes',
-          'class_enrollments'
+          'class_enrollments',
+          'assessments',
+          'assessment_classes',
+          'assessment_questions'
         ]);
         const body = await parseBody(req);
         try {
@@ -365,7 +367,7 @@ async function handleRequest(req, res) {
               await supabaseService.syncAccessCodeToSupabase(result.enrollment.granted_by_code_id);
             }
           }
-          if (result && result.assessment && result.assessment.id) {
+          if (result && result.isNewAssessment && result.assessment && result.assessment.id) {
             await supabaseService.syncAssessmentToSupabase(result.assessment.id);
           }
           return sendJson(res, 200, result);
@@ -483,19 +485,26 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'student');
         if (!user) return;
         await supabaseService.ensureTablesFresh([
-          'users',
           'courses',
           'classes',
           'course_access_codes',
           'class_enrollments',
           'assessments',
           'assessment_classes',
-          'questions',
           'assessment_questions',
-          'student_attempts',
           'eduque_settings'
         ]);
         const body = await parseBody(req);
+        if (supabaseService.getSupabaseConfig().isEnabled) {
+          try {
+            const [uAtts, uEnrolls] = await Promise.all([
+              supabaseService.supabaseRequest(`student_attempts?user_id=eq.${encodeURIComponent(user.id)}&select=*`, { method: 'GET' }).catch(() => []),
+              supabaseService.supabaseRequest(`class_enrollments?user_id=eq.${encodeURIComponent(user.id)}&select=*`, { method: 'GET' }).catch(() => [])
+            ]);
+            if (Array.isArray(uAtts) && uAtts.length > 0) supabaseService.upsertLocalRows('student_attempts', uAtts);
+            if (Array.isArray(uEnrolls) && uEnrolls.length > 0) supabaseService.upsertLocalRows('class_enrollments', uEnrolls);
+          } catch (_) {}
+        }
         if (body.assessment_id) {
           await supabaseService.ensureAssessmentQuestionsHydrated(body.assessment_id);
         }
@@ -510,7 +519,7 @@ async function handleRequest(req, res) {
           const attemptId = attemptState?.id || attemptState?.attempt?.id;
           if (attemptId) {
             await Promise.all([
-              supabaseService.syncAttemptToSupabase(attemptId),
+              supabaseService.syncAttemptToSupabase(attemptId, { skipAnswers: true }),
               supabaseService.syncAttemptAnswersToSupabase(attemptId)
             ]);
           }
@@ -626,7 +635,7 @@ async function handleRequest(req, res) {
             classId: body?.class_id || null
           });
           await Promise.all([
-            supabaseService.syncAttemptToSupabase(targetAttemptId),
+            supabaseService.syncAttemptToSupabase(targetAttemptId, { skipAnswers: true }),
             supabaseService.syncAttemptAnswersToSupabase(targetAttemptId),
             supabaseService.syncSettingToSupabase(`attempt_meta_${targetAttemptId}`)
           ]);
@@ -655,7 +664,7 @@ async function handleRequest(req, res) {
           const restartAttemptId = result?.id || result?.attempt?.id;
           if (restartAttemptId) {
             await Promise.all([
-              supabaseService.syncAttemptToSupabase(restartAttemptId),
+              supabaseService.syncAttemptToSupabase(restartAttemptId, { skipAnswers: true }),
               supabaseService.syncAttemptAnswersToSupabase(restartAttemptId)
             ]);
           }
@@ -683,8 +692,8 @@ async function handleRequest(req, res) {
             classId: body.class_id
           });
           await Promise.all([
-            supabaseService.syncAttemptToSupabase(targetAttemptId),
-            supabaseService.syncAttemptAnswersToSupabase(targetAttemptId),
+            supabaseService.syncAttemptToSupabase(targetAttemptId, { skipAnswers: true }),
+            supabaseService.syncAttemptAnswersToSupabase(targetAttemptId, result?.is_all_completed ? null : body.section_name),
             supabaseService.syncSettingToSupabase(`completed_sections_attempt_${targetAttemptId}`),
             supabaseService.syncSettingToSupabase(`attempt_meta_${targetAttemptId}`),
             supabaseService.syncSettingToSupabase(`attempt_timer_${targetAttemptId}`)
@@ -710,7 +719,7 @@ async function handleRequest(req, res) {
             sectionName: body?.section_name || null
           });
           await Promise.all([
-            supabaseService.syncAttemptToSupabase(targetAttemptId),
+            supabaseService.syncAttemptToSupabase(targetAttemptId, { skipAnswers: true }),
             supabaseService.syncSettingToSupabase(`attempt_timer_${targetAttemptId}`)
           ]);
           return sendJson(res, 200, result);
@@ -1627,6 +1636,7 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && questionIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions', 'question_versions']);
         const body = await parseBody(req);
         try {
           const updated = questionService.updateQuestion(questionIdMatch[1], body.data || body, {
@@ -1646,6 +1656,7 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && qDuplicateMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions']);
         try {
           const dup = questionService.duplicateQuestion(qDuplicateMatch[1], user.id, user.username);
           if (dup && dup.id) {
@@ -1660,6 +1671,7 @@ async function handleRequest(req, res) {
       if (req.method === 'DELETE' && questionIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions']);
         try {
           questionService.deleteQuestion(questionIdMatch[1], user.id, user.username);
           await supabaseService.deleteQuestionFromSupabase(questionIdMatch[1]);
@@ -1673,6 +1685,7 @@ async function handleRequest(req, res) {
       if ((req.method === 'POST' && pathname === '/api/questions/bulk-delete') || (req.method === 'DELETE' && pathname === '/api/questions')) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions']);
         const body = await parseBody(req);
         const ids = body.question_ids || body.ids || [];
         if (!Array.isArray(ids) || ids.length === 0) {
@@ -1680,6 +1693,18 @@ async function handleRequest(req, res) {
         }
         try {
           const result = questionService.deleteQuestions(ids, user.id, user.username, { force: body.force !== false });
+          if (supabaseService.getSupabaseConfig().isEnabled && ids.length > 0) {
+            const chunkSize = 50;
+            for (let i = 0; i < ids.length; i += chunkSize) {
+              const chunk = ids.slice(i, i + chunkSize).filter(Boolean);
+              if (chunk.length > 0) {
+                const inFilter = `in.(${chunk.map(id => `"${id}"`).join(',')})`;
+                try {
+                  await supabaseService.supabaseRequest(`questions?id=${inFilter}`, { method: 'DELETE' });
+                } catch (_) {}
+              }
+            }
+          }
           return sendJson(res, 200, result);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1690,6 +1715,7 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/questions/bulk-publish') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['questions']);
         const body = await parseBody(req);
         const ids = body.question_ids || body.ids || (body.all_drafts ? 'all' : []);
         try {
@@ -1859,7 +1885,7 @@ async function handleRequest(req, res) {
       // 9. ASSESSMENTS & ASSESSMENT BUILDER
       // -------------------------------------------------------------
       if (req.method === 'GET' && pathname === '/api/assessments') {
-        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions', 'questions']);
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
         const assessments = assessmentService.listAssessments({
           course_id: query.course_id || '',
           status: query.status || '',
@@ -1871,7 +1897,7 @@ async function handleRequest(req, res) {
 
       const assessIdMatch = pathname.match(/^\/api\/assessments\/([^\/]+)$/);
       if (req.method === 'GET' && assessIdMatch) {
-        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions', 'questions']);
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
         await supabaseService.ensureAssessmentQuestionsHydrated(assessIdMatch[1]);
         const a = assessmentService.getAssessment(assessIdMatch[1]);
         if (!a) return sendJson(res, 404, { error: 'Assessment not found' });
@@ -1881,6 +1907,7 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && pathname === '/api/assessments') {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['courses', 'classes', 'assessments', 'assessment_classes', 'assessment_questions']);
         const body = await parseBody(req);
         try {
           const created = assessmentService.createAssessment({
@@ -1901,6 +1928,8 @@ async function handleRequest(req, res) {
       if (req.method === 'PUT' && assessIdMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessIdMatch[1]);
         const body = await parseBody(req);
         try {
           const updated = assessmentService.updateAssessment(assessIdMatch[1], body, user.id, user.username);
@@ -1915,6 +1944,8 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && assessDupMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_classes', 'assessment_questions']);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessDupMatch[1]);
         const body = await parseBody(req);
         try {
           const dup = assessmentService.duplicateAssessment(assessDupMatch[1], body.name, user.id, user.username);
@@ -1931,10 +1962,14 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && assessStatusMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments']);
         const body = await parseBody(req);
         try {
           const updated = assessmentService.setAssessmentStatus(assessStatusMatch[1], body.status, user.id, user.username);
-          await supabaseService.syncAssessmentToSupabase(assessStatusMatch[1]);
+          const rawAssess = getDatabase().get('SELECT * FROM assessments WHERE id = ?', [assessStatusMatch[1]]);
+          if (rawAssess) {
+            await supabaseService.upsertRecord('assessments', rawAssess);
+          }
           return sendJson(res, 200, updated);
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
@@ -1946,6 +1981,8 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && assessAddQMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_questions']);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessAddQMatch[1]);
         const body = await parseBody(req);
         try {
           const resAdd = assessmentService.addQuestionToAssessment(assessAddQMatch[1], body.question_id, {
@@ -1964,6 +2001,8 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && assessCreateQMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_questions']);
+        await supabaseService.ensureAssessmentQuestionsHydrated(assessCreateQMatch[1]);
         const body = await parseBody(req);
         try {
           const resCreate = assessmentService.createQuestionInAssessment(assessCreateQMatch[1], body.question, {
@@ -1985,8 +2024,10 @@ async function handleRequest(req, res) {
       if (req.method === 'POST' && assessReorderMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessments', 'assessment_questions']);
         const body = await parseBody(req);
         assessmentService.reorderAssessmentQuestions(assessReorderMatch[1], body.ordered_ids || []);
+        await supabaseService.syncAssessmentToSupabase(assessReorderMatch[1]);
         return sendJson(res, 200, { success: true });
       }
 
@@ -1995,13 +2036,10 @@ async function handleRequest(req, res) {
       if (req.method === 'DELETE' && assessRemoveQMatch) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
+        await supabaseService.ensureTablesFresh(['assessment_questions']);
         const aqId = assessRemoveQMatch[1];
-        const aqRow = getDatabase().get('SELECT assessment_id FROM assessment_questions WHERE id = ?', [aqId]);
         assessmentService.removeQuestionFromAssessment(aqId, user.id, user.username);
         await supabaseService.deleteRecord('assessment_questions', aqId);
-        if (aqRow?.assessment_id) {
-          await supabaseService.syncAssessmentToSupabase(aqRow.assessment_id);
-        }
         return sendJson(res, 200, { success: true });
       }
 
@@ -2050,7 +2088,7 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
         await supabaseService.ensureTablesFresh([
-          'users', 'courses', 'classes', 'class_enrollments', 'assessments', 'questions', 'student_attempts'
+          'users', 'courses', 'classes', 'class_enrollments', 'assessments', 'assessment_classes', 'student_attempts'
         ]);
         const metrics = reportService.getDashboardMetrics();
         return sendJson(res, 200, metrics);

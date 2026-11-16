@@ -510,14 +510,6 @@ function autosaveAnswer({ attemptId, userId, questionId, savedAnswer, isFlagged 
     ]
   );
 
-  try {
-    const supabaseService = require('./supabaseService');
-    const ansRow = db.get('SELECT * FROM attempt_answers WHERE attempt_id = ? AND question_id = ?', [attemptId, questionId]);
-    if (ansRow) {
-      supabaseService.upsertRecord('attempt_answers', ansRow, 'id').catch(() => {});
-    }
-  } catch (_) {}
-
   return { success: true, saved_at: new Date().toISOString() };
 }
 
@@ -747,10 +739,6 @@ function submitAttempt({ attemptId, userId, isAuto = false, answers: clientAnswe
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       [metaId, metaKey, JSON.stringify(metaPayload)]
     );
-    const supabaseService = require('./supabaseService');
-    supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
-    supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
-    supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
   } catch (_) {}
 
   logAction({
@@ -1178,10 +1166,6 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         [metaId, metaKey, JSON.stringify(metaPayload)]
       );
-      const supabaseService = require('./supabaseService');
-      supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
-      supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
-      supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
     } catch (_) {}
 
     logAction({
@@ -1233,8 +1217,6 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         [settingId, settingKey, JSON.stringify(completedSections)]
       );
-      const supabaseService = require('./supabaseService');
-      supabaseService.syncSettingToSupabase(settingKey).catch(() => {});
 
       const metaKey = `attempt_meta_${attemptId}`;
       const metaId = `setting-meta-${attemptId}`;
@@ -1258,7 +1240,6 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         [metaId, metaKey, JSON.stringify(metaPayload)]
       );
-      supabaseService.syncSettingToSupabase(metaKey).catch(() => {});
 
       const timerKey = `attempt_timer_${attemptId}`;
       const timerId = `setting-timer-${attemptId}`;
@@ -1268,9 +1249,6 @@ function submitSection({ attemptId, userId, sectionName, answers: clientAnswers,
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         [timerId, timerKey, JSON.stringify({ is_paused: true, paused_remaining_seconds: remainingSec })]
       );
-      supabaseService.syncSettingToSupabase(timerKey).catch(() => {});
-      supabaseService.syncAttemptToSupabase(attemptId).catch(() => {});
-      supabaseService.syncAttemptAnswersToSupabase(attemptId).catch(() => {});
     } catch (e) {}
 
     logAction({
@@ -1711,8 +1689,6 @@ function resumeAttemptTimer({ attemptId, userId, sectionName = null }) {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         [timerId, timerKey, JSON.stringify({ is_paused: false, paused_remaining_seconds: null })]
       );
-      const supabaseService = require('./supabaseService');
-      supabaseService.syncSettingToSupabase(timerKey).catch(() => {});
     } catch (e) {}
 
     logAction({

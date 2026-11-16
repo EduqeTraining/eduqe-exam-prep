@@ -584,7 +584,7 @@ async function deleteEnrollmentFromSupabase(classId, userId) {
   }
 }
 
-async function syncAssessmentToSupabase(assessmentOrId) {
+async function syncAssessmentToSupabase(assessmentOrId, options = {}) {
   if (!assessmentOrId) return;
   const db = getDatabase();
   const assess = typeof assessmentOrId === 'string' ? db.get('SELECT * FROM assessments WHERE id = ?', [assessmentOrId]) : assessmentOrId;
@@ -600,21 +600,24 @@ async function syncAssessmentToSupabase(assessmentOrId) {
 
   try {
     const aqs = db.all('SELECT * FROM assessment_questions WHERE assessment_id = ?', [assess.id]) || [];
-    // Delete stale remote assessment_questions for this assessment first so zombie questions cannot persist
-    await supabaseRequest(`assessment_questions?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
-      method: 'DELETE'
-    });
-    if (aqs.length > 0) {
-      await upsertRecords('assessment_questions', aqs, 'id');
+    // SAFETY GUARD: Never wipe remote assessment_questions if local SQLite has 0 rows (unless explicitly cleared by admin)
+    if (aqs.length > 0 || options.allowEmptyQuestions === true) {
+      await supabaseRequest(`assessment_questions?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
+        method: 'DELETE'
+      });
+      if (aqs.length > 0) {
+        await upsertRecords('assessment_questions', aqs, 'id');
+      }
     }
 
     const acs = db.all('SELECT * FROM assessment_classes WHERE assessment_id = ?', [assess.id]) || [];
-    // Delete stale remote assessment_classes for this assessment first
-    await supabaseRequest(`assessment_classes?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
-      method: 'DELETE'
-    });
-    if (acs.length > 0) {
-      await upsertRecords('assessment_classes', acs, 'assessment_id,class_id');
+    if (acs.length > 0 || options.allowEmptyClasses === true) {
+      await supabaseRequest(`assessment_classes?assessment_id=eq.${encodeURIComponent(assess.id)}`, {
+        method: 'DELETE'
+      });
+      if (acs.length > 0) {
+        await upsertRecords('assessment_classes', acs, 'assessment_id,class_id');
+      }
     }
   } catch (e) {
     console.warn(`[syncAssessmentToSupabase Warning] Failed to sync sub-items for assessment ${assess.id}:`, e.message);
@@ -683,7 +686,7 @@ async function deletePoolFromSupabase(poolId) {
   return await deleteRecord('question_pools', poolId);
 }
 
-async function syncAttemptToSupabase(attemptId) {
+async function syncAttemptToSupabase(attemptId, options = {}) {
   if (!attemptId) return;
   const db = getDatabase();
   const attempt = db.get('SELECT * FROM student_attempts WHERE id = ?', [attemptId]);
@@ -704,19 +707,22 @@ async function syncAttemptToSupabase(attemptId) {
     }
     if (attempt.assessment_id) {
       try {
-        await syncAssessmentToSupabase(attempt.assessment_id);
+        const assess = db.get('SELECT * FROM assessments WHERE id = ?', [attempt.assessment_id]);
+        if (assess) await upsertRecord('assessments', assess);
       } catch (e) {}
     }
     syncSuccess = await upsertRecord('student_attempts', attempt);
   }
 
-  try {
-    const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
-    if (answers && answers.length > 0) {
-      await upsertRecords('attempt_answers', answers, 'id');
+  if (!options.skipAnswers) {
+    try {
+      const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
+      if (answers && answers.length > 0) {
+        await upsertRecords('attempt_answers', answers, 'id');
+      }
+    } catch (e) {
+      // Ignore
     }
-  } catch (e) {
-    // Ignore
   }
 }
 
@@ -730,11 +736,13 @@ async function syncSettingToSupabase(keyOrRecord) {
   return await upsertRecord('eduque_settings', setting, 'key');
 }
 
-async function syncAttemptAnswersToSupabase(attemptId) {
+async function syncAttemptAnswersToSupabase(attemptId, sectionName = null) {
   if (!attemptId) return;
   const db = getDatabase();
   try {
-    const answers = db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
+    const answers = sectionName
+      ? db.all('SELECT * FROM attempt_answers WHERE attempt_id = ? AND LOWER(TRIM(section_name)) = LOWER(TRIM(?))', [attemptId, sectionName])
+      : db.all('SELECT * FROM attempt_answers WHERE attempt_id = ?', [attemptId]);
     if (answers && answers.length > 0) {
       await upsertRecords('attempt_answers', answers, 'id');
     }
@@ -1159,7 +1167,6 @@ async function ensureClassProgressHydrated(classId = null, instructorId = null) 
     'class_enrollments',
     'assessments',
     'assessment_classes',
-    'questions',
     'assessment_questions',
     'student_attempts',
     'eduque_settings'
@@ -1174,6 +1181,30 @@ async function ensureClassProgressHydrated(classId = null, instructorId = null) 
 
   try {
     const db = getDatabase();
+    // Ensure questions for the target class(es) assessments are hydrated without pulling all 3,326 global questions
+    let assessRows = [];
+    if (classId && classId !== 'all') {
+      assessRows = db.all(
+        `SELECT DISTINCT a.id FROM assessments a
+         LEFT JOIN assessment_classes ac ON ac.assessment_id = a.id
+         LEFT JOIN classes cl ON cl.id = ?
+         WHERE ac.class_id = ? OR a.course_id = cl.course_id`,
+        [classId, classId]
+      );
+    } else if (instructorId) {
+      assessRows = db.all(
+        `SELECT DISTINCT a.id FROM assessments a
+         JOIN classes cl ON cl.course_id = a.course_id
+         WHERE cl.instructor_id = ?`,
+        [instructorId]
+      );
+    } else {
+      await ensureTablesFresh(['questions']);
+    }
+    if (assessRows.length > 0) {
+      await Promise.all(assessRows.map(a => ensureAssessmentQuestionsHydrated(a.id).catch(() => {})));
+    }
+
     let attRows = [];
     if (classId && classId !== 'all') {
       attRows = db.all(
