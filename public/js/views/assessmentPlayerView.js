@@ -569,15 +569,10 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     confirmBtn.onclick = () => {
       skipModal.close();
       q.saved_answer = '__SKIPPED__';
-      q.is_locked = true;
       triggerAutosave(q.id, '__SKIPPED__', q.is_flagged);
       saveAttemptLocally();
       renderPalette();
-      renderQuestion(activeQuestionIndex);
-      // Advance to next question after skipping
-      setTimeout(() => {
-        handleNextNavigation();
-      }, 150);
+      handleNextNavigation();
     };
   }
 
@@ -1212,6 +1207,13 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
     const isLastInSection = nextQ && (nextQ.section_name || 'Section 1') !== (q.section_name || 'Section 1');
 
     prevBtn.disabled = idx === 0 || !currentAttempt.allow_back_navigation;
+    nextBtn.disabled = false;
+
+    const skipBtnEl = viewContainer.querySelector('#btn-skip-q');
+    if (skipBtnEl) {
+      skipBtnEl.disabled = isSecSubmitted || q.saved_answer === '__SKIPPED__';
+      skipBtnEl.style.opacity = skipBtnEl.disabled ? '0.5' : '1';
+    }
 
     const nextSecObj = sections.find(s => s.section_index === currSec.section_index + 1);
 
@@ -1804,7 +1806,7 @@ export function renderAssessmentPlayer(container, { assessmentId = null, classId
   }
 
   function attachInputHandlers(q, isSecSubmitted = false, isQuestionLocked = false) {
-    if (isSecSubmitted || isQuestionLocked || Boolean(q.is_locked)) return;
+    if (isSecSubmitted || isQuestionLocked || Boolean(q.is_locked) || q.saved_answer === '__SKIPPED__') return;
     const area = viewContainer.querySelector('#interactive-answer-area');
 
     // Single choice / Yes-No / True-False
