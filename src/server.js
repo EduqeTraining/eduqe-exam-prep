@@ -1328,9 +1328,13 @@ async function handleRequest(req, res) {
           try { await supabaseService.supabaseRequest(`attempt_answers?attempt_id=eq.${encodeURIComponent(att.id)}`, { method: 'DELETE' }); } catch (_) {}
           try { await supabaseService.deleteRecord('student_attempts', att.id); } catch (_) {}
         }
+        try { db.run('PRAGMA foreign_keys = OFF;'); } catch (_) {}
         db.run('DELETE FROM student_attempts WHERE user_id = ?', [targetUserId]);
         db.run('DELETE FROM class_enrollments WHERE user_id = ?', [targetUserId]);
-        db.run('DELETE FROM users WHERE id = ? AND role = "student"', [targetUserId]);
+        db.run('DELETE FROM audit_logs WHERE user_id = ?', [targetUserId]);
+        db.run("DELETE FROM users WHERE id = ? AND role = 'student'", [targetUserId]);
+        try { db.run('PRAGMA foreign_keys = ON;'); } catch (_) {}
+        try { await supabaseService.supabaseRequest(`audit_logs?user_id=eq.${encodeURIComponent(targetUserId)}`, { method: 'DELETE' }); } catch (_) {}
         try { await supabaseService.deleteRecord('users', targetUserId); } catch (_) {}
         return sendJson(res, 200, { success: true });
       }
