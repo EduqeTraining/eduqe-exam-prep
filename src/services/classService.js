@@ -500,8 +500,14 @@ function enrollStudent(classId, userId, { accessStartsAt = null, accessExpiresAt
 
 function removeStudent(classId, userId, adminUserId = null, adminUsername = 'admin') {
   const db = getDatabase();
+  const enroll = db.get('SELECT id, granted_by_code_id FROM class_enrollments WHERE class_id = ? AND user_id = ?', [classId, userId]);
   // Removing student must not delete account or historical attempts!
   db.run('DELETE FROM class_enrollments WHERE class_id = ? AND user_id = ?', [classId, userId]);
+  if (enroll && enroll.granted_by_code_id) {
+    try {
+      db.run('UPDATE course_access_codes SET used_count = MAX(0, COALESCE(used_count, 1) - 1) WHERE id = ?', [enroll.granted_by_code_id]);
+    } catch (_) {}
+  }
 
   logAction({
     userId: adminUserId,
@@ -512,7 +518,7 @@ function removeStudent(classId, userId, adminUserId = null, adminUsername = 'adm
     details: { classId, studentId: userId }
   });
 
-  return { success: true };
+  return { success: true, granted_by_code_id: enroll?.granted_by_code_id || null };
 }
 
 function moveStudent(fromClassId, toClassId, userId, adminUserId = null, adminUsername = 'admin') {

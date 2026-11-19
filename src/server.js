@@ -1145,8 +1145,12 @@ async function handleRequest(req, res) {
         const user = requireAuth(req, res, 'administrator');
         if (!user) return;
         const [_, cId, uId] = classRemoveStudentMatch;
-        classService.removeStudent(cId, uId, user.id, user.username);
+        await supabaseService.ensureTablesFresh(['class_enrollments', 'course_access_codes']);
+        const remRes = classService.removeStudent(cId, uId, user.id, user.username);
         await supabaseService.deleteEnrollmentFromSupabase(cId, uId);
+        if (remRes && remRes.granted_by_code_id) {
+          await supabaseService.syncAccessCodeToSupabase(remRes.granted_by_code_id);
+        }
         return sendJson(res, 200, { success: true });
       }
 
@@ -1302,6 +1306,33 @@ async function handleRequest(req, res) {
         } catch (err) {
           return sendJson(res, 400, { error: err.message });
         }
+      }
+
+      if (req.method === 'DELETE' && studentIdMatch) {
+        const user = requireAuth(req, res, 'administrator');
+        if (!user) return;
+        const targetUserId = studentIdMatch[1];
+        const db = getDatabase();
+        await supabaseService.ensureTablesFresh(['users', 'class_enrollments', 'course_access_codes', 'student_attempts']);
+        const enrollments = db.all('SELECT id, class_id, granted_by_code_id FROM class_enrollments WHERE user_id = ?', [targetUserId]);
+        for (const enr of enrollments) {
+          if (enr.granted_by_code_id) {
+            db.run('UPDATE course_access_codes SET used_count = MAX(0, COALESCE(used_count, 1) - 1) WHERE id = ?', [enr.granted_by_code_id]);
+            await supabaseService.syncAccessCodeToSupabase(enr.granted_by_code_id);
+          }
+          await supabaseService.deleteEnrollmentFromSupabase(enr.class_id, targetUserId);
+        }
+        const attempts = db.all('SELECT id FROM student_attempts WHERE user_id = ?', [targetUserId]);
+        for (const att of attempts) {
+          db.run('DELETE FROM attempt_answers WHERE attempt_id = ?', [att.id]);
+          try { await supabaseService.supabaseRequest(`attempt_answers?attempt_id=eq.${encodeURIComponent(att.id)}`, { method: 'DELETE' }); } catch (_) {}
+          try { await supabaseService.deleteRecord('student_attempts', att.id); } catch (_) {}
+        }
+        db.run('DELETE FROM student_attempts WHERE user_id = ?', [targetUserId]);
+        db.run('DELETE FROM class_enrollments WHERE user_id = ?', [targetUserId]);
+        db.run('DELETE FROM users WHERE id = ? AND role = "student"', [targetUserId]);
+        try { await supabaseService.deleteRecord('users', targetUserId); } catch (_) {}
+        return sendJson(res, 200, { success: true });
       }
 
       const studentResetPwdMatch = pathname.match(/^\/api\/students\/([^\/]+)\/reset-password$/);
